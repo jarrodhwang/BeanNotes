@@ -27,6 +27,8 @@ struct LibraryView: View {
     @State private var isShowingFolderEditor = false
     @State private var isShowingDocumentImporter = false
     @State private var isImportingDocument = false
+    @State private var importProgress: Double?
+    @State private var importProgressMessage = "Preparing import..."
     @State private var folderBeingEdited: NotebookFolder?
     @State private var folderPendingDeletion: NotebookFolder?
     @State private var isShowingSettings = false
@@ -100,6 +102,8 @@ struct LibraryView: View {
                     }
                 },
                 isImportingDocument: isImportingDocument,
+                importProgress: importProgress,
+                importProgressMessage: importProgressMessage,
                 openNote: openNote,
                 deleteNote: { notePendingDeletion = $0 }
             )
@@ -230,6 +234,7 @@ struct LibraryView: View {
             modelContext.insert(folder)
             selectedFolderID = folder.id
             changedFolder = folder
+            LocalNotificationService.shared.notifyFolderCreated(named: name)
         }
 
         try? modelContext.save()
@@ -260,13 +265,32 @@ struct LibraryView: View {
         guard let selectedFolder else { return }
 
         isImportingDocument = true
-        defer { isImportingDocument = false }
+        importProgress = 0
+        importProgressMessage = "Preparing import..."
+        defer {
+            isImportingDocument = false
+            importProgress = nil
+            importProgressMessage = "Preparing import..."
+        }
 
         do {
             var firstImportedNote: NoteDocument?
+            let total = max(urls.count, 1)
 
-            for url in urls {
-                let imported = try await ImportExportService().importDocumentAsNote(from: url, into: selectedFolder)
+            for (index, url) in urls.enumerated() {
+                let displayName = url.deletingPathExtension().lastPathComponent
+                importProgressMessage = "Importing \(displayName)..."
+                importProgress = Double(index) / Double(total)
+                await Task.yield()
+
+                let imported = try await ImportExportService().importDocumentAsNote(
+                    from: url,
+                    into: selectedFolder
+                ) { fraction, message in
+                    let itemProgress = fraction ?? 0
+                    importProgress = (Double(index) + itemProgress) / Double(total)
+                    importProgressMessage = message
+                }
                 modelContext.insert(imported.note)
 
                 for page in imported.pages {
@@ -278,6 +302,8 @@ struct LibraryView: View {
                 }
 
                 firstImportedNote = firstImportedNote ?? imported.note
+                importProgress = Double(index + 1) / Double(total)
+                await Task.yield()
             }
 
             try modelContext.save()
@@ -293,13 +319,24 @@ struct LibraryView: View {
         guard let selectedFolder, !photoItems.isEmpty else { return }
 
         isImportingDocument = true
-        defer { isImportingDocument = false }
+        importProgress = 0
+        importProgressMessage = "Preparing photos..."
+        defer {
+            isImportingDocument = false
+            importProgress = nil
+            importProgressMessage = "Preparing import..."
+        }
 
         do {
             var firstImportedNote: NoteDocument?
             let service = ImportExportService()
+            let total = max(photoItems.count, 1)
 
             for (index, item) in photoItems.enumerated() {
+                importProgress = Double(index) / Double(total)
+                importProgressMessage = "Importing photo \(index + 1) of \(total)..."
+                await Task.yield()
+
                 guard
                     let data = try await item.loadTransferable(type: Data.self),
                     let image = UIImage(data: data)
@@ -320,6 +357,7 @@ struct LibraryView: View {
                 }
 
                 firstImportedNote = firstImportedNote ?? imported.note
+                importProgress = Double(index + 1) / Double(total)
             }
 
             try modelContext.save()
@@ -442,9 +480,17 @@ private struct NoteTabbedEditorWorkspace: View {
 
                 Divider()
 
-                NavigationStack {
-                    NoteEditorView(note: selectedNote)
-                        .id(selectedNote.id)
+                ZStack {
+                    ForEach(tabs) { note in
+                        NavigationStack {
+                            NoteEditorView(note: note)
+                                .id(note.id)
+                        }
+                        .opacity(note.id == selectedNote.id ? 1 : 0)
+                        .allowsHitTesting(note.id == selectedNote.id)
+                        .accessibilityHidden(note.id != selectedNote.id)
+                        .zIndex(note.id == selectedNote.id ? 1 : 0)
+                    }
                 }
             }
             .background(Color(.systemBackground))
@@ -551,6 +597,8 @@ private struct NotesCardGridView: View {
     var importFiles: (LibraryImportSource) -> Void
     var importPhotos: ([PhotosPickerItem]) -> Void
     var isImportingDocument: Bool
+    var importProgress: Double?
+    var importProgressMessage: String
     var openNote: (NoteDocument) -> Void
     var deleteNote: (NoteDocument) -> Void
 
@@ -589,6 +637,15 @@ private struct NotesCardGridView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color(.systemBackground))
+        .overlay {
+            if isImportingDocument {
+                BeanNoteProgressOverlay(
+                    title: "Importing",
+                    message: importProgressMessage,
+                    progress: importProgress
+                )
+            }
+        }
         .onChange(of: selectedPhotoItems) { _, newItems in
             guard !newItems.isEmpty else { return }
             importPhotos(newItems)
@@ -662,6 +719,50 @@ private struct NotesCardGridView: View {
             description: Text(hasSearch ? "Try a different search." : "Create a note in this folder.")
         )
         .frame(maxWidth: .infinity, minHeight: 360)
+    }
+}
+
+struct BeanNoteProgressOverlay: View {
+    var title: String
+    var message: String
+    var progress: Double?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.18)
+                .ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                if let progress {
+                    ProgressView(value: min(max(progress, 0), 1))
+                        .progressViewStyle(.linear)
+                        .frame(width: 260)
+                } else {
+                    ProgressView()
+                        .controlSize(.large)
+                }
+
+                VStack(spacing: 5) {
+                    Text(title)
+                        .font(.headline.weight(.semibold))
+
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 14)
+        }
+        .transition(.opacity)
     }
 }
 

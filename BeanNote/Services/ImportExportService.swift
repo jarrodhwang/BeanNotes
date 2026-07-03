@@ -11,6 +11,8 @@ import SwiftData
 import UIKit
 import UniformTypeIdentifiers
 
+typealias ImportExportProgressHandler = @MainActor (_ fraction: Double?, _ message: String) -> Void
+
 enum ExportFormat: String, CaseIterable, Identifiable {
     case pdf
     case png
@@ -131,9 +133,18 @@ struct ImportExportService {
         return kind == .pdf || kind == .docx || kind == .presentation
     }
 
-    func importDocumentAsNote(from sourceURL: URL, into folder: NotebookFolder) async throws -> ImportedDocumentNote {
+    func importDocumentAsNote(
+        from sourceURL: URL,
+        into folder: NotebookFolder,
+        progress: ImportExportProgressHandler? = nil
+    ) async throws -> ImportedDocumentNote {
         let note = NoteDocument(title: sourceURL.deletingPathExtension().lastPathComponent)
-        let imported = try await importDocumentPages(from: sourceURL, into: note, startingAt: 0)
+        let imported = try await importDocumentPages(
+            from: sourceURL,
+            into: note,
+            startingAt: 0,
+            progress: progress
+        )
 
         note.folder = folder
         folder.notes.append(note)
@@ -172,18 +183,32 @@ struct ImportExportService {
     func importDocumentPages(
         from sourceURL: URL,
         into note: NoteDocument,
-        startingAt startOrder: Int
+        startingAt startOrder: Int,
+        progress: ImportExportProgressHandler? = nil
     ) async throws -> ImportedDocumentPages {
         let contentType = UTType(filenameExtension: sourceURL.pathExtension) ?? .data
         let kind = attachmentKind(for: contentType, fileExtension: sourceURL.pathExtension)
 
         switch kind {
         case .pdf:
-            return try importPDFPages(from: sourceURL, into: note, startingAt: startOrder)
+            return try await importPDFPages(
+                from: sourceURL,
+                into: note,
+                startingAt: startOrder,
+                progress: progress
+            )
         case .image:
+            progress?(nil, "Importing image...")
+            await Task.yield()
             return try importImageDocumentPage(from: sourceURL, into: note, pageOrder: startOrder)
         case .docx, .csv, .presentation, .other:
-            return try await importPreviewableDocumentPage(from: sourceURL, kind: kind, into: note, pageOrder: startOrder)
+            return try await importPreviewableDocumentPage(
+                from: sourceURL,
+                kind: kind,
+                into: note,
+                pageOrder: startOrder,
+                progress: progress
+            )
         }
     }
 
@@ -284,6 +309,85 @@ struct ImportExportService {
             return [exportURL]
         case .png, .jpeg:
             return try pages.map { try exportPage($0, format: format) }
+        }
+    }
+
+    func exportPageForSharing(
+        _ page: NotePage,
+        format: ExportFormat,
+        progress: ImportExportProgressHandler? = nil
+    ) async throws -> URL {
+        progress?(0.05, "Preparing page...")
+        await Task.yield()
+
+        let drawing = drawingStorage.loadDrawing(for: page)
+        progress?(0.25, "Rendering page...")
+        await Task.yield()
+
+        let image = thumbnailService.renderPageImage(page: page, drawing: drawing, scale: 2)
+        let title = page.note?.title.sanitizedFileName ?? "BeanNote"
+        let fileName = "\(title)-Page-\(page.pageOrder + 1).\(format.fileExtension)"
+        let exportDirectory = try storage.directoryURL(for: .exports)
+        let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName(fileName))
+
+        progress?(0.78, "Writing \(format.label)...")
+        await Task.yield()
+
+        switch format {
+        case .png:
+            guard let data = image.pngData() else { throw ImportExportError.exportFailed }
+            try data.write(to: exportURL, options: [.atomic])
+        case .jpeg:
+            guard let data = image.jpegData(compressionQuality: 0.9) else { throw ImportExportError.exportFailed }
+            try data.write(to: exportURL, options: [.atomic])
+        case .pdf:
+            try writePDF(image: image, page: page, to: exportURL)
+        }
+
+        progress?(1, "Export ready.")
+        return exportURL
+    }
+
+    func exportNoteForSharing(
+        _ note: NoteDocument,
+        format: ExportFormat,
+        progress: ImportExportProgressHandler? = nil
+    ) async throws -> [URL] {
+        let pages = note.sortedPages
+        guard !pages.isEmpty else { throw ImportExportError.exportFailed }
+
+        switch format {
+        case .pdf:
+            let title = note.title.sanitizedFileName
+            let exportDirectory = try storage.directoryURL(for: .exports)
+            let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName("\(title).pdf"))
+            try await writePDFWithProgress(
+                pages: pages,
+                title: title,
+                to: exportURL,
+                progress: progress
+            )
+            progress?(1, "Export ready.")
+            return [exportURL]
+        case .png, .jpeg:
+            var urls: [URL] = []
+            let total = max(pages.count, 1)
+
+            for (index, page) in pages.enumerated() {
+                let baseProgress = Double(index) / Double(total)
+                progress?(baseProgress, "Exporting page \(index + 1) of \(total)...")
+                await Task.yield()
+
+                let url = try await exportPageForSharing(page, format: format) { fraction, message in
+                    let pageFraction = fraction ?? 0
+                    let combinedProgress = (Double(index) + pageFraction) / Double(total)
+                    progress?(combinedProgress, message)
+                }
+                urls.append(url)
+            }
+
+            progress?(1, "Export ready.")
+            return urls
         }
     }
 
@@ -526,8 +630,9 @@ struct ImportExportService {
     private func importPDFPages(
         from sourceURL: URL,
         into note: NoteDocument,
-        startingAt startOrder: Int
-    ) throws -> ImportedDocumentPages {
+        startingAt startOrder: Int,
+        progress: ImportExportProgressHandler?
+    ) async throws -> ImportedDocumentPages {
         let isScoped = sourceURL.startAccessingSecurityScopedResource()
         defer {
             if isScoped {
@@ -545,20 +650,25 @@ struct ImportExportService {
         var importedAttachments: [Attachment] = []
 
         for index in 0..<document.pageCount {
+            progress?(Double(index) / Double(document.pageCount), "Importing PDF page \(index + 1) of \(document.pageCount)...")
+            await Task.yield()
+
             guard let pdfPage = document.page(at: index) else { continue }
 
             let pageSize = normalizedPDFPageSize(for: pdfPage.bounds(for: .mediaBox).size)
-            let pageImage = renderPDFPage(pdfPage, size: pageSize)
-            guard let imageData = pageImage.jpegData(compressionQuality: 0.92) else {
-                throw ImportExportError.exportFailed
-            }
+            let storedImage = try autoreleasepool {
+                let pageImage = renderPDFPage(pdfPage, size: pageSize)
+                guard let imageData = pageImage.jpegData(compressionQuality: 0.88) else {
+                    throw ImportExportError.exportFailed
+                }
 
-            let storedImage = try storage.saveData(
-                imageData,
-                preferredName: "\(baseName)-page-\(index + 1).jpg",
-                contentType: .jpeg,
-                to: .imports
-            )
+                return try storage.saveData(
+                    imageData,
+                    preferredName: "\(baseName)-page-\(index + 1).jpg",
+                    contentType: .jpeg,
+                    to: .imports
+                )
+            }
             let notePage = NotePage(
                 pageOrder: startOrder + index,
                 background: .plain(),
@@ -603,6 +713,7 @@ struct ImportExportService {
         firstPage.attachments.append(originalAttachment)
         importedAttachments.append(originalAttachment)
         note.touch()
+        progress?(1, "PDF import ready.")
 
         return ImportedDocumentPages(pages: importedPages, attachments: importedAttachments)
     }
@@ -611,12 +722,19 @@ struct ImportExportService {
         from sourceURL: URL,
         kind: AttachmentKind,
         into note: NoteDocument,
-        pageOrder: Int
+        pageOrder: Int,
+        progress: ImportExportProgressHandler?
     ) async throws -> ImportedDocumentPages {
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
         let pageSize = CGSize(width: 1024, height: 1366)
+        progress?(0.1, "Copying original file...")
+        await Task.yield()
+
         let originalStored = try storage.copyFile(from: sourceURL, to: .imports)
         let originalURL = storage.url(forRelativePath: originalStored.relativePath)
+        progress?(0.35, "Building preview...")
+        await Task.yield()
+
         let previewThumbnail = try? await quickLookThumbnail(for: originalURL, size: pageSize)
         let previewImage = makeDocumentPreviewPage(
             thumbnail: previewThumbnail,
@@ -624,6 +742,9 @@ struct ImportExportService {
             fileExtension: sourceURL.pathExtension,
             pageSize: pageSize
         )
+
+        progress?(0.75, "Saving preview...")
+        await Task.yield()
 
         guard let imageData = previewImage.jpegData(compressionQuality: 0.9) else {
             throw ImportExportError.exportFailed
@@ -670,6 +791,7 @@ struct ImportExportService {
         page.attachments.append(originalAttachment)
         note.pages.append(page)
         note.touch()
+        progress?(1, "Document import ready.")
 
         return ImportedDocumentPages(
             pages: [page],
@@ -793,6 +915,41 @@ struct ImportExportService {
         }
     }
 
+    private func writePDFWithProgress(
+        pages: [NotePage],
+        title: String,
+        to exportURL: URL,
+        progress: ImportExportProgressHandler?
+    ) async throws {
+        let metadata = [
+            kCGPDFContextCreator as String: "BeanNote",
+            kCGPDFContextTitle as String: title
+        ]
+
+        UIGraphicsBeginPDFContextToFile(exportURL.path, .zero, metadata)
+        defer {
+            UIGraphicsEndPDFContext()
+        }
+
+        let total = max(pages.count, 1)
+
+        for (index, page) in pages.enumerated() {
+            progress?(Double(index) / Double(total), "Exporting page \(index + 1) of \(total)...")
+            await Task.yield()
+
+            let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+            UIGraphicsBeginPDFPageWithInfo(pageBounds, nil)
+            let drawing = drawingStorage.loadDrawing(for: page)
+            let renderScale: CGFloat = total > 12 ? 1.25 : 1.5
+            let image = thumbnailService.renderPageImage(page: page, drawing: drawing, scale: renderScale)
+            image.draw(in: pageBounds)
+        }
+
+        guard storage.fileManager.fileExists(atPath: exportURL.path) else {
+            throw ImportExportError.exportFailed
+        }
+    }
+
     private func normalizedPDFPageSize(for sourceSize: CGSize) -> CGSize {
         let width = max(sourceSize.width, 1)
         let height = max(sourceSize.height, 1)
@@ -834,7 +991,11 @@ struct ImportExportService {
     }
 
     private func renderPDFPage(_ page: PDFPage, size: CGSize) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { context in
             UIColor.white.setFill()
             context.fill(CGRect(origin: .zero, size: size))
@@ -881,7 +1042,11 @@ struct ImportExportService {
         fileExtension: String,
         pageSize: CGSize
     ) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(size: pageSize)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: pageSize, format: format)
         return renderer.image { context in
             UIColor.white.setFill()
             context.fill(CGRect(origin: .zero, size: pageSize))

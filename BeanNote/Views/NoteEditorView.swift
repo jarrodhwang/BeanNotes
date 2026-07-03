@@ -11,6 +11,7 @@ struct NoteEditorView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @Bindable var note: NoteDocument
+    @FocusState private var isTitleFieldFocused: Bool
 
     @StateObject private var toolState = DrawingToolState()
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
@@ -24,10 +25,15 @@ struct NoteEditorView: View {
     @State private var isShowingExport = false
     @State private var isShowingAttachments = false
     @State private var isShowingBackgroundPicker = false
+    @State private var isImportingFiles = false
+    @State private var importProgress: Double?
+    @State private var importProgressMessage = "Preparing import..."
     @State private var previewAttachment: Attachment?
     @State private var saveNowSignal = 0
     @State private var fitToPageSignal = 0
     @State private var errorMessage: String?
+    @State private var isEditingTitle = false
+    @State private var draftTitle = ""
 
     private let importExportService = ImportExportService()
 
@@ -159,147 +165,224 @@ struct NoteEditorView: View {
     }
 
     private func editor(page: NotePage) -> some View {
-        ZStack(alignment: .top) {
-            ZStack(alignment: .trailing) {
-                DrawingCanvasView(
-                    pages: editorPages,
-                    selectedPageID: $selectedPageID,
-                    toolState: toolState,
-                    paletteMode: penPaletteMode,
-                    pageFlowMode: pageFlowMode,
-                    doubleTapAction: doubleTapAction,
-                    saveNowSignal: saveNowSignal,
-                    fitToPageSignal: fitToPageSignal,
-                    attachmentChanged: {
-                        try? modelContext.save()
-                    },
-                    addPageAtBottom: addPageAtBottom
-                )
-                .ignoresSafeArea(.container, edges: .bottom)
+        VStack(spacing: 0) {
+            editorTitleBar(page: page)
 
-                if isShowingAttachments {
-                    AttachmentListView(
-                        attachments: page.attachments,
-                        openPreview: { previewAttachment = $0 },
-                        originalURL: { try? importExportService.originalFileURL(for: $0) }
+            Divider()
+
+            ZStack(alignment: .top) {
+                ZStack(alignment: .trailing) {
+                    DrawingCanvasView(
+                        pages: editorPages,
+                        selectedPageID: $selectedPageID,
+                        toolState: toolState,
+                        paletteMode: penPaletteMode,
+                        pageFlowMode: pageFlowMode,
+                        doubleTapAction: doubleTapAction,
+                        saveNowSignal: saveNowSignal,
+                        fitToPageSignal: fitToPageSignal,
+                        attachmentChanged: {
+                            try? modelContext.save()
+                        },
+                        addPageAtBottom: addPageAtBottom
                     )
-                    .frame(width: 340)
-                    .background(.regularMaterial)
-                    .transition(.move(edge: .trailing))
+                    .ignoresSafeArea(.container, edges: .bottom)
+
+                    if isShowingAttachments {
+                        AttachmentListView(
+                            attachments: page.attachments,
+                            openPreview: { previewAttachment = $0 },
+                            originalURL: { try? importExportService.originalFileURL(for: $0) }
+                        )
+                        .frame(width: 340)
+                        .background(.regularMaterial)
+                        .transition(.move(edge: .trailing))
+                    }
+                }
+
+                if penPaletteMode == .custom {
+                    PenPaletteView(
+                        toolState: toolState,
+                        addAttachment: { isShowingAttachmentPicker = true },
+                        pasteImage: pasteImage,
+                        showAttachments: {
+                            withAnimation(.snappy) {
+                                isShowingAttachments.toggle()
+                            }
+                        },
+                        showBackgrounds: {
+                            isShowingBackgroundPicker = true
+                        }
+                    )
+                    .padding(.top, 14)
+                    .zIndex(2)
                 }
             }
-
-            if penPaletteMode == .custom {
-                PenPaletteView(
-                    toolState: toolState,
-                    addAttachment: { isShowingAttachmentPicker = true },
-                    pasteImage: pasteImage,
-                    showAttachments: {
-                        withAnimation(.snappy) {
-                            isShowingAttachments.toggle()
-                        }
-                    },
-                    showBackgrounds: {
-                        isShowingBackgroundPicker = true
-                    }
-                )
-                .padding(.top, 14)
-                .zIndex(2)
-            }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            editorToolbar(page: page)
+        .background(Color(.systemBackground))
+        .overlay {
+            if isImportingFiles {
+                BeanNoteProgressOverlay(
+                    title: "Importing",
+                    message: importProgressMessage,
+                    progress: importProgress
+                )
+            }
         }
     }
 
-    @ToolbarContentBuilder
-    private func editorToolbar(page: NotePage) -> some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            TextField("Title", text: $note.title)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 280)
-                .onSubmit {
-                    note.touch()
-                    try? modelContext.save()
+    private func editorTitleBar(page: NotePage) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                if isEditingTitle {
+                    TextField("Untitled Note", text: $draftTitle)
+                        .font(.system(size: 32, weight: .black, design: .rounded))
+                        .textFieldStyle(.plain)
+                        .focused($isTitleFieldFocused)
+                        .submitLabel(.done)
+                        .lineLimit(1)
+                        .onSubmit(commitTitleEdit)
+                        .onChange(of: isTitleFieldFocused) { _, isFocused in
+                            if !isFocused {
+                                commitTitleEdit()
+                            }
+                        }
+                        .onAppear {
+                            isTitleFieldFocused = true
+                        }
+                } else {
+                    Button {
+                        beginTitleEdit()
+                    } label: {
+                        Text(displayTitle)
+                            .font(.system(size: 32, weight: .black, design: .rounded))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.68)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edit note title")
                 }
-        }
 
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button {
-                goToPreviousPage()
-            } label: {
-                Image(systemName: "chevron.up")
+                Text(pageStatusText)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
-            .disabled(currentPageIndex == nil || currentPageIndex == 0)
-            .accessibilityLabel("Previous page")
+            .frame(minWidth: 240, maxWidth: .infinity, alignment: .leading)
 
-            Text(pageStatusText)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .frame(minWidth: 82)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button {
+                        goToPreviousPage()
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .frame(width: 34, height: 34)
+                    }
+                    .disabled(currentPageIndex == nil || currentPageIndex == 0)
+                    .accessibilityLabel("Previous page")
 
-            Button {
-                goToNextPage()
-            } label: {
-                Image(systemName: "chevron.down")
-            }
-            .disabled(currentPageIndex == nil || currentPageIndex == note.sortedPages.count - 1)
-            .accessibilityLabel("Next page")
+                    Button {
+                        goToNextPage()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .frame(width: 34, height: 34)
+                    }
+                    .disabled(currentPageIndex == nil || currentPageIndex == note.sortedPages.count - 1)
+                    .accessibilityLabel("Next page")
 
-            Button {
-                addPage(after: page)
-            } label: {
-                Image(systemName: "plus.square.on.square")
-            }
-            .accessibilityLabel("Add page")
+                    Divider()
+                        .frame(height: 24)
 
-            Button {
-                fitToPageSignal += 1
-            } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-            }
-            .accessibilityLabel("Fit page to screen")
+                    Button {
+                        addPage(after: page)
+                    } label: {
+                        Image(systemName: "plus.square.on.square")
+                            .frame(width: 34, height: 34)
+                    }
+                    .accessibilityLabel("Add page")
 
-            Button {
-                isShowingBackgroundPicker = true
-            } label: {
-                Image(systemName: "rectangle.inset.filled")
-            }
-            .accessibilityLabel("Page background")
+                    Button {
+                        fitToPageSignal += 1
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .frame(width: 34, height: 34)
+                    }
+                    .accessibilityLabel("Fit page to screen")
 
-            Button {
-                pasteImage()
-            } label: {
-                Image(systemName: "doc.on.clipboard")
-            }
-            .accessibilityLabel("Paste image")
+                    Button {
+                        isShowingBackgroundPicker = true
+                    } label: {
+                        Image(systemName: "rectangle.inset.filled")
+                            .frame(width: 34, height: 34)
+                    }
+                    .accessibilityLabel("Page background")
 
-            Button {
-                isShowingAttachmentPicker = true
-            } label: {
-                Image(systemName: "paperclip")
-            }
-            .accessibilityLabel("Add attachment")
+                    Button {
+                        pasteImage()
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .frame(width: 34, height: 34)
+                    }
+                    .accessibilityLabel("Paste image")
 
-            Button {
-                withAnimation(.snappy) {
-                    isShowingAttachments.toggle()
+                    Button {
+                        isShowingAttachmentPicker = true
+                    } label: {
+                        Image(systemName: "paperclip")
+                            .frame(width: 34, height: 34)
+                    }
+                    .accessibilityLabel("Add attachment")
+
+                    Button {
+                        withAnimation(.snappy) {
+                            isShowingAttachments.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "sidebar.right")
+                            .frame(width: 34, height: 34)
+                    }
+                    .accessibilityLabel("Attachments")
+
+                    Button {
+                        saveNow()
+                        isShowingExport = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .frame(width: 34, height: 34)
+                    }
+                    .accessibilityLabel("Export")
                 }
-            } label: {
-                Image(systemName: "sidebar.right")
             }
-            .accessibilityLabel("Attachments")
-
-            Button {
-                saveNow()
-                isShowingExport = true
-            } label: {
-                Image(systemName: "square.and.arrow.up")
-            }
-            .accessibilityLabel("Export")
+            .buttonStyle(.borderless)
+            .controlSize(.large)
+            .frame(maxWidth: 430, alignment: .trailing)
         }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(.regularMaterial)
+    }
+
+    private var displayTitle: String {
+        let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Note" : trimmed
+    }
+
+    private func beginTitleEdit() {
+        draftTitle = displayTitle
+        isEditingTitle = true
+    }
+
+    private func commitTitleEdit() {
+        guard isEditingTitle else { return }
+
+        let trimmed = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        note.title = trimmed.isEmpty ? "Untitled Note" : trimmed
+        note.touch()
+        try? modelContext.save()
+        isEditingTitle = false
+        isTitleFieldFocused = false
     }
 
     private func ensurePage() {
@@ -345,23 +428,47 @@ struct NoteEditorView: View {
     }
 
     private func importFiles(_ urls: [URL]) async {
+        guard !urls.isEmpty else { return }
+
+        isImportingFiles = true
+        importProgress = 0
+        importProgressMessage = "Preparing import..."
+        defer {
+            isImportingFiles = false
+            importProgress = nil
+            importProgressMessage = "Preparing import..."
+        }
+
         do {
             var firstImportedPageID: UUID?
+            let total = max(urls.count, 1)
 
-            for url in urls {
+            for (index, url) in urls.enumerated() {
+                importProgress = Double(index) / Double(total)
+                importProgressMessage = "Importing \(url.lastPathComponent)..."
+                await Task.yield()
+
                 if importExportService.importsAsAnnotatableDocument(url) {
                     let nextOrder = (note.pages.map(\.pageOrder).max() ?? -1) + 1
                     let imported = try await importExportService.importDocumentPages(
                         from: url,
                         into: note,
                         startingAt: nextOrder
-                    )
+                    ) { fraction, message in
+                        let itemProgress = fraction ?? 0
+                        importProgress = (Double(index) + itemProgress) / Double(total)
+                        importProgressMessage = message
+                    }
                     insertImported(imported)
                     firstImportedPageID = firstImportedPageID ?? imported.firstPage?.id
                 } else if let page = selectedPage {
+                    importProgressMessage = "Adding attachment..."
                     let attachment = try importExportService.importFile(from: url, into: page)
                     modelContext.insert(attachment)
                 }
+
+                importProgress = Double(index + 1) / Double(total)
+                await Task.yield()
             }
 
             if let firstImportedPageID {

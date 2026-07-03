@@ -15,6 +15,8 @@ struct ExportView: View {
 
     @State private var sharePayload: ExportSharePayload?
     @State private var isExporting = false
+    @State private var exportProgress: Double?
+    @State private var exportProgressMessage = "Preparing export..."
     @State private var errorMessage: String?
 
     private var pageOriginalAttachments: [Attachment] {
@@ -96,39 +98,66 @@ struct ExportView: View {
             .sheet(item: $sharePayload) { payload in
                 ActivityView(activityItems: payload.urls)
             }
+            .overlay {
+                if isExporting {
+                    BeanNoteProgressOverlay(
+                        title: "Exporting",
+                        message: exportProgressMessage,
+                        progress: exportProgress
+                    )
+                }
+            }
         }
     }
 
     private func exportCurrentPage(_ format: ExportFormat) {
         exportItems {
-            [try service.exportPage(page, format: format)]
+            [try await service.exportPageForSharing(page, format: format, progress: $0)]
         }
     }
 
     private func exportWholeNote(_ format: ExportFormat) {
         exportItems {
-            try service.exportNote(note, format: format)
+            try await service.exportNoteForSharing(note, format: format, progress: $0)
         }
     }
 
     private func shareOriginals(_ attachments: [Attachment]) {
         exportItems {
-            try attachments.map { try service.originalFileURL(for: $0) }
+            $0?(nil, "Preparing original files...")
+            await Task.yield()
+            return try attachments.map { try service.originalFileURL(for: $0) }
         }
     }
 
-    private func exportItems(_ makeURLs: () throws -> [URL]) {
+    private func exportItems(_ makeURLs: @escaping (ImportExportProgressHandler?) async throws -> [URL]) {
         guard !isExporting else { return }
         isExporting = true
-        defer { isExporting = false }
+        exportProgress = 0
+        exportProgressMessage = "Preparing export..."
 
-        do {
-            let urls = try makeURLs()
-            guard !urls.isEmpty else { throw ImportExportError.exportFailed }
-            sharePayload = ExportSharePayload(urls: urls)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+        Task { @MainActor in
+            defer {
+                isExporting = false
+                exportProgress = nil
+                exportProgressMessage = "Preparing export..."
+            }
+
+            do {
+                await Task.yield()
+                let urls = try await makeURLs { fraction, message in
+                    exportProgress = fraction
+                    exportProgressMessage = message
+                }
+                guard !urls.isEmpty else { throw ImportExportError.exportFailed }
+                exportProgress = 1
+                exportProgressMessage = "Opening share sheet..."
+                await Task.yield()
+                sharePayload = ExportSharePayload(urls: urls)
+                errorMessage = nil
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

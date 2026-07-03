@@ -12,6 +12,10 @@ import SwiftData
 struct BeanNoteApp: App {
     var sharedModelContainer = BeanNoteModelContainer.make()
 
+    init() {
+        LocalNotificationService.shared.configureForegroundPresentation()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

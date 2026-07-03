@@ -235,6 +235,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            updateRasterScale()
             centerDocument()
             updateVisiblePage()
         }
@@ -329,6 +330,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 scrollView.setZoomScale(fitScale, animated: false)
                 didSetInitialZoom = true
             }
+
+            updateRasterScale()
         }
 
         private func centerDocument() {
@@ -351,6 +354,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                 bottom: max(120, verticalInset),
                 right: horizontalInset
             )
+        }
+
+        private func updateRasterScale() {
+            let screenScale = window?.screen.scale ?? UIScreen.main.scale
+            let effectiveScale = min(max(scrollView.zoomScale, 1), 3) * screenScale
+
+            for pageView in pageViews.values {
+                pageView.updateRasterScale(effectiveScale)
+            }
         }
 
         private func updateVisiblePage() {
@@ -450,6 +462,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             backgroundView.frame = bounds
             canvasView.frame = bounds
             canvasView.contentSize = bounds.size
+            layer.shadowPath = UIBezierPath(rect: bounds).cgPath
 
             for attachment in page.imageAttachments {
                 imageViews[attachment.id]?.frame = attachment.frame
@@ -471,7 +484,21 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.isScrollEnabled = false
             canvasView.minimumZoomScale = 1
             canvasView.maximumZoomScale = 1
+            canvasView.contentScaleFactor = UIScreen.main.scale
+            canvasView.layer.contentsScale = UIScreen.main.scale
+            canvasView.layer.allowsEdgeAntialiasing = true
             addSubview(canvasView)
+        }
+
+        func updateRasterScale(_ scale: CGFloat) {
+            backgroundView.contentScaleFactor = scale
+            backgroundView.layer.contentsScale = scale
+            canvasView.contentScaleFactor = scale
+            canvasView.layer.contentsScale = scale
+
+            for view in imageViews.values {
+                view.updateRasterScale(scale)
+            }
         }
 
         private func configureImages(
@@ -493,10 +520,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                     return view
                 }()
 
-                let image = UIImage(contentsOfFile: storage.url(forRelativePath: attachment.storedFileName).path)
                 imageView.configure(
                     attachment: attachment,
-                    image: image,
+                    storage: storage,
                     pageSize: page?.pageSize ?? .zero,
                     changed: attachmentChanged
                 )
@@ -528,12 +554,16 @@ struct DrawingCanvasView: UIViewRepresentable {
             super.init(frame: frame)
             isOpaque = true
             contentMode = .redraw
+            contentScaleFactor = UIScreen.main.scale
+            layer.drawsAsynchronously = true
         }
 
         required init?(coder: NSCoder) {
             super.init(coder: coder)
             isOpaque = true
             contentMode = .redraw
+            contentScaleFactor = UIScreen.main.scale
+            layer.drawsAsynchronously = true
         }
 
         override func draw(_ rect: CGRect) {
@@ -609,6 +639,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var dragStart: CGRect?
         private var resizeStart: CGRect?
         private var changed: (() -> Void)?
+        private var loadedStoredFileName: String?
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -620,11 +651,21 @@ struct DrawingCanvasView: UIViewRepresentable {
             configureView()
         }
 
-        func configure(attachment: Attachment, image: UIImage?, pageSize: CGSize, changed: @escaping () -> Void) {
+        func configure(
+            attachment: Attachment,
+            storage: LocalStorageService,
+            pageSize: CGSize,
+            changed: @escaping () -> Void
+        ) {
             self.attachment = attachment
             self.pageSize = pageSize
             self.changed = changed
-            imageView.image = image
+
+            if loadedStoredFileName != attachment.storedFileName {
+                loadedStoredFileName = attachment.storedFileName
+                imageView.image = UIImage(contentsOfFile: storage.url(forRelativePath: attachment.storedFileName).path)
+            }
+
             frame = attachment.frame
             isUserInteractionEnabled = !attachment.isLocked
             resizeHandle.isHidden = attachment.isLocked
@@ -663,6 +704,15 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             let resizeGesture = UIPanGestureRecognizer(target: self, action: #selector(handleResize(_:)))
             resizeHandle.addGestureRecognizer(resizeGesture)
+        }
+
+        func updateRasterScale(_ scale: CGFloat) {
+            contentScaleFactor = scale
+            layer.contentsScale = scale
+            imageView.contentScaleFactor = scale
+            imageView.layer.contentsScale = scale
+            resizeHandle.contentScaleFactor = scale
+            resizeHandle.layer.contentsScale = scale
         }
 
         @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
@@ -720,6 +770,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         var pageIDs: Set<UUID>
         var toolPicker = PKToolPicker()
         var pendingSaves: [UUID: DispatchWorkItem] = [:]
+        var registeredCanvasIDs: Set<ObjectIdentifier> = []
         var toolStateCancellable: AnyCancellable?
         weak var observedToolState: DrawingToolState?
         weak var containerView: CanvasContainerView?
@@ -742,7 +793,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         func register(canvasView: PKCanvasView, page: NotePage) {
             let id = ObjectIdentifier(canvasView)
             canvasPages[id] = page
-            canvasView.tool = parent.toolState.makePKTool()
+
+            if !registeredCanvasIDs.contains(id) {
+                registeredCanvasIDs.insert(id)
+                toolPicker.addObserver(canvasView)
+                canvasView.tool = parent.toolState.makePKTool()
+            }
 
             if pencilInteractions[id] == nil {
                 let pencilInteraction = UIPencilInteraction()
@@ -750,14 +806,13 @@ struct DrawingCanvasView: UIViewRepresentable {
                 canvasView.addInteraction(pencilInteraction)
                 pencilInteractions[id] = pencilInteraction
             }
-
-            toolPicker.addObserver(canvasView)
         }
 
         func selectVisiblePage(_ pageID: UUID) {
             selectedPageID = pageID
             parent.selectedPageID = pageID
             activeCanvasView?.becomeFirstResponder()
+            applyCustomToolIfNeeded()
             configureToolPicker(mode: parent.paletteMode)
         }
 
@@ -793,9 +848,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func applyCustomToolIfNeeded() {
             guard parent.paletteMode == .custom else { return }
-            for (_, canvasView) in containerView?.canvasPagePairs ?? [] {
-                canvasView.tool = parent.toolState.makePKTool()
-            }
+            activeCanvasView?.tool = parent.toolState.makePKTool()
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
@@ -804,21 +857,29 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             pendingSaves[page.id]?.cancel()
             let drawing = canvasView.drawing
-            let storage = parent.drawingStorage
-            let toolState = parent.toolState
+            let rootURL = parent.drawingStorage.storage.rootURL
+            let drawingFileName = page.drawingFileName
 
             let save = DispatchWorkItem {
-                try? storage.save(drawing, for: page)
-
-                if toolState.temporaryEraserActive {
-                    Task { @MainActor in
-                        toolState.restoreAfterTemporaryEraser()
+                DispatchQueue.global(qos: .utility).async {
+                    do {
+                        let drawingsURL = rootURL.appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
+                        try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
+                        let data = drawing.dataRepresentation()
+                        try data.write(to: drawingsURL.appendingPathComponent(drawingFileName), options: [.atomic])
+                    } catch {
+                        return
                     }
                 }
             }
 
             pendingSaves[page.id] = save
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: save)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: save)
+        }
+
+        func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+            guard parent.toolState.temporaryEraserActive else { return }
+            parent.toolState.restoreAfterTemporaryEraser()
         }
 
         func flushPendingSave() {
@@ -846,9 +907,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
             guard parent.paletteMode == .custom else { return }
             parent.toolState.handleDoubleTap(action: parent.doubleTapAction)
-            for (_, canvasView) in containerView?.canvasPagePairs ?? [] {
-                canvasView.tool = parent.toolState.makePKTool()
-            }
+            activeCanvasView?.tool = parent.toolState.makePKTool()
         }
 
         func gestureRecognizer(
