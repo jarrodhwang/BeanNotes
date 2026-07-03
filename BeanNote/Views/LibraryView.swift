@@ -5,6 +5,7 @@
 
 import SwiftData
 import SwiftUI
+import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -15,9 +16,13 @@ struct LibraryView: View {
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
     @Query(sort: \NoteDocument.updatedAt, order: .reverse) private var recentNotes: [NoteDocument]
 
+    @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
+    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
+
     @State private var selectedFolderID: UUID?
     @State private var searchText = ""
-    @State private var noteBeingEdited: NoteDocument?
+    @State private var openNoteTabs: [NoteDocument] = []
+    @State private var selectedOpenNoteID: UUID?
     @State private var notePendingDeletion: NoteDocument?
     @State private var isShowingFolderEditor = false
     @State private var isShowingDocumentImporter = false
@@ -50,10 +55,14 @@ struct LibraryView: View {
         }
     }
 
+    private var defaultNoteBackground: NoteBackground {
+        NoteBackground.fromDefaults(styleRaw: defaultBackgroundStyleRaw, colorHex: defaultBackgroundColorHex)
+    }
+
     private var isShowingNoteEditor: Binding<Bool> {
         Binding(
-            get: { noteBeingEdited != nil },
-            set: { if !$0 { noteBeingEdited = nil } }
+            get: { selectedOpenNoteID != nil },
+            set: { if !$0 { selectedOpenNoteID = nil } }
         )
     }
 
@@ -84,11 +93,14 @@ struct LibraryView: View {
                 notes: visibleNotes,
                 searchText: searchText,
                 createNote: createNote,
-                importDocument: {
-                    isShowingDocumentImporter = true
+                importFiles: presentFileImporter,
+                importPhotos: { photoItems in
+                    Task {
+                        await importPhotosAsNotes(photoItems)
+                    }
                 },
                 isImportingDocument: isImportingDocument,
-                openNote: { noteBeingEdited = $0 },
+                openNote: openNote,
                 deleteNote: { notePendingDeletion = $0 }
             )
         }
@@ -101,30 +113,21 @@ struct LibraryView: View {
             absorbSharedInbox()
         }
         .fullScreenCover(isPresented: isShowingNoteEditor) {
-            if let note = noteBeingEdited {
-                NavigationStack {
-                    NoteEditorView(note: note)
-                        .toolbar {
-                            ToolbarItem(placement: .topBarLeading) {
-                                Button {
-                                    noteBeingEdited = nil
-                                } label: {
-                                    Image(systemName: "chevron.left")
-                                }
-                                .accessibilityLabel("Back to library")
-                            }
-                        }
-                }
-                .onDisappear {
-                    refreshThumbnail(for: note)
-                }
+            NoteTabbedEditorWorkspace(
+                tabs: openNoteTabs,
+                selectedNoteID: $selectedOpenNoteID,
+                closeTab: closeNoteTab,
+                backToLibrary: closeWorkspace
+            )
+            .onDisappear {
+                refreshOpenNoteThumbnails()
             }
         }
         .sheet(isPresented: $isShowingFolderEditor) {
             FolderEditorView(
                 title: folderBeingEdited == nil ? "New Folder" : "Edit Folder",
                 initialName: folderBeingEdited?.name ?? "",
-                initialColorHex: folderBeingEdited?.colorHex ?? "#5B8DEF"
+                initialColorHex: folderBeingEdited?.colorHex ?? "#2563EB"
             ) { name, colorHex in
                 saveFolder(name: name, colorHex: colorHex)
             }
@@ -134,11 +137,7 @@ struct LibraryView: View {
         }
         .fileImporter(
             isPresented: $isShowingDocumentImporter,
-            allowedContentTypes: [
-                .pdf,
-                ImportExportService.wordDocument,
-                ImportExportService.legacyWordDocument
-            ],
+            allowedContentTypes: ImportExportService.supportedContentTypes,
             allowsMultipleSelection: true
         ) { result in
             switch result {
@@ -191,12 +190,14 @@ struct LibraryView: View {
             try LocalStorageService().prepareDirectories()
 
             if folders.isEmpty {
-                let inbox = NotebookFolder(name: "Inbox", colorHex: "#E5B94E")
+                let inbox = NotebookFolder(name: "Inbox", colorHex: "#F59E0B")
                 modelContext.insert(inbox)
                 try modelContext.save()
                 selectedFolderID = inbox.id
+                syncSharedFolderIndex(including: [inbox])
             } else if selectedFolderID == nil {
                 selectedFolderID = selectedFolder?.id
+                syncSharedFolderIndex()
             }
 
             absorbSharedInbox()
@@ -206,25 +207,33 @@ struct LibraryView: View {
     }
 
     private func absorbSharedInbox() {
-        do {
-            try ImportExportService().absorbSharedInbox(into: modelContext)
-        } catch {
-            errorMessage = error.localizedDescription
+        Task { @MainActor in
+            do {
+                try await ImportExportService().absorbSharedInbox(into: modelContext)
+                syncSharedFolderIndex()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
     private func saveFolder(name: String, colorHex: String) {
+        let changedFolder: NotebookFolder
+
         if let folderBeingEdited {
             folderBeingEdited.name = name
             folderBeingEdited.colorHex = colorHex
             folderBeingEdited.updatedAt = Date()
+            changedFolder = folderBeingEdited
         } else {
             let folder = NotebookFolder(name: name, colorHex: colorHex)
             modelContext.insert(folder)
             selectedFolderID = folder.id
+            changedFolder = folder
         }
 
         try? modelContext.save()
+        syncSharedFolderIndex(including: [changedFolder])
         folderBeingEdited = nil
     }
 
@@ -232,7 +241,7 @@ struct LibraryView: View {
         guard let selectedFolder else { return }
 
         let note = NoteDocument(title: "Untitled Note", folder: selectedFolder)
-        let page = NotePage(pageOrder: 0, note: note)
+        let page = NotePage(pageOrder: 0, background: defaultNoteBackground, note: note)
         note.pages.append(page)
         selectedFolder.notes.append(note)
         selectedFolder.updatedAt = Date()
@@ -240,7 +249,11 @@ struct LibraryView: View {
         modelContext.insert(note)
         modelContext.insert(page)
         try? modelContext.save()
-        noteBeingEdited = note
+        openNote(note)
+    }
+
+    private func presentFileImporter(_: LibraryImportSource) {
+        isShowingDocumentImporter = true
     }
 
     private func importDocumentsAsNotes(_ urls: [URL]) async {
@@ -268,7 +281,51 @@ struct LibraryView: View {
             }
 
             try modelContext.save()
-            noteBeingEdited = firstImportedNote
+            if let firstImportedNote {
+                openNote(firstImportedNote)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func importPhotosAsNotes(_ photoItems: [PhotosPickerItem]) async {
+        guard let selectedFolder, !photoItems.isEmpty else { return }
+
+        isImportingDocument = true
+        defer { isImportingDocument = false }
+
+        do {
+            var firstImportedNote: NoteDocument?
+            let service = ImportExportService()
+
+            for (index, item) in photoItems.enumerated() {
+                guard
+                    let data = try await item.loadTransferable(type: Data.self),
+                    let image = UIImage(data: data)
+                else {
+                    throw ImportExportError.unsupportedImageData
+                }
+
+                let title = photoItems.count == 1 ? "Photo" : "Photo \(index + 1)"
+                let imported = try service.importImageAsNote(image, named: "\(title).jpg", into: selectedFolder)
+                modelContext.insert(imported.note)
+
+                for page in imported.pages {
+                    modelContext.insert(page)
+                }
+
+                for attachment in imported.attachments {
+                    modelContext.insert(attachment)
+                }
+
+                firstImportedNote = firstImportedNote ?? imported.note
+            }
+
+            try modelContext.save()
+            if let firstImportedNote {
+                openNote(firstImportedNote)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -276,6 +333,7 @@ struct LibraryView: View {
 
     private func deletePendingNote() {
         guard let note = notePendingDeletion else { return }
+        closeNoteTab(note.id)
         modelContext.delete(note)
         notePendingDeletion = nil
         try? modelContext.save()
@@ -284,6 +342,11 @@ struct LibraryView: View {
     private func deletePendingFolder() {
         guard let folder = folderPendingDeletion else { return }
         let deletingSelectedFolder = folder.id == selectedFolderID
+        let deletingNoteIDs = Set(folder.notes.map(\.id))
+
+        for noteID in deletingNoteIDs {
+            closeNoteTab(noteID)
+        }
 
         modelContext.delete(folder)
         folderPendingDeletion = nil
@@ -293,6 +356,48 @@ struct LibraryView: View {
         }
 
         try? modelContext.save()
+        syncSharedFolderIndex(excluding: [folder.id])
+    }
+
+    private func syncSharedFolderIndex(
+        including extraFolders: [NotebookFolder] = [],
+        excluding excludedFolderIDs: Set<UUID> = []
+    ) {
+        var foldersByID = Dictionary(uniqueKeysWithValues: sortedFolders.map { ($0.id, $0) })
+
+        for folder in extraFolders {
+            foldersByID[folder.id] = folder
+        }
+
+        let folders = foldersByID.values.filter { !excludedFolderIDs.contains($0.id) }
+        try? ImportExportService().writeSharedFolderIndex(folders: Array(folders))
+    }
+
+    private func openNote(_ note: NoteDocument) {
+        if !openNoteTabs.contains(where: { $0.id == note.id }) {
+            openNoteTabs.append(note)
+        }
+
+        selectedOpenNoteID = note.id
+    }
+
+    private func closeWorkspace() {
+        selectedOpenNoteID = nil
+    }
+
+    private func closeNoteTab(_ noteID: UUID) {
+        guard let index = openNoteTabs.firstIndex(where: { $0.id == noteID }) else { return }
+
+        openNoteTabs.remove(at: index)
+
+        if selectedOpenNoteID == noteID {
+            if openNoteTabs.isEmpty {
+                selectedOpenNoteID = nil
+            } else {
+                let nextIndex = min(index, openNoteTabs.count - 1)
+                selectedOpenNoteID = openNoteTabs[nextIndex].id
+            }
+        }
     }
 
     private func refreshThumbnail(for note: NoteDocument) {
@@ -305,6 +410,137 @@ struct LibraryView: View {
             errorMessage = error.localizedDescription
         }
     }
+
+    private func refreshOpenNoteThumbnails() {
+        for note in openNoteTabs {
+            refreshThumbnail(for: note)
+        }
+    }
+}
+
+private struct NoteTabbedEditorWorkspace: View {
+    var tabs: [NoteDocument]
+    @Binding var selectedNoteID: UUID?
+    var closeTab: (UUID) -> Void
+    var backToLibrary: () -> Void
+
+    private var selectedNote: NoteDocument? {
+        guard let selectedNoteID else { return tabs.first }
+        return tabs.first { $0.id == selectedNoteID } ?? tabs.first
+    }
+
+    var body: some View {
+        if let selectedNote {
+            VStack(spacing: 0) {
+                NoteEditorTabBar(
+                    tabs: tabs,
+                    selectedNoteID: selectedNote.id,
+                    selectTab: { selectedNoteID = $0 },
+                    closeTab: closeTab,
+                    backToLibrary: backToLibrary
+                )
+
+                Divider()
+
+                NavigationStack {
+                    NoteEditorView(note: selectedNote)
+                        .id(selectedNote.id)
+                }
+            }
+            .background(Color(.systemBackground))
+        } else {
+            ContentUnavailableView("No Open Notes", systemImage: "note.text")
+        }
+    }
+}
+
+private struct NoteEditorTabBar: View {
+    var tabs: [NoteDocument]
+    var selectedNoteID: UUID
+    var selectTab: (UUID) -> Void
+    var closeTab: (UUID) -> Void
+    var backToLibrary: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: backToLibrary) {
+                Image(systemName: "chevron.left")
+                    .font(.headline.weight(.semibold))
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to library")
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(tabs) { note in
+                        tabButton(for: note)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .background(.regularMaterial)
+    }
+
+    private func tabButton(for note: NoteDocument) -> some View {
+        let isSelected = selectedNoteID == note.id
+
+        return HStack(spacing: 8) {
+            Button {
+                selectTab(note.id)
+            } label: {
+                Text(note.title.isEmpty ? "Untitled Note" : note.title)
+                    .font(.subheadline.weight(isSelected ? .semibold : .medium))
+                    .lineLimit(1)
+                    .frame(maxWidth: 180, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(note.title.isEmpty ? "Untitled Note" : note.title)
+
+            Button {
+                closeTab(note.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close \(note.title.isEmpty ? "Untitled Note" : note.title)")
+        }
+        .foregroundStyle(isSelected ? .primary : .secondary)
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .padding(.vertical, 7)
+        .frame(height: 38)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color(.secondarySystemBackground) : Color.clear)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isSelected ? Color.secondary.opacity(0.18) : Color.clear, lineWidth: 1)
+        }
+    }
+}
+
+private enum LibraryImportSource {
+    case files
+    case googleDrive
+    case oneDrive
+
+    var systemImage: String {
+        switch self {
+        case .files:
+            "folder"
+        case .googleDrive:
+            "externaldrive"
+        case .oneDrive:
+            "cloud"
+        }
+    }
 }
 
 private struct NotesCardGridView: View {
@@ -312,13 +548,20 @@ private struct NotesCardGridView: View {
     var notes: [NoteDocument]
     var searchText: String
     var createNote: () -> Void
-    var importDocument: () -> Void
+    var importFiles: (LibraryImportSource) -> Void
+    var importPhotos: ([PhotosPickerItem]) -> Void
     var isImportingDocument: Bool
     var openNote: (NoteDocument) -> Void
     var deleteNote: (NoteDocument) -> Void
 
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+
     private let columns = [
-        GridItem(.adaptive(minimum: 230, maximum: 340), spacing: 28, alignment: .top)
+        GridItem(
+            .adaptive(minimum: NoteCardLayout.minWidth, maximum: NoteCardLayout.maxWidth),
+            spacing: 26,
+            alignment: .top
+        )
     ]
 
     var body: some View {
@@ -336,6 +579,7 @@ private struct NotesCardGridView: View {
                                 openNote: { openNote(note) },
                                 deleteNote: { deleteNote(note) }
                             )
+                            .frame(height: NoteCardLayout.totalHeight)
                         }
                     }
                 }
@@ -345,6 +589,11 @@ private struct NotesCardGridView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color(.systemBackground))
+        .onChange(of: selectedPhotoItems) { _, newItems in
+            guard !newItems.isEmpty else { return }
+            importPhotos(newItems)
+            selectedPhotoItems = []
+        }
     }
 
     private var header: some View {
@@ -362,14 +611,36 @@ private struct NotesCardGridView: View {
 
             Spacer()
 
-            Button(action: importDocument) {
+            Menu {
+                Button {
+                    importFiles(.files)
+                } label: {
+                    Label("File", systemImage: LibraryImportSource.files.systemImage)
+                }
+
+                PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 12, matching: .images) {
+                    Label("Photo", systemImage: "photo.on.rectangle")
+                }
+
+                Button {
+                    importFiles(.googleDrive)
+                } label: {
+                    Label("Google Drive", systemImage: LibraryImportSource.googleDrive.systemImage)
+                }
+
+                Button {
+                    importFiles(.oneDrive)
+                } label: {
+                    Label("OneDrive", systemImage: LibraryImportSource.oneDrive.systemImage)
+                }
+            } label: {
                 Label(isImportingDocument ? "Importing" : "Import", systemImage: "square.and.arrow.down")
                     .font(.headline)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
             .disabled(folder == nil || isImportingDocument)
-            .accessibilityLabel("Import PDF or Word document")
+            .accessibilityLabel("Import file or photo")
 
             Button(action: createNote) {
                 Label("New", systemImage: "plus")
@@ -394,6 +665,14 @@ private struct NotesCardGridView: View {
     }
 }
 
+private enum NoteCardLayout {
+    static let minWidth: CGFloat = 238
+    static let maxWidth: CGFloat = 286
+    static let previewHeight: CGFloat = 278
+    static let footerHeight: CGFloat = 76
+    static let totalHeight = previewHeight + footerHeight
+}
+
 private struct NoteCardView: View {
     @Environment(\.modelContext) private var modelContext
 
@@ -411,6 +690,7 @@ private struct NoteCardView: View {
         Button(action: openNote) {
             VStack(alignment: .leading, spacing: 0) {
                 thumbnail
+                    .frame(height: NoteCardLayout.previewHeight)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(note.title)
@@ -429,8 +709,11 @@ private struct NoteCardView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 13)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: NoteCardLayout.footerHeight, alignment: .center)
                 .background(Color(.secondarySystemBackground))
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: NoteCardLayout.totalHeight, alignment: .top)
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
@@ -458,18 +741,22 @@ private struct NoteCardView: View {
 
     private var thumbnail: some View {
         ZStack {
+            Color(.tertiarySystemGroupedBackground)
+
             if let thumbnailImage {
                 Image(uiImage: thumbnailImage)
                     .resizable()
-                    .scaledToFill()
+                    .scaledToFit()
+                    .padding(12)
             } else if let page = note.sortedPages.first {
                 NoteBackgroundSurface(background: page.background)
+                    .aspectRatio(pagePreviewAspectRatio(page), contentMode: .fit)
+                    .padding(12)
             } else {
                 Color(.tertiarySystemGroupedBackground)
             }
         }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1.05, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottomTrailing) {
             if note.pages.count > 1 {
                 Text("\(note.pages.count)")
@@ -484,6 +771,10 @@ private struct NoteCardView: View {
         .clipped()
     }
 
+    private func pagePreviewAspectRatio(_ page: NotePage) -> CGFloat {
+        page.pageSize.width / max(page.pageSize.height, 1)
+    }
+
     private func loadThumbnail(forceRefresh: Bool = false) {
         guard let page = note.sortedPages.first else {
             thumbnailImage = nil
@@ -495,6 +786,11 @@ private struct NoteCardView: View {
            let image = UIImage(contentsOfFile: storage.url(forRelativePath: relativePath).path) {
             thumbnailImage = image
             return
+        }
+
+        if !forceRefresh,
+           let image = fallbackFirstPageImage(for: page) {
+            thumbnailImage = image
         }
 
         guard !isLoadingThumbnail else { return }
@@ -511,5 +807,10 @@ private struct NoteCardView: View {
                 thumbnailImage = nil
             }
         }
+    }
+
+    private func fallbackFirstPageImage(for page: NotePage) -> UIImage? {
+        guard let attachment = page.lockedImageAttachments.first else { return nil }
+        return UIImage(contentsOfFile: storage.url(forRelativePath: attachment.storedFileName).path)
     }
 }

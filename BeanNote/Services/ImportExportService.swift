@@ -56,6 +56,29 @@ struct ImportedDocumentNote {
     var attachments: [Attachment]
 }
 
+struct SharedFolderSummary: Codable, Identifiable, Equatable {
+    var id: UUID
+    var name: String
+    var colorHex: String
+}
+
+private struct SharedFolderIndex: Codable {
+    var folders: [SharedFolderSummary]
+}
+
+private enum SharedImportMode: String, Codable {
+    case notePages
+    case attachments
+}
+
+private struct SharedImportRequest: Codable {
+    var id: UUID
+    var title: String
+    var folderID: UUID?
+    var importMode: SharedImportMode
+    var files: [String]
+}
+
 enum ImportExportError: LocalizedError {
     case unsupportedImageData
     case unsupportedDocument
@@ -86,13 +109,16 @@ struct ImportExportService {
 
     static let supportedContentTypes: [UTType] = [
         .pdf,
+        .image,
         .png,
         .jpeg,
         wordDocument,
         legacyWordDocument,
         commaSeparatedText,
         powerpoint,
-        powerpointXML
+        powerpointXML,
+        .plainText,
+        .data
     ]
 
     var storage = LocalStorageService()
@@ -102,12 +128,35 @@ struct ImportExportService {
     func importsAsAnnotatableDocument(_ sourceURL: URL) -> Bool {
         let contentType = UTType(filenameExtension: sourceURL.pathExtension) ?? .data
         let kind = attachmentKind(for: contentType, fileExtension: sourceURL.pathExtension)
-        return kind == .pdf || kind == .docx
+        return kind == .pdf || kind == .docx || kind == .presentation
     }
 
     func importDocumentAsNote(from sourceURL: URL, into folder: NotebookFolder) async throws -> ImportedDocumentNote {
         let note = NoteDocument(title: sourceURL.deletingPathExtension().lastPathComponent)
         let imported = try await importDocumentPages(from: sourceURL, into: note, startingAt: 0)
+
+        note.folder = folder
+        folder.notes.append(note)
+        folder.updatedAt = Date()
+
+        return ImportedDocumentNote(
+            note: note,
+            pages: imported.pages,
+            attachments: imported.attachments
+        )
+    }
+
+    func importImageAsNote(_ image: UIImage, named displayName: String, into folder: NotebookFolder) throws -> ImportedDocumentNote {
+        let title = URL(fileURLWithPath: displayName).deletingPathExtension().lastPathComponent
+        let note = NoteDocument(title: title.isEmpty ? "Photo" : title)
+        let imported = try importImagePage(
+            image,
+            sourceData: nil,
+            originalFileName: displayName,
+            displayName: note.title,
+            into: note,
+            pageOrder: 0
+        )
 
         note.folder = folder
         folder.notes.append(note)
@@ -131,10 +180,10 @@ struct ImportExportService {
         switch kind {
         case .pdf:
             return try importPDFPages(from: sourceURL, into: note, startingAt: startOrder)
-        case .docx:
+        case .image:
+            return try importImageDocumentPage(from: sourceURL, into: note, pageOrder: startOrder)
+        case .docx, .csv, .presentation, .other:
             return try await importPreviewableDocumentPage(from: sourceURL, kind: kind, into: note, pageOrder: startOrder)
-        default:
-            throw ImportExportError.unsupportedDocument
         }
     }
 
@@ -222,6 +271,22 @@ struct ImportExportService {
         return exportURL
     }
 
+    func exportNote(_ note: NoteDocument, format: ExportFormat) throws -> [URL] {
+        let pages = note.sortedPages
+        guard !pages.isEmpty else { throw ImportExportError.exportFailed }
+
+        switch format {
+        case .pdf:
+            let title = note.title.sanitizedFileName
+            let exportDirectory = try storage.directoryURL(for: .exports)
+            let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName("\(title).pdf"))
+            try writePDF(pages: pages, title: title, to: exportURL)
+            return [exportURL]
+        case .png, .jpeg:
+            return try pages.map { try exportPage($0, format: format) }
+        }
+    }
+
     func originalFileURL(for attachment: Attachment) throws -> URL {
         let url = storage.url(forRelativePath: attachment.storedFileName)
         guard storage.fileManager.fileExists(atPath: url.path) else {
@@ -230,38 +295,194 @@ struct ImportExportService {
         return url
     }
 
-    func absorbSharedInbox(into modelContext: ModelContext) throws {
+    func writeSharedFolderIndex(folders: [NotebookFolder]) throws {
+        guard let indexURL = LocalStorageService.sharedFolderIndexURL(fileManager: storage.fileManager) else {
+            return
+        }
+
+        let index = SharedFolderIndex(
+            folders: folders
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                .map {
+                    SharedFolderSummary(
+                        id: $0.id,
+                        name: $0.name,
+                        colorHex: $0.colorHex
+                    )
+                }
+        )
+        let data = try JSONEncoder().encode(index)
+        try storage.fileManager.createDirectory(at: indexURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: indexURL, options: [.atomic])
+    }
+
+    func absorbSharedInbox(into modelContext: ModelContext) async throws {
         guard let inboxURL = LocalStorageService.sharedInboxURL(fileManager: storage.fileManager) else {
             return
         }
 
         try storage.fileManager.createDirectory(at: inboxURL, withIntermediateDirectories: true)
+        var didImport = try await absorbSharedImportRequests(from: inboxURL, into: modelContext)
         let sharedFiles = try storage.fileManager.contentsOfDirectory(
             at: inboxURL,
             includingPropertiesForKeys: nil
         )
         .filter { !$0.hasDirectoryPath }
+        .filter { $0.pathExtension.lowercased() != "json" }
 
-        guard !sharedFiles.isEmpty else { return }
+        guard !sharedFiles.isEmpty else {
+            if didImport {
+                try modelContext.save()
+            }
+            return
+        }
 
         let inboxFolder = try ensureInboxFolder(in: modelContext)
 
         for fileURL in sharedFiles {
-            let noteTitle = fileURL.deletingPathExtension().lastPathComponent
-            let note = NoteDocument(title: noteTitle, folder: inboxFolder)
-            let page = NotePage(pageOrder: 0, note: note)
-            note.pages.append(page)
-            inboxFolder.notes.append(note)
+            let imported = try await importDocumentAsNote(from: fileURL, into: inboxFolder)
+            modelContext.insert(imported.note)
 
-            modelContext.insert(note)
-            modelContext.insert(page)
+            for page in imported.pages {
+                modelContext.insert(page)
+            }
 
-            let attachment = try importFile(from: fileURL, into: page)
-            modelContext.insert(attachment)
+            for attachment in imported.attachments {
+                modelContext.insert(attachment)
+            }
+
             try? storage.fileManager.removeItem(at: fileURL)
+            didImport = true
         }
 
-        try modelContext.save()
+        if didImport {
+            try modelContext.save()
+        }
+    }
+
+    private func absorbSharedImportRequests(from inboxURL: URL, into modelContext: ModelContext) async throws -> Bool {
+        let requestsURL = inboxURL.appendingPathComponent("Requests", isDirectory: true)
+        guard storage.fileManager.fileExists(atPath: requestsURL.path) else { return false }
+
+        let requestDirectories = try storage.fileManager.contentsOfDirectory(
+            at: requestsURL,
+            includingPropertiesForKeys: nil
+        )
+        .filter(\.hasDirectoryPath)
+
+        var didImport = false
+
+        for requestDirectory in requestDirectories {
+            let requestURL = requestDirectory.appendingPathComponent("request.json")
+            guard storage.fileManager.fileExists(atPath: requestURL.path) else { continue }
+
+            let request = try JSONDecoder().decode(
+                SharedImportRequest.self,
+                from: try Data(contentsOf: requestURL)
+            )
+            let fileURLs = request.files
+                .map { requestDirectory.appendingPathComponent($0) }
+                .filter { storage.fileManager.fileExists(atPath: $0.path) }
+
+            guard !fileURLs.isEmpty else {
+                try? storage.fileManager.removeItem(at: requestDirectory)
+                continue
+            }
+
+            let folder = try folder(for: request.folderID, in: modelContext)
+            try await importSharedRequest(request, fileURLs: fileURLs, into: folder, modelContext: modelContext)
+            try? storage.fileManager.removeItem(at: requestDirectory)
+            didImport = true
+        }
+
+        return didImport
+    }
+
+    private func importSharedRequest(
+        _ request: SharedImportRequest,
+        fileURLs: [URL],
+        into folder: NotebookFolder,
+        modelContext: ModelContext
+    ) async throws {
+        let noteTitle = request.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackTitle = fileURLs.first?.deletingPathExtension().lastPathComponent ?? "Shared Import"
+        let note = NoteDocument(title: noteTitle.isEmpty ? fallbackTitle : noteTitle, folder: folder)
+        folder.notes.append(note)
+        modelContext.insert(note)
+
+        switch request.importMode {
+        case .notePages:
+            try await importSharedFilesAsPages(fileURLs, into: note, modelContext: modelContext)
+        case .attachments:
+            try importSharedFilesAsAttachments(fileURLs, into: note, modelContext: modelContext)
+        }
+
+        if note.pages.isEmpty {
+            let page = NotePage(pageOrder: 0, note: note)
+            note.pages.append(page)
+            modelContext.insert(page)
+        }
+
+        note.touch()
+    }
+
+    private func importSharedFilesAsPages(
+        _ fileURLs: [URL],
+        into note: NoteDocument,
+        modelContext: ModelContext
+    ) async throws {
+        var attachmentPage: NotePage?
+
+        for fileURL in fileURLs {
+            do {
+                let nextOrder = (note.pages.map(\.pageOrder).max() ?? -1) + 1
+                let imported = try await importDocumentPages(from: fileURL, into: note, startingAt: nextOrder)
+
+                for page in imported.pages {
+                    modelContext.insert(page)
+                }
+
+                for attachment in imported.attachments {
+                    modelContext.insert(attachment)
+                }
+            } catch {
+                let page = attachmentPage ?? {
+                    let page = NotePage(pageOrder: (note.pages.map(\.pageOrder).max() ?? -1) + 1, note: note)
+                    note.pages.append(page)
+                    modelContext.insert(page)
+                    attachmentPage = page
+                    return page
+                }()
+                let attachment = try importFile(from: fileURL, into: page)
+                modelContext.insert(attachment)
+            }
+        }
+    }
+
+    private func importSharedFilesAsAttachments(
+        _ fileURLs: [URL],
+        into note: NoteDocument,
+        modelContext: ModelContext
+    ) throws {
+        let page = NotePage(pageOrder: 0, note: note)
+        note.pages.append(page)
+        modelContext.insert(page)
+
+        for fileURL in fileURLs {
+            let attachment = try importFile(from: fileURL, into: page)
+            modelContext.insert(attachment)
+        }
+    }
+
+    private func folder(for folderID: UUID?, in modelContext: ModelContext) throws -> NotebookFolder {
+        let folders = try modelContext.fetch(FetchDescriptor<NotebookFolder>())
+
+        if let folderID,
+           let folder = folders.first(where: { $0.id == folderID }) {
+            return folder
+        }
+
+        return try ensureInboxFolder(in: modelContext)
     }
 
     private func ensureInboxFolder(in modelContext: ModelContext) throws -> NotebookFolder {
@@ -283,7 +504,7 @@ struct ImportExportService {
             return .pdf
         }
 
-        if contentType.conforms(to: .image) || ["png", "jpg", "jpeg"].contains(ext) {
+        if contentType.conforms(to: .image) || ["png", "jpg", "jpeg", "heic", "heif", "gif", "tif", "tiff", "bmp", "webp"].contains(ext) {
             return .image
         }
 
@@ -456,12 +677,119 @@ struct ImportExportService {
         )
     }
 
+    private func importImageDocumentPage(
+        from sourceURL: URL,
+        into note: NoteDocument,
+        pageOrder: Int
+    ) throws -> ImportedDocumentPages {
+        let storedImage = try storage.copyFile(from: sourceURL, to: .imports)
+        let storedURL = storage.url(forRelativePath: storedImage.relativePath)
+
+        guard let image = UIImage(contentsOfFile: storedURL.path) else {
+            throw ImportExportError.unsupportedImageData
+        }
+
+        return try makeLockedImagePage(
+            image,
+            storedImage: storedImage,
+            originalFileName: sourceURL.lastPathComponent,
+            displayName: sourceURL.deletingPathExtension().lastPathComponent,
+            into: note,
+            pageOrder: pageOrder
+        )
+    }
+
+    private func importImagePage(
+        _ image: UIImage,
+        sourceData: Data?,
+        originalFileName: String,
+        displayName: String,
+        into note: NoteDocument,
+        pageOrder: Int
+    ) throws -> ImportedDocumentPages {
+        let encoded = try encodedImageData(for: image, fallbackData: sourceData)
+        let sanitizedOriginal = originalFileName.sanitizedFileName
+        let baseName = URL(fileURLWithPath: sanitizedOriginal).deletingPathExtension().lastPathComponent
+        let storedImage = try storage.saveData(
+            encoded.data,
+            preferredName: "\(baseName).\(encoded.fileExtension)",
+            contentType: encoded.contentType,
+            to: .imports
+        )
+
+        return try makeLockedImagePage(
+            image,
+            storedImage: storedImage,
+            originalFileName: sanitizedOriginal,
+            displayName: displayName,
+            into: note,
+            pageOrder: pageOrder
+        )
+    }
+
+    private func makeLockedImagePage(
+        _ image: UIImage,
+        storedImage: StoredFile,
+        originalFileName: String,
+        displayName: String,
+        into note: NoteDocument,
+        pageOrder: Int
+    ) throws -> ImportedDocumentPages {
+        let pageSize = normalizedImagePageSize(for: image.size)
+        let page = NotePage(
+            pageOrder: pageOrder,
+            background: .plain(),
+            width: Double(pageSize.width),
+            height: Double(pageSize.height),
+            note: note
+        )
+        let imageAttachment = Attachment(
+            kind: .image,
+            displayName: displayName.isEmpty ? "Image" : displayName,
+            originalFileName: originalFileName,
+            storedFileName: storedImage.relativePath,
+            contentTypeIdentifier: storedImage.contentTypeIdentifier,
+            fileExtension: URL(fileURLWithPath: storedImage.fileName).pathExtension,
+            x: 0,
+            y: 0,
+            width: Double(pageSize.width),
+            height: Double(pageSize.height),
+            isLocked: true,
+            page: page
+        )
+
+        page.attachments.append(imageAttachment)
+        note.pages.append(page)
+        note.touch()
+
+        return ImportedDocumentPages(pages: [page], attachments: [imageAttachment])
+    }
+
     private func writePDF(image: UIImage, page: NotePage, to exportURL: URL) throws {
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: page.pageSize))
 
         try renderer.writePDF(to: exportURL) { context in
             context.beginPage()
             image.draw(in: CGRect(origin: .zero, size: page.pageSize))
+        }
+    }
+
+    private func writePDF(pages: [NotePage], title: String, to exportURL: URL) throws {
+        let firstSize = pages.first?.pageSize ?? CGSize(width: 1024, height: 1366)
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: firstSize))
+
+        try renderer.writePDF(to: exportURL) { context in
+            for page in pages {
+                let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+                context.beginPage(withBounds: pageBounds, pageInfo: [
+                    kCGPDFContextCreator as String: "BeanNote",
+                    kCGPDFContextTitle as String: title
+                ])
+
+                let drawing = drawingStorage.loadDrawing(for: page)
+                let image = thumbnailService.renderPageImage(page: page, drawing: drawing, scale: 2)
+                image.draw(in: pageBounds)
+            }
         }
     }
 
@@ -475,6 +803,34 @@ struct ImportExportService {
             width: (width * scale).rounded(),
             height: (height * scale).rounded()
         )
+    }
+
+    private func normalizedImagePageSize(for sourceSize: CGSize) -> CGSize {
+        let width = max(sourceSize.width, 1)
+        let height = max(sourceSize.height, 1)
+        let longSide = max(width, height)
+        let targetLongSide: CGFloat = longSide < 720 ? 1024 : 1366
+        let scale = targetLongSide / longSide
+
+        return CGSize(
+            width: max(1, (width * scale).rounded()),
+            height: max(1, (height * scale).rounded())
+        )
+    }
+
+    private func encodedImageData(
+        for image: UIImage,
+        fallbackData: Data?
+    ) throws -> (data: Data, contentType: UTType, fileExtension: String) {
+        if let data = image.jpegData(compressionQuality: 0.92) {
+            return (data, .jpeg, "jpg")
+        }
+
+        if let data = image.pngData() ?? fallbackData {
+            return (data, .png, "png")
+        }
+
+        throw ImportExportError.unsupportedImageData
     }
 
     private func renderPDFPage(_ page: PDFPage, size: CGSize) -> UIImage {

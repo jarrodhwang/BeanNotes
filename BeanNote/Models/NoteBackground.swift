@@ -28,12 +28,41 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+struct NoteBackgroundColorPreset: Identifiable, Equatable {
+    var name: String
+    var colorHex: String
+
+    var id: String { colorHex }
+}
+
 struct NoteBackground: Codable, Equatable {
+    static let defaultStyleRawKey = "defaultNoteBackgroundStyle"
+    static let defaultColorHexKey = "defaultNoteBackgroundColorHex"
+    static let defaultColorHex = "#FFFFFF"
+
+    static let colorPresets: [NoteBackgroundColorPreset] = [
+        NoteBackgroundColorPreset(name: "White", colorHex: "#FFFFFF"),
+        NoteBackgroundColorPreset(name: "Yellow", colorHex: "#FFF7BF"),
+        NoteBackgroundColorPreset(name: "Beige", colorHex: "#F3E7CF"),
+        NoteBackgroundColorPreset(name: "Cream", colorHex: "#FFF4DF"),
+        NoteBackgroundColorPreset(name: "Pink", colorHex: "#FFE1E8"),
+        NoteBackgroundColorPreset(name: "Blue", colorHex: "#DDEBFF"),
+        NoteBackgroundColorPreset(name: "Green", colorHex: "#DFF3E4"),
+        NoteBackgroundColorPreset(name: "Gray", colorHex: "#F2F4F7")
+    ]
+
     var style: NoteBackgroundStyle
     var colorHex: String
 
     static func plain(colorHex: String = "#FFFFFF") -> NoteBackground {
         NoteBackground(style: .plain, colorHex: colorHex)
+    }
+
+    static func fromDefaults(styleRaw: String, colorHex: String) -> NoteBackground {
+        NoteBackground(
+            style: NoteBackgroundStyle(rawValue: styleRaw) ?? .plain,
+            colorHex: colorHex.isEmpty ? defaultColorHex : colorHex
+        )
     }
 }
 

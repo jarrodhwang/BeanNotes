@@ -20,7 +20,7 @@ final class NotebookFolder {
     init(
         id: UUID = UUID(),
         name: String,
-        colorHex: String = "#5B8DEF",
+        colorHex: String = "#2563EB",
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         notes: [NoteDocument] = []

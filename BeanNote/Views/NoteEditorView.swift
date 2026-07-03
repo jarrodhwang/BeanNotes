@@ -15,6 +15,9 @@ struct NoteEditorView: View {
     @StateObject private var toolState = DrawingToolState()
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
+    @AppStorage("noteEditorPageFlowMode") private var pageFlowModeRaw = NoteEditorPageFlowMode.continuous.rawValue
+    @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
+    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
 
     @State private var selectedPageID: UUID?
     @State private var isShowingAttachmentPicker = false
@@ -23,9 +26,9 @@ struct NoteEditorView: View {
     @State private var isShowingBackgroundPicker = false
     @State private var previewAttachment: Attachment?
     @State private var saveNowSignal = 0
+    @State private var fitToPageSignal = 0
     @State private var errorMessage: String?
 
-    private let storage = LocalStorageService()
     private let importExportService = ImportExportService()
 
     private var selectedPage: NotePage? {
@@ -43,6 +46,42 @@ struct NoteEditorView: View {
 
     private var penPaletteMode: PenPaletteMode {
         PenPaletteMode(rawValue: penPaletteModeRaw) ?? .custom
+    }
+
+    private var pageFlowMode: NoteEditorPageFlowMode {
+        NoteEditorPageFlowMode(rawValue: pageFlowModeRaw) ?? .continuous
+    }
+
+    private var editorPages: [NotePage] {
+        let pages = note.sortedPages
+
+        switch pageFlowMode {
+        case .singlePage:
+            if let selectedPage {
+                return [selectedPage]
+            } else {
+                return Array(pages.prefix(1))
+            }
+        case .continuous, .infinite:
+            return pages
+        }
+    }
+
+    private var currentPageIndex: Int? {
+        guard let selectedPageID else { return nil }
+        return note.sortedPages.firstIndex { $0.id == selectedPageID }
+    }
+
+    private var pageStatusText: String {
+        guard let currentPageIndex else {
+            return "Page 1 / \(max(note.sortedPages.count, 1))"
+        }
+
+        return "Page \(currentPageIndex + 1) / \(max(note.sortedPages.count, 1))"
+    }
+
+    private var defaultNoteBackground: NoteBackground {
+        NoteBackground.fromDefaults(styleRaw: defaultBackgroundStyleRaw, colorHex: defaultBackgroundColorHex)
     }
 
     var body: some View {
@@ -77,6 +116,31 @@ struct NoteEditorView: View {
                 ExportView(note: note, page: page)
             }
         }
+        .sheet(isPresented: $isShowingBackgroundPicker) {
+            if let page = selectedPage {
+                PageBackgroundEditorSheet(
+                    styleRaw: Binding(
+                        get: { page.backgroundStyleRaw },
+                        set: {
+                            page.backgroundStyleRaw = $0
+                            page.touch()
+                            try? modelContext.save()
+                        }
+                    ),
+                    colorHex: Binding(
+                        get: { page.backgroundColorHex },
+                        set: {
+                            page.backgroundColorHex = $0
+                            page.touch()
+                            try? modelContext.save()
+                        }
+                    ),
+                    applyToAllPages: {
+                        applyBackgroundToAllPages(from: page)
+                    }
+                )
+            }
+        }
         .sheet(item: $previewAttachment) { attachment in
             if let url = try? importExportService.originalFileURL(for: attachment) {
                 DocumentPreviewSheet(attachment: attachment, fileURL: url)
@@ -97,27 +161,20 @@ struct NoteEditorView: View {
     private func editor(page: NotePage) -> some View {
         ZStack(alignment: .top) {
             ZStack(alignment: .trailing) {
-                GeometryReader { proxy in
-                    ZStack(alignment: .topLeading) {
-                        NoteBackgroundSurface(background: page.background)
-
-                        DrawingCanvasView(
-                            page: page,
-                            toolState: toolState,
-                            paletteMode: penPaletteMode,
-                            doubleTapAction: doubleTapAction,
-                            saveNowSignal: saveNowSignal
-                        )
-
-                        ForEach(page.movableImageAttachments) { attachment in
-                            if let image = image(for: attachment) {
-                                ImageAttachmentView(attachment: attachment, image: image)
-                            }
-                        }
-                    }
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .clipped()
-                }
+                DrawingCanvasView(
+                    pages: editorPages,
+                    selectedPageID: $selectedPageID,
+                    toolState: toolState,
+                    paletteMode: penPaletteMode,
+                    pageFlowMode: pageFlowMode,
+                    doubleTapAction: doubleTapAction,
+                    saveNowSignal: saveNowSignal,
+                    fitToPageSignal: fitToPageSignal,
+                    attachmentChanged: {
+                        try? modelContext.save()
+                    },
+                    addPageAtBottom: addPageAtBottom
+                )
                 .ignoresSafeArea(.container, edges: .bottom)
 
                 if isShowingAttachments {
@@ -154,13 +211,6 @@ struct NoteEditorView: View {
         .toolbar {
             editorToolbar(page: page)
         }
-        .confirmationDialog("Page Background", isPresented: $isShowingBackgroundPicker, titleVisibility: .visible) {
-            ForEach(NoteBackgroundStyle.allCases) { style in
-                Button(style.label) {
-                    page.background = NoteBackground(style: style, colorHex: page.backgroundColorHex)
-                }
-            }
-        }
     }
 
     @ToolbarContentBuilder
@@ -176,40 +226,44 @@ struct NoteEditorView: View {
         }
 
         ToolbarItemGroup(placement: .topBarTrailing) {
-            Menu {
-                ForEach(note.sortedPages) { candidate in
-                    Button("Page \(candidate.pageOrder + 1)") {
-                        selectedPageID = candidate.id
-                    }
-                }
-
-                Button {
-                    addPage(after: page)
-                } label: {
-                    Label("Add Page", systemImage: "plus")
-                }
+            Button {
+                goToPreviousPage()
             } label: {
-                Image(systemName: "square.stack")
+                Image(systemName: "chevron.up")
             }
-            .accessibilityLabel("Pages")
+            .disabled(currentPageIndex == nil || currentPageIndex == 0)
+            .accessibilityLabel("Previous page")
 
-            Menu {
-                ForEach(NoteBackgroundStyle.allCases) { style in
-                    Button(style.label) {
-                        page.background = NoteBackground(style: style, colorHex: page.backgroundColorHex)
-                    }
-                }
+            Text(pageStatusText)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(minWidth: 82)
 
-                ColorPicker(
-                    "Color",
-                    selection: Binding(
-                        get: { Color(hex: page.backgroundColorHex) },
-                        set: { newColor in
-                            page.backgroundColorHex = newColor.hexRGB
-                            page.touch()
-                        }
-                    )
-                )
+            Button {
+                goToNextPage()
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .disabled(currentPageIndex == nil || currentPageIndex == note.sortedPages.count - 1)
+            .accessibilityLabel("Next page")
+
+            Button {
+                addPage(after: page)
+            } label: {
+                Image(systemName: "plus.square.on.square")
+            }
+            .accessibilityLabel("Add page")
+
+            Button {
+                fitToPageSignal += 1
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
+            .accessibilityLabel("Fit page to screen")
+
+            Button {
+                isShowingBackgroundPicker = true
             } label: {
                 Image(systemName: "rectangle.inset.filled")
             }
@@ -254,21 +308,40 @@ struct NoteEditorView: View {
             return
         }
 
-        let page = NotePage(pageOrder: 0, note: note)
+        let page = NotePage(pageOrder: 0, background: defaultNoteBackground, note: note)
         note.pages.append(page)
         modelContext.insert(page)
         selectedPageID = page.id
         try? modelContext.save()
     }
 
-    private func addPage(after page: NotePage) {
+    private func addPage(after page: NotePage, shouldSelect: Bool = true) {
         let nextOrder = (note.pages.map(\.pageOrder).max() ?? -1) + 1
         let newPage = NotePage(pageOrder: nextOrder, background: page.background, note: note)
         note.pages.append(newPage)
         note.touch()
         modelContext.insert(newPage)
-        selectedPageID = newPage.id
+
+        if shouldSelect {
+            selectedPageID = newPage.id
+        }
+
         try? modelContext.save()
+    }
+
+    private func addPageAtBottom() {
+        guard pageFlowMode.autoAddsPages, let lastPage = note.sortedPages.last else { return }
+        addPage(after: lastPage, shouldSelect: false)
+    }
+
+    private func goToPreviousPage() {
+        guard let currentPageIndex, currentPageIndex > 0 else { return }
+        selectedPageID = note.sortedPages[currentPageIndex - 1].id
+    }
+
+    private func goToNextPage() {
+        guard let currentPageIndex, currentPageIndex < note.sortedPages.count - 1 else { return }
+        selectedPageID = note.sortedPages[currentPageIndex + 1].id
     }
 
     private func importFiles(_ urls: [URL]) async {
@@ -323,6 +396,17 @@ struct NoteEditorView: View {
         }
     }
 
+    private func applyBackgroundToAllPages(from sourcePage: NotePage) {
+        let background = sourcePage.background
+
+        for page in note.pages {
+            page.background = background
+        }
+
+        note.touch()
+        try? modelContext.save()
+    }
+
     private func pasteImage() {
         guard let image = UIPasteboard.general.image else {
             errorMessage = "The clipboard does not contain an image."
@@ -337,8 +421,41 @@ struct NoteEditorView: View {
         note.touch()
         try? modelContext.save()
     }
+}
 
-    private func image(for attachment: Attachment) -> UIImage? {
-        UIImage(contentsOfFile: storage.url(forRelativePath: attachment.storedFileName).path)
+private struct PageBackgroundEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @Binding var styleRaw: String
+    @Binding var colorHex: String
+    var applyToAllPages: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Page Background") {
+                    NoteBackgroundPickerView(styleRaw: $styleRaw, colorHex: $colorHex)
+                        .padding(.vertical, 6)
+                }
+
+                Section {
+                    Button {
+                        applyToAllPages()
+                    } label: {
+                        Label("Apply to All Pages", systemImage: "square.stack.3d.up")
+                    }
+                }
+            }
+            .navigationTitle("Background")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

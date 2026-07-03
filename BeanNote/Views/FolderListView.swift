@@ -151,13 +151,24 @@ struct FolderEditorView: View {
     @State private var colorHex: String
 
     private let colors = [
-        "#5B8DEF",
-        "#51A37A",
-        "#E5B94E",
-        "#D96B6B",
-        "#8D79D6",
-        "#48A9A6",
-        "#E1864A"
+        "#2563EB",
+        "#0EA5E9",
+        "#06B6D4",
+        "#14B8A6",
+        "#22C55E",
+        "#84CC16",
+        "#EAB308",
+        "#F59E0B",
+        "#F97316",
+        "#EF4444",
+        "#F43F5E",
+        "#EC4899",
+        "#D946EF",
+        "#A855F7",
+        "#8B5CF6",
+        "#6366F1",
+        "#64748B",
+        "#111827"
     ]
 
     init(
@@ -183,20 +194,44 @@ struct FolderEditorView: View {
                 }
 
                 Section("Color") {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(44)), count: 7), spacing: 12) {
+                    HStack(spacing: 12) {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(hex: colorHex))
+                            .frame(width: 46, height: 46)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                            }
+                            .accessibilityHidden(true)
+
+                        ColorPicker(
+                            "Custom Color",
+                            selection: Binding(
+                                get: { Color(hex: colorHex) },
+                                set: { colorHex = $0.hexRGB }
+                            ),
+                            supportsOpacity: false
+                        )
+                    }
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(44)), count: 6), spacing: 12) {
                         ForEach(colors, id: \.self) { candidate in
                             Button {
                                 colorHex = candidate
                             } label: {
-                                Circle()
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .fill(Color(hex: candidate))
                                     .frame(width: 34, height: 34)
                                     .overlay {
-                                        if colorHex == candidate {
+                                        if colorHex.caseInsensitiveCompare(candidate) == .orderedSame {
                                             Image(systemName: "checkmark")
                                                 .font(.caption.weight(.bold))
-                                                .foregroundStyle(.white)
+                                                .foregroundStyle(readableCheckmarkColor(for: candidate))
                                         }
+                                    }
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
                                     }
                             }
                             .buttonStyle(.plain)
@@ -224,5 +259,16 @@ struct FolderEditorView: View {
                 }
             }
         }
+    }
+
+    private func readableCheckmarkColor(for colorHex: String) -> Color {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        UIColor(hex: colorHex).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+
+        let luminance = (0.299 * red) + (0.587 * green) + (0.114 * blue)
+        return luminance > 0.68 ? .black : .white
     }
 }

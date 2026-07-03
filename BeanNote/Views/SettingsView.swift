@@ -39,6 +39,9 @@ struct SettingsView: View {
     @AppStorage("appTheme") private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
+    @AppStorage("noteEditorPageFlowMode") private var pageFlowModeRaw = NoteEditorPageFlowMode.continuous.rawValue
+    @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
+    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
 
     var body: some View {
         NavigationStack {
@@ -49,6 +52,26 @@ struct SettingsView: View {
                             Text(theme.label).tag(theme.rawValue)
                         }
                     }
+                }
+
+                Section("Default Note Background") {
+                    NoteBackgroundPickerView(
+                        styleRaw: $defaultBackgroundStyleRaw,
+                        colorHex: $defaultBackgroundColorHex
+                    )
+                    .padding(.vertical, 6)
+                }
+
+                Section("Note Editor") {
+                    Picker("Page Flow", selection: $pageFlowModeRaw) {
+                        ForEach(NoteEditorPageFlowMode.allCases) { mode in
+                            Text(mode.label).tag(mode.rawValue)
+                        }
+                    }
+
+                    Text((NoteEditorPageFlowMode(rawValue: pageFlowModeRaw) ?? .continuous).description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Apple Pencil") {

@@ -19,14 +19,24 @@ struct ThumbnailService {
         let scale = min(maxDimension / longestSide, 1)
         let thumbnailSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
 
-        let renderer = UIGraphicsImageRenderer(size: thumbnailSize)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: thumbnailSize, format: format)
         let thumbnail = renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: thumbnailSize))
         }
 
         let data = thumbnail.jpegData(compressionQuality: 0.82) ?? Data()
-        let fileName = page.thumbnailFileName ?? "\(page.id.uuidString).jpg"
-        let stored = try storage.saveData(data, preferredName: fileName, contentType: .jpeg, to: .thumbnails)
+        let fileName = "\(page.id.uuidString).jpg"
+        let stored = try storage.saveData(
+            data,
+            fileName: fileName,
+            contentType: .jpeg,
+            to: .thumbnails,
+            replacingExisting: true
+        )
         page.thumbnailFileName = stored.relativePath
         return storage.url(forRelativePath: stored.relativePath)
     }

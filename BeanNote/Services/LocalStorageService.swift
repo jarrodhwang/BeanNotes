@@ -137,6 +137,30 @@ struct LocalStorageService {
         )
     }
 
+    func saveData(
+        _ data: Data,
+        fileName: String,
+        contentType: UTType,
+        to directory: StorageDirectory,
+        replacingExisting: Bool
+    ) throws -> StoredFile {
+        let directoryURL = try directoryURL(for: directory)
+        let sanitizedName = fileName.sanitizedFileName
+        let destinationURL = directoryURL.appendingPathComponent(sanitizedName)
+
+        if replacingExisting, fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
+        }
+
+        try data.write(to: destinationURL, options: [.atomic])
+
+        return StoredFile(
+            relativePath: try relativePath(for: destinationURL),
+            fileName: sanitizedName,
+            contentTypeIdentifier: contentType.identifier
+        )
+    }
+
     func removeFile(relativePath: String) throws {
         let fileURL = url(forRelativePath: relativePath)
         guard fileManager.fileExists(atPath: fileURL.path) else { return }
@@ -161,6 +185,13 @@ struct LocalStorageService {
         fileManager
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
             .appendingPathComponent("SharedInbox", isDirectory: true)
+    }
+
+    static func sharedFolderIndexURL(fileManager: FileManager = .default) -> URL? {
+        fileManager
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
+            .appendingPathComponent("FolderIndex", isDirectory: true)
+            .appendingPathComponent("folders.json")
     }
 }
 

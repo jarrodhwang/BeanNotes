@@ -9,6 +9,7 @@ import SwiftUI
 
 enum DrawingTool: String, CaseIterable, Identifiable {
     case pen
+    case pencil
     case highlighter
     case eraser
     case lasso
@@ -19,6 +20,8 @@ enum DrawingTool: String, CaseIterable, Identifiable {
         switch self {
         case .pen:
             "Pen"
+        case .pencil:
+            "Pencil"
         case .highlighter:
             "Highlighter"
         case .eraser:
@@ -32,6 +35,8 @@ enum DrawingTool: String, CaseIterable, Identifiable {
         switch self {
         case .pen:
             "pencil.tip"
+        case .pencil:
+            "pencil"
         case .highlighter:
             "highlighter"
         case .eraser:
@@ -90,17 +95,46 @@ enum PenPaletteMode: String, CaseIterable, Identifiable {
 final class DrawingToolState: ObservableObject {
     @Published var selectedTool: DrawingTool = .pen
     @Published var previousTool: DrawingTool = .pen
+    @Published var pencilColor: Color = .black
     @Published var penColor: Color = .black
-    @Published var highlighterColor: Color = .yellow.opacity(0.55)
-    @Published var strokeWidth: CGFloat = 5
+    @Published var highlighterColor: Color = .yellow
+    @Published var pencilWidth: CGFloat = 6
+    @Published var penWidth: CGFloat = 5
+    @Published var highlighterWidth: CGFloat = 14
     @Published var temporaryEraserActive = false
 
     var activeInkColor: Color {
         switch selectedTool {
+        case .pencil:
+            pencilColor
         case .highlighter:
             highlighterColor
         default:
             penColor
+        }
+    }
+
+    var activeStrokeWidth: CGFloat {
+        switch selectedTool {
+        case .pencil:
+            pencilWidth
+        case .highlighter:
+            highlighterWidth
+        default:
+            penWidth
+        }
+    }
+
+    var activeInkType: PKInkingTool.InkType? {
+        switch selectedTool {
+        case .pen:
+            .pen
+        case .pencil:
+            .pencil
+        case .highlighter:
+            .marker
+        case .eraser, .lasso:
+            nil
         }
     }
 
@@ -117,14 +151,30 @@ final class DrawingToolState: ObservableObject {
     }
 
     func applyActiveColor(_ color: Color) {
-        if selectedTool == .highlighter {
-            highlighterColor = color.opacity(0.55)
-        } else {
+        switch selectedTool {
+        case .pencil:
+            pencilColor = color
+        case .pen:
             penColor = color
+        case .highlighter:
+            highlighterColor = color
+        case .eraser, .lasso:
+            select(.pen)
+            penColor = color
+        }
+    }
 
-            if selectedTool == .eraser || selectedTool == .lasso {
-                select(.pen)
-            }
+    func applyActiveWidth(_ width: CGFloat) {
+        switch selectedTool {
+        case .pencil:
+            pencilWidth = width
+        case .pen:
+            penWidth = width
+        case .highlighter:
+            highlighterWidth = width
+        case .eraser, .lasso:
+            select(.pen)
+            penWidth = width
         }
     }
 
@@ -159,9 +209,11 @@ final class DrawingToolState: ObservableObject {
     func makePKTool() -> PKTool {
         switch selectedTool {
         case .pen:
-            PKInkingTool(.pen, color: UIColor(penColor), width: strokeWidth)
+            PKInkingTool(activeInkType ?? .pen, color: UIColor(penColor), width: penWidth)
+        case .pencil:
+            PKInkingTool(activeInkType ?? .pencil, color: UIColor(pencilColor), width: pencilWidth)
         case .highlighter:
-            PKInkingTool(.marker, color: UIColor(highlighterColor), width: max(strokeWidth * 2, 8))
+            PKInkingTool(activeInkType ?? .marker, color: UIColor(highlighterColor).withAlphaComponent(0.5), width: highlighterWidth)
         case .eraser:
             PKEraserTool(.bitmap)
         case .lasso:

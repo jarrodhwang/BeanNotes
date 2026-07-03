@@ -25,12 +25,13 @@ struct PenPaletteView: View {
         ("Orange", .orange)
     ]
 
-    private let widths: [CGFloat] = [3, 7, 12]
+    private let widths: [CGFloat] = [3, 5, 8, 14]
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 toolButton(.pen)
+                toolButton(.pencil)
                 toolButton(.highlighter)
                 toolButton(.eraser)
                 toolButton(.lasso)
@@ -60,7 +61,7 @@ struct PenPaletteView: View {
                     widthButton(width)
                 }
 
-                ColorPicker("", selection: activeColor)
+                ColorPicker("", selection: activeColor, supportsOpacity: false)
                     .labelsHidden()
                     .frame(width: 34, height: 34)
                     .accessibilityLabel("Custom color")
@@ -149,20 +150,20 @@ struct PenPaletteView: View {
 
     private func widthButton(_ width: CGFloat) -> some View {
         Button {
-            toolState.strokeWidth = width
+            toolState.applyActiveWidth(width)
         } label: {
             Circle()
                 .fill(.secondary)
                 .frame(width: width + 5, height: width + 5)
                 .frame(width: 34, height: 34)
                 .background {
-                    if abs(toolState.strokeWidth - width) < 0.5 {
+                    if abs(toolState.activeStrokeWidth - width) < 0.5 {
                         Circle()
                             .fill(.blue.opacity(0.12))
                     }
                 }
                 .overlay {
-                    if abs(toolState.strokeWidth - width) < 0.5 {
+                    if abs(toolState.activeStrokeWidth - width) < 0.5 {
                         Circle()
                             .stroke(.blue, lineWidth: 2)
                     }

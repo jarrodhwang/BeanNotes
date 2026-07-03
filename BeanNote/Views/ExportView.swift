@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ExportView: View {
     @Environment(\.dismiss) private var dismiss
@@ -12,38 +13,64 @@ struct ExportView: View {
     var page: NotePage
     var service = ImportExportService()
 
-    @State private var exportURL: URL?
+    @State private var sharePayload: ExportSharePayload?
+    @State private var isExporting = false
     @State private var errorMessage: String?
+
+    private var pageOriginalAttachments: [Attachment] {
+        page.attachments
+            .filter { !$0.isLocked }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    private var noteOriginalAttachments: [Attachment] {
+        note.sortedPages
+            .flatMap(\.attachments)
+            .filter { !$0.isLocked }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                Section("Page") {
+                Section("Current Page") {
                     ForEach(ExportFormat.allCases) { format in
                         Button {
-                            export(format)
+                            exportCurrentPage(format)
                         } label: {
                             Label(format.label, systemImage: icon(for: format))
                         }
                     }
                 }
 
-                if let exportURL {
-                    Section {
-                        ShareLink(item: exportURL) {
-                            Label("Share Export", systemImage: "square.and.arrow.up")
+                Section("Whole Note") {
+                    ForEach(ExportFormat.allCases) { format in
+                        Button {
+                            exportWholeNote(format)
+                        } label: {
+                            Label(noteExportLabel(for: format), systemImage: icon(for: format))
                         }
                     }
                 }
 
-                if !page.attachments.isEmpty {
-                    Section("Originals") {
-                        ForEach(page.attachments.sorted { $0.createdAt < $1.createdAt }) { attachment in
-                            if let url = try? service.originalFileURL(for: attachment) {
-                                ShareLink(item: url) {
-                                    Label(attachment.displayName, systemImage: "doc")
-                                }
+                if !pageOriginalAttachments.isEmpty {
+                    Section("Page Originals") {
+                        ForEach(pageOriginalAttachments) { attachment in
+                            Button {
+                                shareOriginals([attachment])
+                            } label: {
+                                Label(originalLabel(for: attachment), systemImage: icon(for: attachment))
                             }
+                        }
+                    }
+                }
+
+                if noteOriginalAttachments.count > pageOriginalAttachments.count {
+                    Section("Note Originals") {
+                        Button {
+                            shareOriginals(noteOriginalAttachments)
+                        } label: {
+                            Label("All Originals", systemImage: "doc.on.doc")
                         }
                     }
                 }
@@ -58,6 +85,7 @@ struct ExportView: View {
             }
             .navigationTitle("Export")
             .navigationBarTitleDisplayMode(.inline)
+            .disabled(isExporting)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -65,16 +93,60 @@ struct ExportView: View {
                     }
                 }
             }
+            .sheet(item: $sharePayload) { payload in
+                ActivityView(activityItems: payload.urls)
+            }
         }
     }
 
-    private func export(_ format: ExportFormat) {
+    private func exportCurrentPage(_ format: ExportFormat) {
+        exportItems {
+            [try service.exportPage(page, format: format)]
+        }
+    }
+
+    private func exportWholeNote(_ format: ExportFormat) {
+        exportItems {
+            try service.exportNote(note, format: format)
+        }
+    }
+
+    private func shareOriginals(_ attachments: [Attachment]) {
+        exportItems {
+            try attachments.map { try service.originalFileURL(for: $0) }
+        }
+    }
+
+    private func exportItems(_ makeURLs: () throws -> [URL]) {
+        guard !isExporting else { return }
+        isExporting = true
+        defer { isExporting = false }
+
         do {
-            exportURL = try service.exportPage(page, format: format)
+            let urls = try makeURLs()
+            guard !urls.isEmpty else { throw ImportExportError.exportFailed }
+            sharePayload = ExportSharePayload(urls: urls)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func noteExportLabel(for format: ExportFormat) -> String {
+        switch format {
+        case .pdf:
+            "PDF"
+        case .png:
+            "PNG Pages"
+        case .jpeg:
+            "JPEG Pages"
+        }
+    }
+
+    private func originalLabel(for attachment: Attachment) -> String {
+        let ext = attachment.fileExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ext.isEmpty else { return attachment.displayName }
+        return "\(attachment.displayName).\(ext)"
     }
 
     private func icon(for format: ExportFormat) -> String {
@@ -87,4 +159,36 @@ struct ExportView: View {
             "photo.fill"
         }
     }
+
+    private func icon(for attachment: Attachment) -> String {
+        switch attachment.kind {
+        case .pdf:
+            "doc.richtext"
+        case .image:
+            "photo"
+        case .docx:
+            "doc.text"
+        case .csv:
+            "tablecells"
+        case .presentation:
+            "rectangle.on.rectangle"
+        case .other:
+            "doc"
+        }
+    }
+}
+
+private struct ExportSharePayload: Identifiable {
+    let id = UUID()
+    var urls: [URL]
+}
+
+private struct ActivityView: UIViewControllerRepresentable {
+    var activityItems: [URL]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
