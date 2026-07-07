@@ -47,7 +47,7 @@ final class BeanNotesUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Quick zoom controls"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Editor touch mode"].waitForExistence(timeout: 8))
 
         let startWritingButton = app.buttons["Start Writing"]
         XCTAssertTrue(startWritingButton.waitForExistence(timeout: 8))

@@ -541,7 +541,9 @@ struct NoteEditorView: View {
             .accessibilityLabel("Zoom in")
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Zoom \(currentZoomText), \(drawingRenderQuality.label) drawing detail")
+        .accessibilityLabel(
+            "Zoom \(currentZoomText), \(drawingRenderQuality.label) drawing detail, \(drawingInputMode.label) touch mode"
+        )
     }
 
     private var zoomMenu: some View {
@@ -549,6 +551,7 @@ struct NoteEditorView: View {
             Section {
                 Label("Current \(currentZoomText)", systemImage: "viewfinder")
                 Label("Detail \(drawingRenderQuality.label)", systemImage: drawingRenderQuality.systemImage)
+                Label("Touch \(drawingInputMode.label)", systemImage: drawingInputMode.systemImage)
             }
 
             Section {
@@ -568,6 +571,20 @@ struct NoteEditorView: View {
                     fitToPageSignal += 1
                 } label: {
                     Label("Fit Page", systemImage: "arrow.up.left.and.arrow.down.right")
+                }
+            }
+
+            Section("Touch Mode") {
+                ForEach(DrawingInputMode.allCases) { mode in
+                    Button {
+                        setDrawingInputMode(mode)
+                    } label: {
+                        Label(
+                            mode.label,
+                            systemImage: drawingInputMode == mode ? "checkmark" : mode.systemImage
+                        )
+                    }
+                    .accessibilityHint(mode.description)
                 }
             }
 
@@ -606,12 +623,15 @@ struct NoteEditorView: View {
                 Text(currentZoomText)
                     .font(.caption2.weight(.semibold).monospacedDigit())
                     .frame(width: 38, alignment: .leading)
+                Image(systemName: drawingInputMode.systemImage)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
             .frame(height: 34)
             .padding(.horizontal, 3)
         }
-        .accessibilityLabel("Zoom \(currentZoomText)")
-        .accessibilityHint("Zoom in, zoom out, or fit the selected page")
+        .accessibilityLabel("Zoom \(currentZoomText), \(drawingInputMode.label) touch mode")
+        .accessibilityHint("Zoom, fit the selected page, change drawing detail, or change touch mode")
     }
 
     private var currentZoomText: String {
@@ -718,6 +738,10 @@ struct NoteEditorView: View {
 
     private func setDrawingRenderQuality(_ quality: DrawingRenderQuality) {
         drawingRenderQualityRaw = quality.rawValue
+    }
+
+    private func setDrawingInputMode(_ mode: DrawingInputMode) {
+        drawingInputModeRaw = mode.rawValue
     }
 
     private var editorKeyboardShortcuts: some View {

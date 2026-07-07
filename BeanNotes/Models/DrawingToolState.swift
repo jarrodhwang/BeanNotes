@@ -201,6 +201,15 @@ enum DrawingInputMode: String, CaseIterable, Identifiable {
         }
     }
 
+    var systemImage: String {
+        switch self {
+        case .pencilOnly:
+            "hand.raised"
+        case .anyInput:
+            "scribble"
+        }
+    }
+
     var description: String {
         switch self {
         case .pencilOnly:

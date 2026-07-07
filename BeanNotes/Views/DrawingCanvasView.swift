@@ -605,13 +605,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             let fitScale = min(max(proposedFit, 0.18), 1.35)
             let minimumZoomScale = max(fitScale * zoomOutMultiplier, absoluteMinimumZoomScale)
             let maximumZoomScale = max(renderQuality.maximumZoomScale, fitScale * renderQuality.maximumZoomFitMultiplier)
-            let shouldPreserveFit = abs(scrollView.zoomScale - lastFitScale) / max(lastFitScale, 0.01) < 0.05
+            let wasNearFitScale = abs(scrollView.zoomScale - lastFitScale) / max(lastFitScale, 0.01) < 0.05
 
             scrollView.minimumZoomScale = minimumZoomScale
             scrollView.maximumZoomScale = maximumZoomScale
             lastFitScale = fitScale
 
-            if force || !didSetInitialZoom || shouldPreserveFit {
+            if !didSetInitialZoom || wasNearFitScale {
                 scrollView.setZoomScale(fitScale, animated: false)
                 didSetInitialZoom = true
             } else if scrollView.zoomScale < minimumZoomScale {
