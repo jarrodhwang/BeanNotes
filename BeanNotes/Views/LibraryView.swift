@@ -677,6 +677,7 @@ private struct NoteTabbedEditorWorkspace: View {
     var backToLibrary: () -> Void
 
     @State private var isSwitchingTabs = false
+    @State private var isFocusModeEnabled = false
     @State private var switchLoadingTask: Task<Void, Never>?
 
     private var selectedNote: NoteDocument? {
@@ -687,19 +688,26 @@ private struct NoteTabbedEditorWorkspace: View {
     var body: some View {
         if let selectedNote {
             VStack(spacing: 0) {
-                NoteEditorTabBar(
-                    tabs: tabs,
-                    selectedNoteID: selectedNote.id,
-                    selectTab: selectTab,
-                    closeTab: closeTab,
-                    backToLibrary: backToLibrary
-                )
+                if !isFocusModeEnabled {
+                    NoteEditorTabBar(
+                        tabs: tabs,
+                        selectedNoteID: selectedNote.id,
+                        selectTab: selectTab,
+                        closeTab: closeTab,
+                        backToLibrary: backToLibrary
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
 
-                Divider()
+                    Divider()
+                        .transition(.opacity)
+                }
 
                 ZStack {
                     NavigationStack {
-                        NoteEditorView(note: selectedNote)
+                        NoteEditorView(
+                            note: selectedNote,
+                            isWorkspaceFocusModeEnabled: $isFocusModeEnabled
+                        )
                             .id(selectedNote.id)
                     }
 
@@ -711,6 +719,10 @@ private struct NoteTabbedEditorWorkspace: View {
             }
             .background(beanNotesTheme.appBackground)
             .tint(beanNotesTheme.accentColor)
+            .animation(.snappy(duration: 0.18), value: isFocusModeEnabled)
+            .onChange(of: selectedNote.id) { _, _ in
+                isFocusModeEnabled = false
+            }
             .onDisappear {
                 switchLoadingTask?.cancel()
             }
@@ -726,6 +738,7 @@ private struct NoteTabbedEditorWorkspace: View {
         guard noteID != selectedNoteID else { return }
 
         switchLoadingTask?.cancel()
+        isFocusModeEnabled = false
         isSwitchingTabs = true
         selectedNoteID = noteID
 

@@ -39,6 +39,29 @@ final class BeanNotesUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["Pen palette"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Zoom out"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Focus drawing mode"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor
+    func testFocusDrawingModeHidesEditorChrome() throws {
+        app.launch()
+
+        let createNoteButton = app.buttons["Create note"]
+        XCTAssertTrue(createNoteButton.waitForExistence(timeout: 8))
+        createNoteButton.tap()
+
+        let focusButton = app.buttons["Focus drawing mode"]
+        XCTAssertTrue(focusButton.waitForExistence(timeout: 8))
+        focusButton.tap()
+
+        let exitFocusButton = app.buttons["Exit focus mode"]
+        XCTAssertTrue(exitFocusButton.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Back to library"].waitForExistence(timeout: 1))
+
+        exitFocusButton.tap()
+
+        XCTAssertTrue(app.buttons["Focus drawing mode"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Back to library"].waitForExistence(timeout: 8))
     }
 
     @MainActor
@@ -47,7 +70,7 @@ final class BeanNotesUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Editor touch mode"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Focus drawing mode"].waitForExistence(timeout: 8))
 
         let startWritingButton = app.buttons["Start Writing"]
         XCTAssertTrue(startWritingButton.waitForExistence(timeout: 8))

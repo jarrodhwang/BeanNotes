@@ -12,6 +12,7 @@ struct NoteEditorView: View {
     @Environment(\.beanNotesTheme) private var beanNotesTheme
 
     @Bindable var note: NoteDocument
+    @Binding private var isWorkspaceFocusModeEnabled: Bool
     @Query(sort: \NoteDocument.updatedAt, order: .reverse) private var allNotes: [NoteDocument]
     @FocusState private var isTitleFieldFocused: Bool
 
@@ -63,6 +64,11 @@ struct NoteEditorView: View {
 
     private let importExportService = ImportExportService()
     private let drawingMetadataSaveDelayNanoseconds: UInt64 = 700_000_000
+
+    init(note: NoteDocument, isWorkspaceFocusModeEnabled: Binding<Bool> = .constant(false)) {
+        self.note = note
+        self._isWorkspaceFocusModeEnabled = isWorkspaceFocusModeEnabled
+    }
 
     private var selectedPage: NotePage? {
         if let selectedPageID,
@@ -297,7 +303,7 @@ struct NoteEditorView: View {
                         undoRedoAvailabilityChanged: updateUndoRedoAvailability(canUndo:canRedo:),
                         zoomScaleChanged: updateZoomScale(_:),
                         addPageAtBottom: addPageAtBottom,
-                        topContent: AnyView(editorTitleHeader(page: page))
+                        topContent: editorTopContent(page: page)
                     )
                     .ignoresSafeArea(.container, edges: .bottom)
 
@@ -325,11 +331,21 @@ struct NoteEditorView: View {
                     .zIndex(2)
                 }
 
-                editorPinnedActionToolbar(page: page)
-                    .padding(.top, 14)
-                    .padding(.trailing, 18)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .zIndex(3)
+                if isWorkspaceFocusModeEnabled {
+                    focusModeExitButton
+                        .padding(.top, 14)
+                        .padding(.trailing, 18)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .zIndex(3)
+                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                } else {
+                    editorPinnedActionToolbar(page: page)
+                        .padding(.top, 14)
+                        .padding(.trailing, 18)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .zIndex(3)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         }
         .background(beanNotesTheme.appBackground)
@@ -347,6 +363,12 @@ struct NoteEditorView: View {
         .background {
             editorKeyboardShortcuts
         }
+        .animation(.snappy(duration: 0.18), value: isWorkspaceFocusModeEnabled)
+    }
+
+    private func editorTopContent(page: NotePage) -> AnyView? {
+        guard !isWorkspaceFocusModeEnabled else { return nil }
+        return AnyView(editorTitleHeader(page: page))
     }
 
     private func editorTitleHeader(page: NotePage) -> some View {
@@ -401,6 +423,18 @@ struct NoteEditorView: View {
 
     private func editorPinnedActionToolbar(page: NotePage) -> some View {
         HStack(spacing: 8) {
+            Button {
+                setFocusModeEnabled(true)
+            } label: {
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    .frame(width: 34, height: 34)
+            }
+            .accessibilityLabel("Focus drawing mode")
+            .accessibilityHint("Hide editor controls for more drawing space")
+
+            Divider()
+                .frame(height: 24)
+
             Button {
                 undoSignal += 1
             } label: {
@@ -516,6 +550,25 @@ struct NoteEditorView: View {
                 .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
+    }
+
+    private var focusModeExitButton: some View {
+        Button {
+            setFocusModeEnabled(false)
+        } label: {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.headline.weight(.semibold))
+                .frame(width: 42, height: 42)
+        }
+        .buttonStyle(.borderless)
+        .background(.regularMaterial, in: Circle())
+        .overlay {
+            Circle()
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
+        .accessibilityLabel("Exit focus mode")
+        .accessibilityHint("Show editor controls")
     }
 
     private var zoomControls: some View {
@@ -742,6 +795,19 @@ struct NoteEditorView: View {
 
     private func setDrawingInputMode(_ mode: DrawingInputMode) {
         drawingInputModeRaw = mode.rawValue
+    }
+
+    private func setFocusModeEnabled(_ enabled: Bool) {
+        if enabled {
+            if isEditingTitle {
+                commitTitleEdit()
+                guard !isEditingTitle else { return }
+            }
+
+            isShowingAttachments = false
+        }
+
+        isWorkspaceFocusModeEnabled = enabled
     }
 
     private var editorKeyboardShortcuts: some View {

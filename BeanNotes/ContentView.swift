@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 11
+    static let currentWelcomeContentVersion = 12
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,13 +162,13 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Touch Mode", systemImage: "hand.raised")
+                featureBadge("Focus Mode", systemImage: "arrow.down.right.and.arrow.up.left")
                 featureBadge("Precision Ink", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Touch Mode", systemImage: "hand.raised")
+                featureBadge("Focus Mode", systemImage: "arrow.down.right.and.arrow.up.left")
                 featureBadge("Zoom Detail", systemImage: "magnifyingglass")
             }
         }
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The editor now keeps touch mode beside zoom and detail controls, so you can switch between Pencil-only navigation and finger drawing without leaving the page."
+            "The editor now has a focus drawing mode that clears the chrome from the page while keeping vector handwriting, zoom, and autosave intact."
         }
     }
 
@@ -228,19 +228,19 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Editor touch mode",
-                detail: "Switch between Pencil Only and Pencil or Finger from the drawing control while you write.",
-                systemImage: "hand.raised"
+                title: "Focus drawing mode",
+                detail: "Hide the tab strip, title header, and action toolbar when you want more page space.",
+                systemImage: "arrow.down.right.and.arrow.up.left"
             ),
             Highlight(
-                title: "Zoom detail stays put",
-                detail: "Changing Balanced, High Resolution, or Ultra Fine detail keeps your current close-up view when possible.",
+                title: "Vector zoom stays sharp",
+                detail: "PencilKit strokes remain editable while BeanNotes refreshes page rendering as you zoom.",
                 systemImage: "scope"
             ),
             Highlight(
-                title: "Vector-first drawing",
-                detail: "PencilKit strokes stay editable while BeanNotes refreshes page rendering as you zoom.",
-                systemImage: "scribble"
+                title: "Touch mode stays nearby",
+                detail: "Switch between Pencil Only and Pencil or Finger from the drawing control while you write.",
+                systemImage: "hand.raised"
             )
         ]
     }
