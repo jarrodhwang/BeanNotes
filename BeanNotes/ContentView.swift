@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 6
+    static let currentWelcomeContentVersion = 7
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -163,13 +163,13 @@ private struct WelcomeToBeanNotesView: View {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Vector", systemImage: "scribble")
-                featureBadge("Fine Width", systemImage: "slider.horizontal.3")
+                featureBadge("Zoom Detail", systemImage: "magnifyingglass")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Vector", systemImage: "scribble")
-                featureBadge("Fine Width", systemImage: "slider.horizontal.3")
+                featureBadge("Zoom Detail", systemImage: "magnifyingglass")
             }
         }
         .font(.callout.weight(.semibold))
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The drawing palette now includes finer stroke-width calibration for precise handwriting, diagrams, and zoomed-in detail work."
+            "The editor now shows live zoom level and quick detail targets for handwriting, diagrams, and close-up review."
         }
     }
 
@@ -228,19 +228,19 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Fine stroke calibration",
-                detail: "Use preset anchors or the width slider to tune pen, pencil, and highlighter strokes without leaving the page.",
-                systemImage: "slider.horizontal.3"
+                title: "Live zoom readout",
+                detail: "See the current page zoom from the editor toolbar while pinching or using zoom controls.",
+                systemImage: "magnifyingglass"
             ),
             Highlight(
-                title: "Ultra Fine drawing detail",
-                detail: "Choose an extra-sharp render tier for careful handwriting and diagrams on newer iPads.",
+                title: "Quick detail targets",
+                detail: "Jump directly to 100%, 200%, or 300% for sharper inspection and close handwriting work.",
+                systemImage: "scope"
+            ),
+            Highlight(
+                title: "Vector-first drawing",
+                detail: "PencilKit strokes stay editable and crisp while BeanNotes refreshes page rendering as you zoom.",
                 systemImage: "scribble"
-            ),
-            Highlight(
-                title: "Responsive pen palette",
-                detail: "The custom palette folds into compact rows and stays inside the active editor when iPad size changes.",
-                systemImage: "rectangle.compress.vertical"
             )
         ]
     }

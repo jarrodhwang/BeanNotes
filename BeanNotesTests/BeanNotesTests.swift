@@ -695,6 +695,17 @@ struct BeanNotesTests {
         #expect(DrawingRenderQuality.ultraFine.imageScaleMultiplier > DrawingRenderQuality.highResolution.imageScaleMultiplier)
     }
 
+    @Test func drawingZoomPresetsFormatAndClampDetailTargets() {
+        #expect(DrawingZoomPreset.allCases.map(\.label) == ["100%", "200%", "300%"])
+        #expect(DrawingZoomLevel.percentageText(for: 1.245) == "125%")
+        #expect(DrawingZoomLevel.percentageText(for: -1) == "0%")
+        #expect(DrawingZoomLevel.clampedScale(0.5, minimum: 0.75, maximum: 3) == 0.75)
+        #expect(DrawingZoomLevel.clampedScale(4.5, minimum: 0.75, maximum: 3) == 3)
+        #expect(DrawingZoomLevel.clampedScale(2, minimum: 0.75, maximum: 3) == 2)
+        #expect(DrawingZoomLevel.isScale(2.02, closeTo: 2))
+        #expect(!DrawingZoomLevel.isScale(2.08, closeTo: 2))
+    }
+
     @Test func welcomeModalAppearsForFirstRunAndNewContentVersions() {
         #expect(ContentView.shouldShowWelcome(hasSeenWelcome: false, seenContentVersion: 0))
         #expect(ContentView.shouldShowWelcome(

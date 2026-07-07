@@ -54,7 +54,7 @@ final class ImageMemoryCache {
         ] as CFDictionary
 
         guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
-            return nil
+            return UIImage(contentsOfFile: url.path)
         }
 
         let thumbnailOptions = [
@@ -65,7 +65,7 @@ final class ImageMemoryCache {
         ] as CFDictionary
 
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else {
-            return nil
+            return UIImage(contentsOfFile: url.path)
         }
 
         return UIImage(cgImage: cgImage)

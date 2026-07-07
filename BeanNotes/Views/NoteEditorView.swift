@@ -38,6 +38,9 @@ struct NoteEditorView: View {
     @State private var fitToPageSignal = 0
     @State private var zoomInSignal = 0
     @State private var zoomOutSignal = 0
+    @State private var zoomToScaleSignal = 0
+    @State private var zoomTargetScale: CGFloat = 1
+    @State private var currentZoomScale: CGFloat = 1
     @State private var undoSignal = 0
     @State private var redoSignal = 0
     @State private var toolShortcutSignal = 0
@@ -269,6 +272,8 @@ struct NoteEditorView: View {
                         fitToPageSignal: fitToPageSignal,
                         zoomInSignal: zoomInSignal,
                         zoomOutSignal: zoomOutSignal,
+                        zoomToScaleSignal: zoomToScaleSignal,
+                        zoomTargetScale: zoomTargetScale,
                         undoSignal: undoSignal,
                         redoSignal: redoSignal,
                         toolShortcutSignal: toolShortcutSignal,
@@ -284,6 +289,7 @@ struct NoteEditorView: View {
                             errorMessage = "BeanNotes could not save the drawing. \(error.localizedDescription)"
                         },
                         undoRedoAvailabilityChanged: updateUndoRedoAvailability(canUndo:canRedo:),
+                        zoomScaleChanged: updateZoomScale(_:),
                         addPageAtBottom: addPageAtBottom,
                         topContent: AnyView(editorTitleHeader(page: page))
                     )
@@ -508,33 +514,63 @@ struct NoteEditorView: View {
 
     private var zoomMenu: some View {
         Menu {
-            Button {
-                zoomInSignal += 1
-            } label: {
-                Label("Zoom In", systemImage: "plus.magnifyingglass")
+            Section {
+                Label("Current \(currentZoomText)", systemImage: "viewfinder")
             }
-            .keyboardShortcut("+", modifiers: [.command])
 
-            Button {
-                zoomOutSignal += 1
-            } label: {
-                Label("Zoom Out", systemImage: "minus.magnifyingglass")
+            Section {
+                Button {
+                    zoomInSignal += 1
+                } label: {
+                    Label("Zoom In", systemImage: "plus.magnifyingglass")
+                }
+                .keyboardShortcut("+", modifiers: [.command])
+
+                Button {
+                    zoomOutSignal += 1
+                } label: {
+                    Label("Zoom Out", systemImage: "minus.magnifyingglass")
+                }
+                .keyboardShortcut("-", modifiers: [.command])
+
+                Button {
+                    fitToPageSignal += 1
+                } label: {
+                    Label("Fit Page", systemImage: "arrow.up.left.and.arrow.down.right")
+                }
             }
-            .keyboardShortcut("-", modifiers: [.command])
 
-            Divider()
-
-            Button {
-                fitToPageSignal += 1
-            } label: {
-                Label("Fit Page", systemImage: "arrow.up.left.and.arrow.down.right")
+            Section("Quick Zoom") {
+                ForEach(DrawingZoomPreset.allCases) { preset in
+                    Button {
+                        setZoomScale(preset.scale)
+                    } label: {
+                        Label(
+                            preset.label,
+                            systemImage: DrawingZoomLevel.isScale(currentZoomScale, closeTo: preset.scale)
+                                ? "checkmark"
+                                : preset.systemImage
+                        )
+                    }
+                    .accessibilityLabel(preset.accessibilityLabel)
+                }
             }
         } label: {
-            Image(systemName: "magnifyingglass")
-                .frame(width: 34, height: 34)
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                Text(currentZoomText)
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .frame(width: 38, alignment: .leading)
+            }
+            .frame(height: 34)
+            .padding(.horizontal, 3)
         }
-        .accessibilityLabel("Zoom")
+        .accessibilityLabel("Zoom \(currentZoomText)")
         .accessibilityHint("Zoom in, zoom out, or fit the selected page")
+    }
+
+    private var currentZoomText: String {
+        DrawingZoomLevel.percentageText(for: currentZoomScale)
     }
 
     private func pageActionsMenu(page: NotePage) -> some View {
@@ -623,6 +659,16 @@ struct NoteEditorView: View {
         if canRedoDrawing != canRedo {
             canRedoDrawing = canRedo
         }
+    }
+
+    private func updateZoomScale(_ scale: CGFloat) {
+        guard abs(currentZoomScale - scale) > 0.005 else { return }
+        currentZoomScale = scale
+    }
+
+    private func setZoomScale(_ scale: CGFloat) {
+        zoomTargetScale = scale
+        zoomToScaleSignal += 1
     }
 
     private var editorKeyboardShortcuts: some View {

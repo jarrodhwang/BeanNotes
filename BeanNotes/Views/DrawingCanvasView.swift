@@ -46,6 +46,8 @@ struct DrawingCanvasView: UIViewRepresentable {
     var fitToPageSignal: Int
     var zoomInSignal: Int
     var zoomOutSignal: Int
+    var zoomToScaleSignal: Int
+    var zoomTargetScale: CGFloat
     var undoSignal: Int
     var redoSignal: Int
     var toolShortcutSignal: Int
@@ -56,6 +58,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var saveSucceeded: () -> Void = {}
     var saveFailed: (Error) -> Void = { _ in }
     var undoRedoAvailabilityChanged: (Bool, Bool) -> Void = { _, _ in }
+    var zoomScaleChanged: (CGFloat) -> Void = { _ in }
     var addPageAtBottom: () -> Void
     var topContent: AnyView?
 
@@ -158,6 +161,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         if context.coordinator.zoomOutSignal != zoomOutSignal {
             containerView.zoomSelectedPage(by: 1 / 1.2, animated: true)
             context.coordinator.zoomOutSignal = zoomOutSignal
+        }
+
+        if context.coordinator.zoomToScaleSignal != zoomToScaleSignal {
+            containerView.zoomSelectedPage(to: zoomTargetScale, animated: true)
+            context.coordinator.zoomToScaleSignal = zoomToScaleSignal
         }
 
         if context.coordinator.undoSignal != undoSignal {
@@ -340,6 +348,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         func fitSelectedPageToScreen(animated: Bool) {
             updateZoomScalesIfNeeded()
             scrollView.setZoomScale(selectedPageOverviewScale(), animated: animated)
+            publishZoomScale(force: true)
 
             if let selectedPageID {
                 scrollToPage(id: selectedPageID, animated: animated)
@@ -352,10 +361,29 @@ struct DrawingCanvasView: UIViewRepresentable {
             updateZoomScalesIfNeeded()
 
             let currentScale = max(scrollView.zoomScale, 0.01)
-            let targetScale = min(
-                max(currentScale * multiplier, scrollView.minimumZoomScale),
-                scrollView.maximumZoomScale
+            let targetScale = DrawingZoomLevel.clampedScale(
+                currentScale * multiplier,
+                minimum: scrollView.minimumZoomScale,
+                maximum: scrollView.maximumZoomScale
             )
+            setZoomScalePreservingViewportCenter(targetScale, animated: animated)
+        }
+
+        func zoomSelectedPage(to scale: CGFloat, animated: Bool) {
+            guard scrollView.bounds != .zero else { return }
+
+            updateZoomScalesIfNeeded()
+
+            let targetScale = DrawingZoomLevel.clampedScale(
+                scale,
+                minimum: scrollView.minimumZoomScale,
+                maximum: scrollView.maximumZoomScale
+            )
+            setZoomScalePreservingViewportCenter(targetScale, animated: animated)
+        }
+
+        private func setZoomScalePreservingViewportCenter(_ targetScale: CGFloat, animated: Bool) {
+            let currentScale = max(scrollView.zoomScale, 0.01)
             guard abs(targetScale - currentScale) > 0.001 else { return }
 
             let viewportCenter = CGPoint(
@@ -379,6 +407,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 self.updateRasterScale(force: true)
                 self.materializePagesNearViewport(forceSelectedPage: true)
                 self.updateVisiblePage()
+                self.publishZoomScale(force: true)
             }
 
             if animated {
@@ -400,6 +429,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             centerDocument()
             materializePagesNearViewport(forceSelectedPage: true)
             updateVisiblePage()
+            publishZoomScale()
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -424,6 +454,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             centerDocument()
             restoreZoomAnchor(anchor)
             materializePagesNearViewport()
+            publishZoomScale()
         }
 
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
@@ -434,6 +465,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             refreshVisibleCanvasesAfterZoom()
             materializePagesNearViewport(forceSelectedPage: true)
             updateVisiblePage()
+            publishZoomScale(force: true)
 
             guard abs(scale - lastFitScale) / max(lastFitScale, 0.01) < fitSnapThreshold else { return }
             scrollView.setZoomScale(lastFitScale, animated: true)
@@ -578,6 +610,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             updateRasterScale(force: force)
+            publishZoomScale(force: force)
         }
 
         private func selectedPageOverviewScale() -> CGFloat {
@@ -951,6 +984,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                 x: min(max(proposed.x, -inset.left), maxX),
                 y: min(max(proposed.y, -inset.top), maxY)
             )
+        }
+
+        private func publishZoomScale(force: Bool = false) {
+            coordinator?.publishZoomScale(scrollView.zoomScale, force: force)
         }
     }
 
@@ -1500,6 +1537,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         var fitToPageSignal: Int
         var zoomInSignal: Int
         var zoomOutSignal: Int
+        var zoomToScaleSignal: Int
         var undoSignal: Int
         var redoSignal: Int
         var toolShortcutSignal: Int
@@ -1520,7 +1558,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var canvasToolSignatures: [ObjectIdentifier: String] = [:]
         private var lastPublishedCanUndo: Bool?
         private var lastPublishedCanRedo: Bool?
+        private var lastPublishedZoomScale: CGFloat?
         private let drawingSaveDebounce: TimeInterval = 1.25
+        private let zoomScalePublishThreshold: CGFloat = 0.005
         private static let drawingWriteQueueKey = DispatchSpecificKey<Void>()
         private static let drawingWriteQueue: DispatchQueue = {
             let queue = DispatchQueue(label: "com.snowfox.BeanNotes.drawing-write", qos: .utility)
@@ -1586,6 +1626,19 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        func publishZoomScale(_ scale: CGFloat, force: Bool = false) {
+            guard scale.isFinite, scale > 0 else { return }
+            let shouldPublish = force
+                || (lastPublishedZoomScale.map { abs($0 - scale) > zoomScalePublishThreshold } ?? true)
+            guard shouldPublish else { return }
+
+            lastPublishedZoomScale = scale
+            let zoomScaleChanged = parent.zoomScaleChanged
+            dispatchToSwiftUI {
+                zoomScaleChanged(scale)
+            }
+        }
+
         private func dispatchToSwiftUI(_ action: @escaping () -> Void) {
             DispatchQueue.main.async {
                 action()
@@ -1603,6 +1656,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.fitToPageSignal = parent.fitToPageSignal
             self.zoomInSignal = parent.zoomInSignal
             self.zoomOutSignal = parent.zoomOutSignal
+            self.zoomToScaleSignal = parent.zoomToScaleSignal
             self.undoSignal = parent.undoSignal
             self.redoSignal = parent.redoSignal
             self.toolShortcutSignal = parent.toolShortcutSignal
