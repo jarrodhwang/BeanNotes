@@ -14,8 +14,12 @@ struct PenPaletteView: View {
     @State private var committedOffset: CGSize = .zero
     @State private var dragOffset: CGSize = .zero
     @State private var selectedPaletteIndex = 0
+    @State private var selectionFeedback = UISelectionFeedbackGenerator()
 
     private let widths: [CGFloat] = [3, 5, 8, 14]
+    private let minimumDragOffset = CGSize(width: -82, height: -10)
+    private let maximumTrailingInset: CGFloat = 128
+    private let maximumBottomInset: CGFloat = 180
 
     var body: some View {
         paletteBody
@@ -35,6 +39,9 @@ struct PenPaletteView: View {
                 y: committedOffset.height + dragOffset.height
             )
             .gesture(moveGesture)
+            .onAppear {
+                selectionFeedback.prepare()
+            }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Pen palette")
     }
@@ -167,10 +174,26 @@ struct PenPaletteView: View {
                 dragOffset = value.translation
             }
             .onEnded { value in
-                committedOffset.width += value.translation.width
-                committedOffset.height += value.translation.height
+                let proposedOffset = CGSize(
+                    width: committedOffset.width + value.translation.width,
+                    height: committedOffset.height + value.translation.height
+                )
+                committedOffset = clampedOffset(proposedOffset)
                 dragOffset = .zero
             }
+    }
+
+    private func clampedOffset(_ proposedOffset: CGSize) -> CGSize {
+        let screenSize = UIScreen.main.bounds.size
+        let maximumOffset = CGSize(
+            width: max(minimumDragOffset.width, screenSize.width - maximumTrailingInset),
+            height: max(minimumDragOffset.height, screenSize.height - maximumBottomInset)
+        )
+
+        return CGSize(
+            width: min(max(proposedOffset.width, minimumDragOffset.width), maximumOffset.width),
+            height: min(max(proposedOffset.height, minimumDragOffset.height), maximumOffset.height)
+        )
     }
 
     private var showsInkControls: Bool {
@@ -348,6 +371,7 @@ struct PenPaletteView: View {
     }
 
     private func performSelectionFeedback() {
-        UISelectionFeedbackGenerator().selectionChanged()
+        selectionFeedback.selectionChanged()
+        selectionFeedback.prepare()
     }
 }

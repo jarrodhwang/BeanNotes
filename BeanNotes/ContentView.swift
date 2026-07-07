@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 3
+    static let currentWelcomeContentVersion = 4
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -163,13 +163,13 @@ private struct WelcomeToBeanNotesView: View {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Vector", systemImage: "scribble")
-                featureBadge("Pencil", systemImage: "pencil.tip")
+                featureBadge("Zoom", systemImage: "magnifyingglass")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Vector", systemImage: "scribble")
-                featureBadge("Pencil", systemImage: "pencil.tip")
+                featureBadge("Zoom", systemImage: "magnifyingglass")
             }
         }
         .font(.callout.weight(.semibold))
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Sharper vector ink, lighter palette feedback, and stronger autosave are ready for your next iPad note session."
+            "Ultra-fine drawing detail, precision zoom controls, and safer local previews are ready for your next iPad note session."
         }
     }
 
@@ -228,18 +228,18 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Light touch palette",
-                detail: "Tool, color, and width changes now respond with subtle selection feedback.",
-                systemImage: "paintpalette"
+                title: "Precision zoom controls",
+                detail: "Zoom in, zoom out, or fit the page from the editor toolbar while keeping ink sharp.",
+                systemImage: "magnifyingglass"
             ),
             Highlight(
-                title: "High-resolution vector ink",
-                detail: "New installs use high-resolution drawing detail by default while Balanced mode remains available.",
+                title: "Ultra Fine drawing detail",
+                detail: "Choose an extra-sharp render tier for careful handwriting and diagrams on newer iPads.",
                 systemImage: "scribble"
             ),
             Highlight(
-                title: "More reliable autosave",
-                detail: "Drawing edits now save note freshness metadata in the background after you pause.",
+                title: "Safer local previews",
+                detail: "Attachment and thumbnail previews now validate local paths before loading.",
                 systemImage: "lock.shield"
             )
         ]

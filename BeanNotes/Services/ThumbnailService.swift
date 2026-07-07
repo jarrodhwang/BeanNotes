@@ -251,8 +251,12 @@ struct ThumbnailService {
         rootURL: URL,
         renderScale: CGFloat
     ) {
+        let storage = LocalStorageService(rootURL: rootURL)
+
         for attachment in attachments.sorted(by: { $0.createdAt < $1.createdAt }) {
-            let imageURL = rootURL.appendingPathComponent(attachment.storedFileName)
+            guard let imageURL = try? storage.validatedURL(forRelativePath: attachment.storedFileName) else {
+                continue
+            }
             let maxPixelSize = max(attachment.width, attachment.height) * max(renderScale, 0.25)
             guard let image = renderImage(at: imageURL, maxPixelSize: maxPixelSize) else { continue }
             image.draw(in: attachment.frame)

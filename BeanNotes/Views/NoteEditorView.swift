@@ -36,6 +36,8 @@ struct NoteEditorView: View {
     @State private var previewAttachment: Attachment?
     @State private var saveNowSignal = 0
     @State private var fitToPageSignal = 0
+    @State private var zoomInSignal = 0
+    @State private var zoomOutSignal = 0
     @State private var undoSignal = 0
     @State private var redoSignal = 0
     @State private var toolShortcutSignal = 0
@@ -265,6 +267,8 @@ struct NoteEditorView: View {
                         doubleTapAction: doubleTapAction,
                         saveNowSignal: saveNowSignal,
                         fitToPageSignal: fitToPageSignal,
+                        zoomInSignal: zoomInSignal,
+                        zoomOutSignal: zoomOutSignal,
                         undoSignal: undoSignal,
                         redoSignal: redoSignal,
                         toolShortcutSignal: toolShortcutSignal,
@@ -443,13 +447,7 @@ struct NoteEditorView: View {
 
             pageActionsMenu(page: page)
 
-            Button {
-                fitToPageSignal += 1
-            } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .frame(width: 34, height: 34)
-            }
-            .accessibilityLabel("Fit page to screen")
+            zoomMenu
 
             Button {
                 isShowingBackgroundPicker = true
@@ -506,6 +504,37 @@ struct NoteEditorView: View {
                 .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
+    }
+
+    private var zoomMenu: some View {
+        Menu {
+            Button {
+                zoomInSignal += 1
+            } label: {
+                Label("Zoom In", systemImage: "plus.magnifyingglass")
+            }
+            .keyboardShortcut("+", modifiers: [.command])
+
+            Button {
+                zoomOutSignal += 1
+            } label: {
+                Label("Zoom Out", systemImage: "minus.magnifyingglass")
+            }
+            .keyboardShortcut("-", modifiers: [.command])
+
+            Divider()
+
+            Button {
+                fitToPageSignal += 1
+            } label: {
+                Label("Fit Page", systemImage: "arrow.up.left.and.arrow.down.right")
+            }
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .frame(width: 34, height: 34)
+        }
+        .accessibilityLabel("Zoom")
+        .accessibilityHint("Zoom in, zoom out, or fit the selected page")
     }
 
     private func pageActionsMenu(page: NotePage) -> some View {

@@ -323,6 +323,21 @@ struct LocalStorageService {
         rootURL.appendingPathComponent(relativePath)
     }
 
+    nonisolated func validatedURL(forRelativePath relativePath: String) throws -> URL {
+        let trimmedPath = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            throw LocalStorageError.invalidRelativePath(relativePath)
+        }
+
+        let fileURL = rootURL.appendingPathComponent(trimmedPath).standardizedFileURL
+        let relativeComponents = try relativePathComponents(for: fileURL, invalidPathDescription: relativePath)
+        guard !relativeComponents.isEmpty else {
+            throw LocalStorageError.invalidRelativePath(relativePath)
+        }
+
+        return fileURL
+    }
+
     nonisolated func relativePath(for fileURL: URL) throws -> String {
         let relativeComponents = try relativePathComponents(
             for: fileURL,
@@ -532,21 +547,6 @@ struct LocalStorageService {
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
             .appendingPathComponent("FolderIndex", isDirectory: true)
             .appendingPathComponent("folders.json")
-    }
-
-    private func validatedURL(forRelativePath relativePath: String) throws -> URL {
-        let trimmedPath = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPath.isEmpty else {
-            throw LocalStorageError.invalidRelativePath(relativePath)
-        }
-
-        let fileURL = rootURL.appendingPathComponent(trimmedPath).standardizedFileURL
-        let relativeComponents = try relativePathComponents(for: fileURL, invalidPathDescription: relativePath)
-        guard !relativeComponents.isEmpty else {
-            throw LocalStorageError.invalidRelativePath(relativePath)
-        }
-
-        return fileURL
     }
 
     private func relativePathComponents(for fileURL: URL, invalidPathDescription: String) throws -> [String] {

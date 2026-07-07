@@ -1272,8 +1272,9 @@ private struct NoteCardView: View {
 
         if !forceRefresh,
            let relativePath = page.thumbnailFileName,
+           let thumbnailURL = try? storage.validatedURL(forRelativePath: relativePath),
            let image = ImageMemoryCache.shared.image(
-                at: storage.url(forRelativePath: relativePath),
+                at: thumbnailURL,
                 maxPixelSize: 620
            ) {
             thumbnailImage = image
@@ -1304,9 +1305,12 @@ private struct NoteCardView: View {
     }
 
     private func fallbackFirstPageImage(for page: NotePage) -> UIImage? {
-        guard let attachment = page.lockedImageAttachments.first else { return nil }
+        guard let attachment = page.lockedImageAttachments.first,
+              let imageURL = try? storage.validatedURL(forRelativePath: attachment.storedFileName) else {
+            return nil
+        }
         return ImageMemoryCache.shared.image(
-            at: storage.url(forRelativePath: attachment.storedFileName),
+            at: imageURL,
             maxPixelSize: 620
         )
     }

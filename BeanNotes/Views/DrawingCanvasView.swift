@@ -44,6 +44,8 @@ struct DrawingCanvasView: UIViewRepresentable {
     var doubleTapAction: PencilDoubleTapAction
     var saveNowSignal: Int
     var fitToPageSignal: Int
+    var zoomInSignal: Int
+    var zoomOutSignal: Int
     var undoSignal: Int
     var redoSignal: Int
     var toolShortcutSignal: Int
@@ -146,6 +148,16 @@ struct DrawingCanvasView: UIViewRepresentable {
         if context.coordinator.fitToPageSignal != fitToPageSignal {
             containerView.fitSelectedPageToScreen(animated: true)
             context.coordinator.fitToPageSignal = fitToPageSignal
+        }
+
+        if context.coordinator.zoomInSignal != zoomInSignal {
+            containerView.zoomSelectedPage(by: 1.2, animated: true)
+            context.coordinator.zoomInSignal = zoomInSignal
+        }
+
+        if context.coordinator.zoomOutSignal != zoomOutSignal {
+            containerView.zoomSelectedPage(by: 1 / 1.2, animated: true)
+            context.coordinator.zoomOutSignal = zoomOutSignal
         }
 
         if context.coordinator.undoSignal != undoSignal {
@@ -329,6 +341,53 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if let selectedPageID {
                 scrollToPage(id: selectedPageID, animated: animated)
+            }
+        }
+
+        func zoomSelectedPage(by multiplier: CGFloat, animated: Bool) {
+            guard scrollView.bounds != .zero, multiplier > 0 else { return }
+
+            updateZoomScalesIfNeeded()
+
+            let currentScale = max(scrollView.zoomScale, 0.01)
+            let targetScale = min(
+                max(currentScale * multiplier, scrollView.minimumZoomScale),
+                scrollView.maximumZoomScale
+            )
+            guard abs(targetScale - currentScale) > 0.001 else { return }
+
+            let viewportCenter = CGPoint(
+                x: scrollView.contentOffset.x + scrollView.bounds.midX,
+                y: scrollView.contentOffset.y + scrollView.bounds.midY
+            )
+            let contentCenter = CGPoint(
+                x: viewportCenter.x / currentScale,
+                y: viewportCenter.y / currentScale
+            )
+
+            let applyZoom = {
+                self.scrollView.setZoomScale(targetScale, animated: false)
+                self.centerDocument()
+
+                let targetOffset = CGPoint(
+                    x: contentCenter.x * targetScale - self.scrollView.bounds.width / 2,
+                    y: contentCenter.y * targetScale - self.scrollView.bounds.height / 2
+                )
+                self.scrollView.setContentOffset(self.clampedContentOffset(targetOffset), animated: false)
+                self.updateRasterScale(force: true)
+                self.materializePagesNearViewport(forceSelectedPage: true)
+                self.updateVisiblePage()
+            }
+
+            if animated {
+                UIView.animate(
+                    withDuration: 0.18,
+                    delay: 0,
+                    options: [.curveEaseInOut, .allowUserInteraction],
+                    animations: applyZoom
+                )
+            } else {
+                applyZoom()
             }
         }
 
@@ -1152,9 +1211,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.pageSize = pageSize
             self.changed = changed
 
-            let imageURL = storage.url(forRelativePath: attachment.storedFileName)
-            self.imageURL = imageURL
-            loadImageIfNeeded(from: imageURL, attachment: attachment)
+            if let imageURL = try? storage.validatedURL(forRelativePath: attachment.storedFileName) {
+                self.imageURL = imageURL
+                loadImageIfNeeded(from: imageURL, attachment: attachment)
+            } else {
+                self.imageURL = nil
+                releaseImage()
+            }
 
             frame = attachment.frame
             isUserInteractionEnabled = !attachment.isLocked
@@ -1285,6 +1348,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         var selectedPageID: UUID?
         var saveNowSignal: Int
         var fitToPageSignal: Int
+        var zoomInSignal: Int
+        var zoomOutSignal: Int
         var undoSignal: Int
         var redoSignal: Int
         var toolShortcutSignal: Int
@@ -1386,6 +1451,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.selectedPageID = parent.selectedPageID
             self.saveNowSignal = parent.saveNowSignal
             self.fitToPageSignal = parent.fitToPageSignal
+            self.zoomInSignal = parent.zoomInSignal
+            self.zoomOutSignal = parent.zoomOutSignal
             self.undoSignal = parent.undoSignal
             self.redoSignal = parent.redoSignal
             self.toolShortcutSignal = parent.toolShortcutSignal
@@ -1930,11 +1997,62 @@ struct DrawingCanvasView: UIViewRepresentable {
 
 private extension UIView {
     func applyCanvasBackingScale(_ scale: CGFloat) {
-        guard abs(contentScaleFactor - scale) > 0.05 || abs(layer.contentsScale - scale) > 0.05 else { return }
-        contentScaleFactor = scale
-        layer.contentsScale = scale
-        layer.rasterizationScale = scale
+        var visitedLayers: Set<ObjectIdentifier> = []
+        guard applyBackingScale(scale, visitedLayers: &visitedLayers) else { return }
         setNeedsDisplay()
+        layer.setNeedsDisplay()
+    }
+
+    @discardableResult
+    private func applyBackingScale(_ scale: CGFloat, visitedLayers: inout Set<ObjectIdentifier>) -> Bool {
+        var didChange = false
+
+        if abs(contentScaleFactor - scale) > 0.05 {
+            contentScaleFactor = scale
+            didChange = true
+        }
+
+        didChange = layer.applyBackingScale(scale, visitedLayers: &visitedLayers) || didChange
+
+        for subview in subviews {
+            didChange = subview.applyBackingScale(scale, visitedLayers: &visitedLayers) || didChange
+        }
+
+        if didChange {
+            setNeedsDisplay()
+            layer.setNeedsDisplay()
+        }
+
+        return didChange
+    }
+}
+
+private extension CALayer {
+    @discardableResult
+    func applyBackingScale(_ scale: CGFloat, visitedLayers: inout Set<ObjectIdentifier>) -> Bool {
+        guard visitedLayers.insert(ObjectIdentifier(self)).inserted else { return false }
+
+        var didChange = false
+
+        if abs(contentsScale - scale) > 0.05 {
+            contentsScale = scale
+            didChange = true
+        }
+
+        if abs(rasterizationScale - scale) > 0.05 {
+            rasterizationScale = scale
+            didChange = true
+        }
+
+        for sublayer in sublayers ?? [] {
+            didChange = sublayer.applyBackingScale(scale, visitedLayers: &visitedLayers) || didChange
+        }
+
+        if didChange {
+            setNeedsDisplay()
+        }
+
+        return didChange
     }
 }
 

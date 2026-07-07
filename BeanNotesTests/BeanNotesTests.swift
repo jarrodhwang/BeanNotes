@@ -369,6 +369,41 @@ struct BeanNotesTests {
         #expect(FileManager.default.fileExists(atPath: rootURL.path))
     }
 
+    @Test func localStorageValidatesReadURLsInsideRoot() throws {
+        let containerURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesReadPathValidation-\(UUID().uuidString)", isDirectory: true)
+        let rootURL = containerURL.appendingPathComponent("Storage", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: containerURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+
+        let stored = try storage.saveData(
+            Data("preview".utf8),
+            preferredName: "Preview.png",
+            contentType: .png,
+            to: .imports
+        )
+
+        #expect(try storage.validatedURL(forRelativePath: stored.relativePath).path.hasPrefix(rootURL.path))
+
+        do {
+            _ = try storage.validatedURL(forRelativePath: "../Outside/secret.png")
+            Issue.record("Escaped stored read path should not validate.")
+        } catch LocalStorageError.invalidRelativePath {
+            // Expected: model-backed preview paths cannot escape BeanNotes storage.
+        }
+
+        do {
+            _ = try storage.validatedURL(forRelativePath: "")
+            Issue.record("Empty stored read path should not validate.")
+        } catch LocalStorageError.invalidRelativePath {
+            // Expected: a read target must name a file under the storage root.
+        }
+    }
+
     @Test func localStorageCopiesStoredFilesToIndependentPaths() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesStoredCopy-\(UUID().uuidString)", isDirectory: true)
@@ -596,10 +631,15 @@ struct BeanNotesTests {
     @Test func drawingRenderQualityExposesSharperZoomBudget() {
         #expect(DrawingRenderQuality.defaultQuality == .highResolution)
         #expect(DrawingRenderQuality.highResolution.maximumZoomScale > DrawingRenderQuality.balanced.maximumZoomScale)
+        #expect(DrawingRenderQuality.ultraFine.maximumZoomScale > DrawingRenderQuality.highResolution.maximumZoomScale)
         #expect(DrawingRenderQuality.highResolution.maximumZoomFitMultiplier > DrawingRenderQuality.balanced.maximumZoomFitMultiplier)
+        #expect(DrawingRenderQuality.ultraFine.maximumZoomFitMultiplier > DrawingRenderQuality.highResolution.maximumZoomFitMultiplier)
         #expect(DrawingRenderQuality.highResolution.drawingScaleMultiplier > DrawingRenderQuality.balanced.drawingScaleMultiplier)
+        #expect(DrawingRenderQuality.ultraFine.drawingScaleMultiplier > DrawingRenderQuality.highResolution.drawingScaleMultiplier)
         #expect(DrawingRenderQuality.highResolution.backgroundScaleMultiplier > DrawingRenderQuality.balanced.backgroundScaleMultiplier)
+        #expect(DrawingRenderQuality.ultraFine.backgroundScaleMultiplier > DrawingRenderQuality.highResolution.backgroundScaleMultiplier)
         #expect(DrawingRenderQuality.highResolution.imageScaleMultiplier > DrawingRenderQuality.balanced.imageScaleMultiplier)
+        #expect(DrawingRenderQuality.ultraFine.imageScaleMultiplier > DrawingRenderQuality.highResolution.imageScaleMultiplier)
     }
 
     @Test func welcomeModalAppearsForFirstRunAndNewContentVersions() {

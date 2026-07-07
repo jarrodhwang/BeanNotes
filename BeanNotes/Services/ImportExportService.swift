@@ -619,7 +619,7 @@ struct ImportExportService {
     }
 
     func originalFileURL(for attachment: Attachment) throws -> URL {
-        let url = storage.url(forRelativePath: attachment.storedFileName)
+        let url = try storage.validatedURL(forRelativePath: attachment.storedFileName)
         guard storage.fileManager.fileExists(atPath: url.path) else {
             throw ImportExportError.originalFileMissing
         }

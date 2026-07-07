@@ -134,6 +134,7 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
 
     case balanced
     case highResolution
+    case ultraFine
 
     var id: String { rawValue }
 
@@ -143,6 +144,8 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
             "Balanced"
         case .highResolution:
             "High Resolution"
+        case .ultraFine:
+            "Ultra Fine"
         }
     }
 
@@ -152,6 +155,8 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
             "Lower memory use for long notebooks and older iPads."
         case .highResolution:
             "Sharper strokes, backgrounds, and image attachments while zooming."
+        case .ultraFine:
+            "Maximum zoom detail for careful handwriting and diagrams on newer iPads."
         }
     }
 
@@ -161,6 +166,8 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
             3.5
         case .highResolution:
             4.5
+        case .ultraFine:
+            6
         }
     }
 
@@ -170,6 +177,8 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
             3
         case .highResolution:
             4
+        case .ultraFine:
+            5
         }
     }
 
@@ -179,6 +188,8 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
             1.5
         case .highResolution:
             2
+        case .ultraFine:
+            2.75
         }
     }
 
@@ -188,6 +199,8 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
             2
         case .highResolution:
             2.5
+        case .ultraFine:
+            3.25
         }
     }
 
@@ -197,6 +210,8 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
             1.5
         case .highResolution:
             2
+        case .ultraFine:
+            2.6
         }
     }
 }
