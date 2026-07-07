@@ -1571,6 +1571,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         var toolPicker = PKToolPicker()
         var pendingSaves: [UUID: DispatchWorkItem] = [:]
         var pendingSaveTokens: [UUID: UUID] = [:]
+        var inFlightSaveTokens: [UUID: Set<UUID>] = [:]
         var registeredCanvasIDs: Set<ObjectIdentifier> = []
         var dirtyPageIDs: Set<UUID> = []
         var toolStateCancellable: AnyCancellable?
@@ -1599,6 +1600,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             var drawing: PKDrawing
             var rootURL: URL
             var drawingFileName: String
+            var token: UUID?
         }
 
         func requestAddPageAtBottom() {
@@ -1633,7 +1635,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func notifySaveSucceededIfClean() {
             let saveSucceeded = parent.saveSucceeded
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.pendingSaves.isEmpty, self.dirtyPageIDs.isEmpty else { return }
+                guard let self,
+                      self.pendingSaves.isEmpty,
+                      self.dirtyPageIDs.isEmpty,
+                      !self.hasAnyInFlightSaves else { return }
                 saveSucceeded()
             }
         }
@@ -1878,7 +1883,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
                 self.pendingSaves[pageID] = nil
                 self.pendingSaveTokens[pageID] = nil
-                self.dirtyPageIDs.remove(pageID)
+                self.beginInFlightSave(pageID: pageID, token: token)
 
                 let drawing = canvasView.drawing
                 DrawingStorageService.cache(drawing, fileName: drawingFileName, rootURL: rootURL)
@@ -1887,10 +1892,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                     rootURL: rootURL,
                     drawingFileName: drawingFileName,
                     onSuccess: { [weak self] in
-                        self?.reportDrawingSaveSuccess()
+                        self?.reportDrawingSaveSuccess(pageID: pageID, token: token)
                     },
                     onFailure: { [weak self] error in
-                        self?.reportDrawingSaveFailure(error, pageID: pageID)
+                        self?.reportDrawingSaveFailure(error, pageID: pageID, token: token)
                     }
                 )
             }
@@ -1900,11 +1905,14 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func flushDrawingBeforeCanvasRelease(_ canvasView: PKCanvasView, for page: NotePage) {
-            guard dirtyPageIDs.contains(page.id) || pendingSaves[page.id] != nil else { return }
+            guard dirtyPageIDs.contains(page.id)
+                    || pendingSaves[page.id] != nil
+                    || hasInFlightSave(for: page.id) else { return }
 
             pendingSaves[page.id]?.cancel()
             pendingSaves[page.id] = nil
             pendingSaveTokens[page.id] = nil
+            invalidateInFlightSaves(for: page.id)
 
             let rootURL = parent.drawingStorage.storage.rootURL
             let drawingFileName = page.drawingFileName
@@ -1923,7 +1931,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 reportDrawingSaveSuccess()
             } catch {
                 dirtyPageIDs.insert(page.id)
-                notifySaveFailed(error)
+                reportDrawingSaveFailure(error, pageID: page.id)
             }
         }
 
@@ -1988,14 +1996,62 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
         }
 
-        private func reportDrawingSaveSuccess() {
-            guard pendingSaves.isEmpty, dirtyPageIDs.isEmpty else { return }
+        private func reportDrawingSaveSuccess(pageID: UUID? = nil, token: UUID? = nil) {
+            if let pageID {
+                if let token {
+                    guard finishInFlightSave(pageID: pageID, token: token) else { return }
+                }
+
+                if pendingSaves[pageID] == nil,
+                   pendingSaveTokens[pageID] == nil,
+                   !hasInFlightSave(for: pageID) {
+                    dirtyPageIDs.remove(pageID)
+                }
+            }
+
+            guard pendingSaves.isEmpty, dirtyPageIDs.isEmpty, !hasAnyInFlightSaves else { return }
             notifySaveSucceededIfClean()
         }
 
-        private func reportDrawingSaveFailure(_ error: Error, pageID: UUID) {
+        private func reportDrawingSaveFailure(_ error: Error, pageID: UUID, token: UUID? = nil) {
+            if let token {
+                guard finishInFlightSave(pageID: pageID, token: token) else { return }
+            }
+
             dirtyPageIDs.insert(pageID)
             notifySaveFailed(error)
+        }
+
+        private var hasAnyInFlightSaves: Bool {
+            inFlightSaveTokens.values.contains { !$0.isEmpty }
+        }
+
+        private func hasInFlightSave(for pageID: UUID) -> Bool {
+            inFlightSaveTokens[pageID]?.isEmpty == false
+        }
+
+        private func beginInFlightSave(pageID: UUID, token: UUID) {
+            inFlightSaveTokens[pageID, default: []].insert(token)
+        }
+
+        @discardableResult
+        private func finishInFlightSave(pageID: UUID, token: UUID) -> Bool {
+            guard var tokens = inFlightSaveTokens[pageID],
+                  tokens.remove(token) != nil else {
+                return false
+            }
+
+            if tokens.isEmpty {
+                inFlightSaveTokens[pageID] = nil
+            } else {
+                inFlightSaveTokens[pageID] = tokens
+            }
+
+            return true
+        }
+
+        private func invalidateInFlightSaves(for pageID: UUID) {
+            inFlightSaveTokens[pageID] = nil
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
@@ -2080,11 +2136,11 @@ struct DrawingCanvasView: UIViewRepresentable {
                     rootURL: request.rootURL,
                     drawingFileName: request.drawingFileName,
                     onSuccess: { [weak self] in
-                        self?.reportDrawingSaveSuccess()
+                        self?.reportDrawingSaveSuccess(pageID: request.page.id, token: request.token)
                         group.leave()
                     },
                     onFailure: { [weak self] error in
-                        self?.reportDrawingSaveFailure(error, pageID: request.page.id)
+                        self?.reportDrawingSaveFailure(error, pageID: request.page.id, token: request.token)
                         group.leave()
                     }
                 )
@@ -2095,7 +2151,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func saveAllCanvases(synchronously: Bool = true, force: Bool = false) {
             var savedAtLeastOneCanvas = false
-            let requests = canvasSaveRequests(force: force)
+            let requests = canvasSaveRequests(
+                force: force,
+                trackInFlight: !synchronously,
+                invalidateInFlight: synchronously
+            )
 
             for request in requests {
                 if synchronously {
@@ -2106,10 +2166,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                             drawingFileName: request.drawingFileName
                         )
                         request.page.touch()
+                        dirtyPageIDs.remove(request.page.id)
                         savedAtLeastOneCanvas = true
                     } catch {
-                        dirtyPageIDs.insert(request.page.id)
-                        notifySaveFailed(error)
+                        reportDrawingSaveFailure(error, pageID: request.page.id)
                     }
                 } else {
                     Self.writeDrawing(
@@ -2117,31 +2177,48 @@ struct DrawingCanvasView: UIViewRepresentable {
                         rootURL: request.rootURL,
                         drawingFileName: request.drawingFileName,
                         onSuccess: { [weak self] in
-                            self?.reportDrawingSaveSuccess()
+                            self?.reportDrawingSaveSuccess(pageID: request.page.id, token: request.token)
                         },
                         onFailure: { [weak self] error in
-                            self?.reportDrawingSaveFailure(error, pageID: request.page.id)
+                            self?.reportDrawingSaveFailure(error, pageID: request.page.id, token: request.token)
                         }
                     )
                 }
             }
 
-            if synchronously, savedAtLeastOneCanvas, dirtyPageIDs.isEmpty, pendingSaves.isEmpty {
+            if synchronously,
+               savedAtLeastOneCanvas,
+               dirtyPageIDs.isEmpty,
+               pendingSaves.isEmpty,
+               !hasAnyInFlightSaves {
                 notifySaveSucceededIfClean()
             }
         }
 
-        private func canvasSaveRequests(force: Bool) -> [CanvasSaveRequest] {
+        private func canvasSaveRequests(
+            force: Bool,
+            trackInFlight: Bool = true,
+            invalidateInFlight: Bool = false
+        ) -> [CanvasSaveRequest] {
             let pairs = containerView?.canvasPagePairs ?? []
             var requests: [CanvasSaveRequest] = []
 
             for (page, canvasView) in pairs {
-                guard force || dirtyPageIDs.contains(page.id) || pendingSaves[page.id] != nil else { continue }
+                guard force
+                        || dirtyPageIDs.contains(page.id)
+                        || pendingSaves[page.id] != nil
+                        || pendingSaveTokens[page.id] != nil else { continue }
 
                 pendingSaves[page.id]?.cancel()
                 pendingSaves[page.id] = nil
                 pendingSaveTokens[page.id] = nil
-                dirtyPageIDs.remove(page.id)
+                if invalidateInFlight {
+                    invalidateInFlightSaves(for: page.id)
+                }
+                let token = trackInFlight ? UUID() : nil
+                if let token {
+                    beginInFlightSave(pageID: page.id, token: token)
+                }
                 notifySaveStarted()
                 let drawing = canvasView.drawing
                 DrawingStorageService.cache(
@@ -2155,7 +2232,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                         page: page,
                         drawing: drawing,
                         rootURL: parent.drawingStorage.storage.rootURL,
-                        drawingFileName: page.drawingFileName
+                        drawingFileName: page.drawingFileName,
+                        token: token
                     )
                 )
             }
