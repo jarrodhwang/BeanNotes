@@ -10,7 +10,7 @@ BeanNotes is a free-form, local-first notes app for iPhone and iPad. It is built
 
 - Folder-based note library with color-coded folders, recent notes, search, and quick note creation.
 - Note tabs for keeping multiple notes open while moving between projects.
-- PencilKit drawing with custom palettes, undo and redo, zoom-friendly rendering, and local autosave.
+- PencilKit drawing with custom palettes, Pencil-only or finger input, undo and redo, zoom-friendly rendering, and local autosave.
 - Page options for plain, grid, dotted, lined, Cornell, music staff, and planner backgrounds.
 - Imports for PDFs, images, CSV files, Word documents, slides, and other files.
 - Exports for pages or whole notes as PDF, PNG, or JPEG, plus sharing of original attachments.

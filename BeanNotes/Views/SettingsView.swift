@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
+    @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.defaultQuality.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
@@ -54,6 +55,10 @@ struct SettingsView: View {
 
     private var selectedDrawingRenderQuality: DrawingRenderQuality {
         DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? DrawingRenderQuality.defaultQuality
+    }
+
+    private var selectedDrawingInputMode: DrawingInputMode {
+        DrawingInputMode(rawValue: drawingInputModeRaw) ?? DrawingInputMode.defaultMode
     }
 
     var body: some View {
@@ -206,6 +211,16 @@ struct SettingsView: View {
                             Text(mode.label).tag(mode.rawValue)
                         }
                     }
+
+                    Picker("Drawing Input", selection: $drawingInputModeRaw) {
+                        ForEach(DrawingInputMode.allCases) { mode in
+                            Text(mode.label).tag(mode.rawValue)
+                        }
+                    }
+
+                    Text(selectedDrawingInputMode.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     Picker("Drawing Detail", selection: $drawingRenderQualityRaw) {
                         ForEach(DrawingRenderQuality.allCases) { quality in

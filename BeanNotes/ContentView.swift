@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 8
+    static let currentWelcomeContentVersion = 9
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,13 +162,13 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
+                featureBadge("Pencil Guard", systemImage: "hand.raised")
                 featureBadge("Precision Ink", systemImage: "scope")
-                featureBadge("Zoom Detail", systemImage: "magnifyingglass")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Vector", systemImage: "scribble")
+                featureBadge("Pencil Guard", systemImage: "hand.raised")
                 featureBadge("Zoom Detail", systemImage: "magnifyingglass")
             }
         }
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The custom palette now has precision stroke controls for lighter handwriting, diagrams, and close-up annotation."
+            "Drawing input can now stay Apple Pencil-only for clean scrolling, or switch to Pencil or Finger for quick markups."
         }
     }
 
@@ -228,14 +228,14 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Precision stroke widths",
-                detail: "Use the new palette precision control for finer pen and pencil width steps.",
-                systemImage: "scope"
+                title: "Drawing input mode",
+                detail: "Keep fingers for page navigation, or enable finger drawing from Settings when you need it.",
+                systemImage: "hand.raised"
             ),
             Highlight(
-                title: "Width nudges",
-                detail: "Tap plus or minus beside the width slider for repeatable light-touch adjustments.",
-                systemImage: "plusminus"
+                title: "Light-touch ink controls",
+                detail: "Precision width mode and nudges stay available for finer handwriting and diagrams.",
+                systemImage: "scope"
             ),
             Highlight(
                 title: "Vector-first drawing",

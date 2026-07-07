@@ -695,6 +695,23 @@ struct BeanNotesTests {
         #expect(DrawingRenderQuality.ultraFine.imageScaleMultiplier > DrawingRenderQuality.highResolution.imageScaleMultiplier)
     }
 
+    @Test func drawingInputModeMapsToPencilKitPolicies() {
+        #expect(DrawingInputMode.defaultMode == .pencilOnly)
+        #expect(DrawingInputMode.allCases.map(\.label) == ["Pencil Only", "Pencil or Finger"])
+        #expect(DrawingInputMode.pencilOnly.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
+        #expect(DrawingInputMode.anyInput.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.anyInput.rawValue)
+    }
+
+    @Test func pageCanvasAppliesSelectedDrawingInputMode() {
+        let pageView = DrawingCanvasView.PageCanvasView()
+
+        pageView.applyInputMode(.anyInput)
+        #expect(pageView.canvasView.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.anyInput.rawValue)
+
+        pageView.applyInputMode(.pencilOnly)
+        #expect(pageView.canvasView.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
+    }
+
     @Test func drawingZoomPresetsFormatAndClampDetailTargets() {
         #expect(DrawingZoomPreset.allCases.map(\.label) == ["100%", "200%", "300%"])
         #expect(DrawingZoomLevel.percentageText(for: 1.245) == "125%")
@@ -894,6 +911,72 @@ struct BeanNotesTests {
 
         imageContainer.setImageLoadingEnabled(false)
         #expect(!imageContainer.isRasterImageLoaded)
+    }
+
+    @Test func canvasUnloadFlushesPendingDrawingSaveSynchronously() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCanvasUnload-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "pending-unload.drawing")
+        let drawing = makeTestDrawing(color: .systemPurple, xOffset: 24)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let canvasView = PKCanvasView()
+        canvasView.drawing = drawing
+
+        coordinator.register(canvasView: canvasView, page: page)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        #expect(coordinator.pendingSaves[page.id] != nil)
+
+        coordinator.unregister(canvasView: canvasView, page: page)
+
+        let savedData = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        let savedDrawing = try PKDrawing(data: savedData)
+        #expect(savedDrawing.strokes.count == drawing.strokes.count)
+        #expect(coordinator.pendingSaves[page.id] == nil)
+        #expect(!coordinator.dirtyPageIDs.contains(page.id))
+    }
+
+    private func makeDrawingCanvasView(
+        page: NotePage,
+        drawingStorage: DrawingStorageService
+    ) -> DrawingCanvasView {
+        DrawingCanvasView(
+            pages: [page],
+            selectedPageID: .constant(page.id),
+            toolState: DrawingToolState(),
+            paletteMode: .custom,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            pageFlowMode: .continuous,
+            doubleTapAction: .switchToEraser,
+            saveNowSignal: 0,
+            fitToPageSignal: 0,
+            zoomInSignal: 0,
+            zoomOutSignal: 0,
+            zoomToScaleSignal: 0,
+            zoomTargetScale: 1,
+            undoSignal: 0,
+            redoSignal: 0,
+            toolShortcutSignal: 0,
+            drawingStorage: drawingStorage,
+            attachmentChanged: {},
+            drawingChanged: { _ in },
+            saveStarted: {},
+            saveSucceeded: {},
+            saveFailed: { _ in },
+            undoRedoAvailabilityChanged: { _, _ in },
+            zoomScaleChanged: { _ in },
+            addPageAtBottom: {},
+            topContent: nil
+        )
     }
 
     private func waitForRasterImage(

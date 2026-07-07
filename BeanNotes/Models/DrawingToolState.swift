@@ -183,6 +183,43 @@ enum PenPaletteMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum DrawingInputMode: String, CaseIterable, Identifiable {
+    static let storageKey = "drawingInputMode"
+    static let defaultMode: DrawingInputMode = .pencilOnly
+
+    case pencilOnly
+    case anyInput
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .pencilOnly:
+            "Pencil Only"
+        case .anyInput:
+            "Pencil or Finger"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .pencilOnly:
+            "Finger touches scroll, zoom, and move around the page without leaving stray marks."
+        case .anyInput:
+            "Finger touches can draw too, useful for quick markups or drawing without Apple Pencil."
+        }
+    }
+
+    var drawingPolicy: PKCanvasViewDrawingPolicy {
+        switch self {
+        case .pencilOnly:
+            .pencilOnly
+        case .anyInput:
+            .anyInput
+        }
+    }
+}
+
 enum DrawingRenderQuality: String, CaseIterable, Identifiable {
     static let storageKey = "drawingRenderQuality"
     static let defaultQuality: DrawingRenderQuality = .highResolution

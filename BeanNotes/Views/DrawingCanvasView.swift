@@ -39,6 +39,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     @Binding var selectedPageID: UUID?
     @ObservedObject var toolState: DrawingToolState
     var paletteMode: PenPaletteMode
+    var inputMode: DrawingInputMode
     var renderQuality: DrawingRenderQuality
     var pageFlowMode: NoteEditorPageFlowMode
     var doubleTapAction: PencilDoubleTapAction
@@ -108,6 +109,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             pages: pages,
             selectedPageID: selectedPageID,
             pageFlowMode: pageFlowMode,
+            inputMode: inputMode,
             renderQuality: renderQuality,
             drawingStorage: drawingStorage,
             coordinator: context.coordinator
@@ -132,6 +134,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             pages: pages,
             selectedPageID: selectedPageID,
             pageFlowMode: pageFlowMode,
+            inputMode: inputMode,
             renderQuality: renderQuality,
             drawingStorage: drawingStorage,
             coordinator: context.coordinator
@@ -218,6 +221,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var selectedPageID: UUID?
         private var drawingStorage: DrawingStorageService?
         private weak var coordinator: Coordinator?
+        private var inputMode: DrawingInputMode = DrawingInputMode.defaultMode
         private var lastFitScale: CGFloat = 1
         private var lastBackgroundRenderScale: CGFloat = 0
         private var lastDrawingRenderScale: CGFloat = 0
@@ -295,12 +299,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             pages: [NotePage],
             selectedPageID: UUID?,
             pageFlowMode: NoteEditorPageFlowMode,
+            inputMode: DrawingInputMode,
             renderQuality: DrawingRenderQuality,
             drawingStorage: DrawingStorageService,
             coordinator: Coordinator
         ) {
             let qualityChanged = self.renderQuality != renderQuality
+            let inputModeChanged = self.inputMode != inputMode
             self.pageFlowMode = pageFlowMode
+            self.inputMode = inputMode
             self.renderQuality = renderQuality
             self.selectedPageID = selectedPageID ?? pages.first?.id
             self.drawingStorage = drawingStorage
@@ -330,6 +337,10 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             updateZoomScalesIfNeeded(force: qualityChanged)
             materializePagesNearViewport(forceSelectedPage: true)
+
+            if inputModeChanged {
+                applyInputModeToMaterializedPages()
+            }
         }
 
         func scrollToPage(id: UUID, animated: Bool) {
@@ -782,6 +793,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 page: page,
                 storage: drawingStorage.storage,
                 drawingStorage: drawingStorage,
+                inputMode: inputMode,
                 coordinator: coordinator,
                 attachmentChanged: { [weak coordinator] in
                     coordinator?.notifyAttachmentChanged()
@@ -789,6 +801,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
 
             return didCreatePageView
+        }
+
+        private func applyInputModeToMaterializedPages() {
+            for pageView in pageViews.values {
+                pageView.applyInputMode(inputMode)
+            }
         }
 
         private func retirePageView(id: UUID, pageView: PageCanvasView) {
@@ -1017,6 +1035,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             page: NotePage,
             storage: LocalStorageService,
             drawingStorage: DrawingStorageService,
+            inputMode: DrawingInputMode,
             coordinator: Coordinator,
             attachmentChanged: @escaping () -> Void
         ) {
@@ -1037,12 +1056,16 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             canvasView.delegate = coordinator
-            canvasView.drawingPolicy = .pencilOnly
+            applyInputMode(inputMode)
             canvasView.contentSize = page.pageSize
             canvasView.contentOffset = .zero
             coordinator.register(canvasView: canvasView, page: page)
 
             layoutPage()
+        }
+
+        func applyInputMode(_ inputMode: DrawingInputMode) {
+            canvasView.drawingPolicy = inputMode.drawingPolicy
         }
 
         func setImageLoadingEnabled(_ enabled: Bool) {
@@ -1714,13 +1737,12 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func unregister(canvasView: PKCanvasView, page: NotePage) {
             let id = ObjectIdentifier(canvasView)
-            saveDrawingIfNeeded(canvasView, for: page)
+            flushDrawingBeforeCanvasRelease(canvasView, for: page)
             pendingSaves[page.id]?.cancel()
             pendingSaves[page.id] = nil
             pendingSaveTokens[page.id] = nil
             toolPicker.removeObserver(canvasView)
             registeredCanvasIDs.remove(id)
-            dirtyPageIDs.remove(page.id)
             canvasPages[id] = nil
             canvasToolSignatures[id] = nil
 
@@ -1877,32 +1899,32 @@ struct DrawingCanvasView: UIViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + drawingSaveDebounce, execute: save)
         }
 
-        func saveDrawingOffMain(_ drawing: PKDrawing, for page: NotePage) {
+        private func flushDrawingBeforeCanvasRelease(_ canvasView: PKCanvasView, for page: NotePage) {
+            guard dirtyPageIDs.contains(page.id) || pendingSaves[page.id] != nil else { return }
+
             pendingSaves[page.id]?.cancel()
             pendingSaves[page.id] = nil
             pendingSaveTokens[page.id] = nil
-            dirtyPageIDs.remove(page.id)
 
             let rootURL = parent.drawingStorage.storage.rootURL
             let drawingFileName = page.drawingFileName
+            let drawing = canvasView.drawing
             notifySaveStarted()
             DrawingStorageService.cache(drawing, fileName: drawingFileName, rootURL: rootURL)
-            Self.writeDrawing(
-                drawing,
-                rootURL: rootURL,
-                drawingFileName: drawingFileName,
-                onSuccess: { [weak self] in
-                    self?.reportDrawingSaveSuccess()
-                },
-                onFailure: { [weak self] error in
-                    self?.reportDrawingSaveFailure(error, pageID: page.id)
-                }
-            )
-        }
 
-        func saveDrawingIfNeeded(_ canvasView: PKCanvasView, for page: NotePage) {
-            guard dirtyPageIDs.contains(page.id) || pendingSaves[page.id] != nil else { return }
-            saveDrawingOffMain(canvasView.drawing, for: page)
+            do {
+                try Self.writeDrawingSynchronously(
+                    drawing,
+                    rootURL: rootURL,
+                    drawingFileName: drawingFileName
+                )
+                page.touch()
+                dirtyPageIDs.remove(page.id)
+                reportDrawingSaveSuccess()
+            } catch {
+                dirtyPageIDs.insert(page.id)
+                notifySaveFailed(error)
+            }
         }
 
         private static func writeDrawing(
