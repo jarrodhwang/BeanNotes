@@ -769,7 +769,7 @@ struct BeanNotesTests {
         #expect(!moderateZoomBudget.shouldReplaceLoadedBudget(baseBudget))
     }
 
-    @Test func attachmentImageContainerDefersAndReleasesOffscreenRasters() throws {
+    @Test func attachmentImageContainerDefersAndReleasesOffscreenRasters() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesAttachmentRaster-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -813,10 +813,27 @@ struct BeanNotesTests {
         #expect(!imageContainer.isRasterImageLoaded)
 
         imageContainer.setImageLoadingEnabled(true)
-        #expect(imageContainer.isRasterImageLoaded)
+        try await waitForRasterImage(in: imageContainer)
 
         imageContainer.setImageLoadingEnabled(false)
         #expect(!imageContainer.isRasterImageLoaded)
+    }
+
+    private func waitForRasterImage(
+        in imageContainer: DrawingCanvasView.AttachmentImageContainerView,
+        timeoutNanoseconds: UInt64 = 5_000_000_000
+    ) async throws {
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(timeoutNanoseconds))
+
+        while ContinuousClock.now < deadline {
+            if imageContainer.isRasterImageLoaded {
+                return
+            }
+
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(imageContainer.isRasterImageLoaded)
     }
 
     @Test @MainActor func customDrawingToolsMapToDistinctPencilKitTools() {

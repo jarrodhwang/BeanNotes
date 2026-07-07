@@ -1222,6 +1222,28 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class AttachmentImageContainerView: UIView {
+        private final class ImageLoadToken {
+            private let lock = NSLock()
+            private var isCancelledStorage = false
+
+            var isCancelled: Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                return isCancelledStorage
+            }
+
+            func cancel() {
+                lock.lock()
+                isCancelledStorage = true
+                lock.unlock()
+            }
+        }
+
+        private static let imageDecodeQueue = DispatchQueue(
+            label: "com.snowfox.BeanNotes.attachment-image-decode",
+            qos: .utility
+        )
+
         private let imageView = UIImageView()
         private let resizeHandle = UIImageView(image: UIImage(systemName: "arrow.up.left.and.arrow.down.right"))
         private weak var attachment: Attachment?
@@ -1232,6 +1254,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var imageURL: URL?
         private var loadedStoredFileName: String?
         private var loadedRasterBudget: AttachmentImageRasterBudget?
+        private var loadingStoredFileName: String?
+        private var loadingRasterBudget: AttachmentImageRasterBudget?
+        private var imageLoadRequestID: UUID?
+        private var imageLoadToken: ImageLoadToken?
         private var currentRenderScale: CGFloat = 0
         private var isImageLoadingEnabled = true
 
@@ -1247,6 +1273,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         required init?(coder: NSCoder) {
             super.init(coder: coder)
             configureView()
+        }
+
+        deinit {
+            cancelPendingImageLoad()
         }
 
         func configure(
@@ -1340,25 +1370,80 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func loadImageIfNeeded(from imageURL: URL, attachment: Attachment) {
+            guard isImageLoadingEnabled else { return }
+
             let budget = AttachmentImageRasterBudget(
                 attachmentSize: CGSize(width: attachment.width, height: attachment.height),
                 renderScale: currentRenderScale
             )
-            let fileChanged = loadedStoredFileName != attachment.storedFileName
+            let storedFileName = attachment.storedFileName
+            let fileChanged = loadedStoredFileName != storedFileName
             guard fileChanged || budget.shouldReplaceLoadedBudget(loadedRasterBudget) else { return }
+            guard loadingStoredFileName != storedFileName || loadingRasterBudget != budget else { return }
 
-            loadedStoredFileName = attachment.storedFileName
-            loadedRasterBudget = budget
-            imageView.image = ImageMemoryCache.shared.image(
-                at: imageURL,
-                maxPixelSize: CGFloat(budget.maxPixelSize)
-            )
+            if fileChanged {
+                imageView.image = nil
+                loadedStoredFileName = nil
+                loadedRasterBudget = nil
+            }
+
+            let requestID = UUID()
+            let token = ImageLoadToken()
+            imageLoadToken?.cancel()
+            imageLoadRequestID = requestID
+            imageLoadToken = token
+            loadingStoredFileName = storedFileName
+            loadingRasterBudget = budget
+
+            let maxPixelSize = CGFloat(budget.maxPixelSize)
+            Self.imageDecodeQueue.async { [imageURL, requestID, token, storedFileName, budget, maxPixelSize] in
+                guard !token.isCancelled else { return }
+
+                let image = autoreleasepool {
+                    ImageMemoryCache.shared.image(
+                        at: imageURL,
+                        maxPixelSize: maxPixelSize
+                    )
+                }
+
+                guard !token.isCancelled else { return }
+
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.imageLoadRequestID == requestID,
+                          self.imageLoadToken === token,
+                          !token.isCancelled,
+                          self.isImageLoadingEnabled,
+                          self.imageURL == imageURL,
+                          self.loadingStoredFileName == storedFileName,
+                          self.loadingRasterBudget == budget else {
+                        return
+                    }
+
+                    self.imageLoadRequestID = nil
+                    self.imageLoadToken = nil
+                    self.loadingStoredFileName = nil
+                    self.loadingRasterBudget = nil
+                    self.loadedStoredFileName = storedFileName
+                    self.loadedRasterBudget = budget
+                    self.imageView.image = image
+                }
+            }
         }
 
         func releaseImage() {
+            cancelPendingImageLoad()
             imageView.image = nil
             loadedStoredFileName = nil
             loadedRasterBudget = nil
+        }
+
+        private func cancelPendingImageLoad() {
+            imageLoadToken?.cancel()
+            imageLoadRequestID = nil
+            imageLoadToken = nil
+            loadingStoredFileName = nil
+            loadingRasterBudget = nil
         }
 
         @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
