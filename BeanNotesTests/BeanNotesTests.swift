@@ -33,6 +33,32 @@ struct BeanNotesTests {
         return ModelContext(container)
     }
 
+    private func makeTestDrawing(color: UIColor, xOffset: CGFloat) -> PKDrawing {
+        let points = [
+            PKStrokePoint(
+                location: CGPoint(x: 12 + xOffset, y: 18),
+                timeOffset: 0,
+                size: CGSize(width: 7, height: 7),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            ),
+            PKStrokePoint(
+                location: CGPoint(x: 72 + xOffset, y: 84),
+                timeOffset: 0.18,
+                size: CGSize(width: 7, height: 7),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            )
+        ]
+        let path = PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 1_800_000_000))
+        let stroke = PKStroke(ink: PKInk(.pen, color: color), path: path)
+        return PKDrawing(strokes: [stroke])
+    }
+
     @Test func modelGraphCreatesFolderNotePageAndAttachment() throws {
         let context = try makeInMemoryModelContext()
 
@@ -402,6 +428,33 @@ struct BeanNotesTests {
         } catch LocalStorageError.invalidRelativePath {
             // Expected: a read target must name a file under the storage root.
         }
+    }
+
+    @Test func drawingStorageCacheSeparatesMatchingFileNamesAcrossRoots() throws {
+        let containerURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingCache-\(UUID().uuidString)", isDirectory: true)
+        let firstRootURL = containerURL.appendingPathComponent("First", isDirectory: true)
+        let secondRootURL = containerURL.appendingPathComponent("Second", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: containerURL)
+        }
+
+        DrawingStorageService.clearCache()
+
+        let firstStorage = DrawingStorageService(storage: LocalStorageService(rootURL: firstRootURL))
+        let secondStorage = DrawingStorageService(storage: LocalStorageService(rootURL: secondRootURL))
+        let sharedFileName = "shared-page.drawing"
+        let firstPage = NotePage(pageOrder: 0, drawingFileName: sharedFileName)
+        let secondPage = NotePage(pageOrder: 0, drawingFileName: sharedFileName)
+        let firstDrawing = makeTestDrawing(color: .systemRed, xOffset: 0)
+        let secondDrawing = makeTestDrawing(color: .systemBlue, xOffset: 40)
+
+        try firstStorage.save(firstDrawing, for: firstPage)
+        try secondStorage.save(secondDrawing, for: secondPage)
+
+        #expect(firstStorage.loadDrawing(for: firstPage).dataRepresentation() == firstDrawing.dataRepresentation())
+        #expect(secondStorage.loadDrawing(for: secondPage).dataRepresentation() == secondDrawing.dataRepresentation())
     }
 
     @Test func localStorageCopiesStoredFilesToIndependentPaths() throws {

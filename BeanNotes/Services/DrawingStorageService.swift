@@ -22,7 +22,7 @@ struct DrawingStorageService {
     }
 
     func loadDrawing(for page: NotePage) -> PKDrawing {
-        let cacheKey = page.drawingFileName as NSString
+        let cacheKey = Self.cacheKey(rootURL: storage.rootURL, fileName: page.drawingFileName)
         if let cached = Self.drawingCache.object(forKey: cacheKey) {
             return cached.drawing
         }
@@ -35,7 +35,7 @@ struct DrawingStorageService {
 
             let data = try Data(contentsOf: url)
             let drawing = try PKDrawing(data: data)
-            Self.cache(drawing, fileName: page.drawingFileName, approximateBytes: data.count)
+            Self.cache(drawing, fileName: page.drawingFileName, rootURL: storage.rootURL, approximateBytes: data.count)
             return drawing
         } catch {
             return PKDrawing()
@@ -46,21 +46,29 @@ struct DrawingStorageService {
         let url = try drawingURL(for: page)
         let data = drawing.dataRepresentation()
         try data.write(to: url, options: [.atomic])
-        Self.cache(drawing, fileName: page.drawingFileName, approximateBytes: data.count)
+        Self.cache(drawing, fileName: page.drawingFileName, rootURL: storage.rootURL, approximateBytes: data.count)
         page.touch()
     }
 
-    static func cache(_ drawing: PKDrawing, fileName: String, approximateBytes: Int? = nil) {
+    static func cache(_ drawing: PKDrawing, fileName: String, rootURL: URL, approximateBytes: Int? = nil) {
         let cost = max(approximateBytes ?? 1, 1)
-        drawingCache.setObject(CachedDrawing(drawing), forKey: fileName as NSString, cost: cost)
+        drawingCache.setObject(
+            CachedDrawing(drawing),
+            forKey: cacheKey(rootURL: rootURL, fileName: fileName),
+            cost: cost
+        )
     }
 
-    static func removeCachedDrawing(fileName: String) {
-        drawingCache.removeObject(forKey: fileName as NSString)
+    static func removeCachedDrawing(fileName: String, rootURL: URL) {
+        drawingCache.removeObject(forKey: cacheKey(rootURL: rootURL, fileName: fileName))
     }
 
     static func clearCache() {
         drawingCache.removeAllObjects()
+    }
+
+    private static func cacheKey(rootURL: URL, fileName: String) -> NSString {
+        "\(rootURL.standardizedFileURL.path)/\(StorageDirectory.drawings.rawValue)/\(fileName)" as NSString
     }
 }
 

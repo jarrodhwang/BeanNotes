@@ -1652,7 +1652,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 self.dirtyPageIDs.remove(pageID)
 
                 let drawing = canvasView.drawing
-                DrawingStorageService.cache(drawing, fileName: drawingFileName)
+                DrawingStorageService.cache(drawing, fileName: drawingFileName, rootURL: rootURL)
                 Self.writeDrawing(
                     drawing,
                     rootURL: rootURL,
@@ -1679,7 +1679,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             let rootURL = parent.drawingStorage.storage.rootURL
             let drawingFileName = page.drawingFileName
             notifySaveStarted()
-            DrawingStorageService.cache(drawing, fileName: drawingFileName)
+            DrawingStorageService.cache(drawing, fileName: drawingFileName, rootURL: rootURL)
             Self.writeDrawing(
                 drawing,
                 rootURL: rootURL,
@@ -1751,7 +1751,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
             let data = drawing.dataRepresentation()
             try data.write(to: drawingsURL.appendingPathComponent(drawingFileName), options: [.atomic])
-            DrawingStorageService.cache(drawing, fileName: drawingFileName, approximateBytes: data.count)
+            DrawingStorageService.cache(
+                drawing,
+                fileName: drawingFileName,
+                rootURL: rootURL,
+                approximateBytes: data.count
+            )
         }
 
         private func reportDrawingSaveSuccess() {
@@ -1910,7 +1915,11 @@ struct DrawingCanvasView: UIViewRepresentable {
                 dirtyPageIDs.remove(page.id)
                 notifySaveStarted()
                 let drawing = canvasView.drawing
-                DrawingStorageService.cache(drawing, fileName: page.drawingFileName)
+                DrawingStorageService.cache(
+                    drawing,
+                    fileName: page.drawingFileName,
+                    rootURL: parent.drawingStorage.storage.rootURL
+                )
 
                 requests.append(
                     CanvasSaveRequest(

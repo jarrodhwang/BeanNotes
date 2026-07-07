@@ -465,7 +465,7 @@ struct LocalStorageService {
         }
 
         for drawingFileName in target.drawingFileNames {
-            DrawingStorageService.removeCachedDrawing(fileName: drawingFileName)
+            DrawingStorageService.removeCachedDrawing(fileName: drawingFileName, rootURL: rootURL)
         }
 
         return report
