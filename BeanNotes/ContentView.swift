@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 2
+    static let currentWelcomeContentVersion = 3
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,13 +162,13 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Offline", systemImage: "wifi.slash")
+                featureBadge("Vector", systemImage: "scribble")
                 featureBadge("Pencil", systemImage: "pencil.tip")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Offline", systemImage: "wifi.slash")
+                featureBadge("Vector", systemImage: "scribble")
                 featureBadge("Pencil", systemImage: "pencil.tip")
             }
         }
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Drawing and palette updates are ready for your next iPad note session."
+            "Sharper vector ink, lighter palette feedback, and stronger autosave are ready for your next iPad note session."
         }
     }
 
@@ -229,17 +229,17 @@ private extension WelcomeToBeanNotesView.Mode {
         [
             Highlight(
                 title: "Light touch palette",
-                detail: "Tap swatches to switch instantly, then edit the highlighted color when needed.",
+                detail: "Tool, color, and width changes now respond with subtle selection feedback.",
                 systemImage: "paintpalette"
             ),
             Highlight(
-                title: "Sharper zoom detail",
-                detail: "High-resolution drawing mode keeps strokes, paper, and images clearer while zooming.",
-                systemImage: "pencil.tip"
+                title: "High-resolution vector ink",
+                detail: "New installs use high-resolution drawing detail by default while Balanced mode remains available.",
+                systemImage: "scribble"
             ),
             Highlight(
-                title: "Local autosave",
-                detail: "Drawing changes stay private on device and save in the background.",
+                title: "More reliable autosave",
+                detail: "Drawing edits now save note freshness metadata in the background after you pause.",
                 systemImage: "lock.shield"
             )
         ]

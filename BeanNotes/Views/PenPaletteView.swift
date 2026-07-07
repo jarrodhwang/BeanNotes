@@ -142,6 +142,7 @@ struct PenPaletteView: View {
 
     private var collapseButton: some View {
         Button {
+            performSelectionFeedback()
             withAnimation(.snappy(duration: 0.18)) {
                 isCollapsed.toggle()
             }
@@ -206,6 +207,7 @@ struct PenPaletteView: View {
         let isSelected = toolState.eraserMode == mode
 
         return Button {
+            performSelectionFeedback()
             toolState.selectEraserMode(mode)
             withAnimation(.snappy(duration: 0.16)) {
                 isShowingEraserModes = false
@@ -234,6 +236,8 @@ struct PenPaletteView: View {
     }
 
     private func selectTool(_ tool: DrawingTool) {
+        performSelectionFeedback()
+
         if tool == .eraser, toolState.selectedTool == .eraser {
             withAnimation(.snappy(duration: 0.16)) {
                 isShowingEraserModes.toggle()
@@ -296,6 +300,7 @@ struct PenPaletteView: View {
     }
 
     private func selectPaletteSwatch(_ swatch: DrawingColorSwatch) {
+        performSelectionFeedback()
         isShowingEraserModes = false
         selectedPaletteIndex = swatch.index
         toolState.selectPaletteColor(swatch.color)
@@ -303,6 +308,7 @@ struct PenPaletteView: View {
 
     private func widthButton(_ width: CGFloat) -> some View {
         Button {
+            performSelectionFeedback()
             isShowingEraserModes = false
             toolState.applyActiveWidth(width)
         } label: {
@@ -339,5 +345,9 @@ struct PenPaletteView: View {
 
     private func isSelectedPaletteSwatch(_ swatch: DrawingColorSwatch) -> Bool {
         swatch.index == selectedPaletteIndex
+    }
+
+    private func performSelectionFeedback() {
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 }

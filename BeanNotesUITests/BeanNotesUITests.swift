@@ -38,13 +38,31 @@ final class BeanNotesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Back to library"].waitForExistence(timeout: 8))
     }
 
-    private func makeCleanApp() -> XCUIApplication {
+    @MainActor
+    func testWelcomeAppearsOnFirstRun() throws {
+        app = makeCleanApp(skipWelcome: false)
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
+
+        let startWritingButton = app.buttons["Start Writing"]
+        XCTAssertTrue(startWritingButton.waitForExistence(timeout: 8))
+        startWritingButton.tap()
+
+        XCTAssertTrue(app.buttons["Create note"].waitForExistence(timeout: 8))
+    }
+
+    private func makeCleanApp(skipWelcome: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "--beannotes-ui-testing",
-            "--beannotes-reset-storage",
-            "--beannotes-skip-welcome"
+            "--beannotes-reset-storage"
         ]
+
+        if skipWelcome {
+            app.launchArguments.append("--beannotes-skip-welcome")
+        }
+
         return app
     }
 }

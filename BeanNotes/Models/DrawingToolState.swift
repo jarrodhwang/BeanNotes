@@ -130,6 +130,7 @@ enum PenPaletteMode: String, CaseIterable, Identifiable {
 
 enum DrawingRenderQuality: String, CaseIterable, Identifiable {
     static let storageKey = "drawingRenderQuality"
+    static let defaultQuality: DrawingRenderQuality = .highResolution
 
     case balanced
     case highResolution

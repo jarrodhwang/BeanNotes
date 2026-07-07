@@ -111,22 +111,33 @@ struct BeanNotesTests {
         #expect(!note.matchesSearch("organic chemistry"))
     }
 
-    @Test func pageTouchMarksSearchIndexStale() throws {
+    @Test func pageTouchMarksSearchIndexStaleAndUpdatesNoteFreshness() throws {
         let context = try makeInMemoryModelContext()
-        let note = NoteDocument(title: "Indexed", searchIndexUpdatedAt: Date())
+        let originalDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let touchedDate = Date(timeIntervalSince1970: 1_800_000_300)
+        let note = NoteDocument(
+            title: "Indexed",
+            searchIndexUpdatedAt: originalDate,
+            createdAt: originalDate,
+            updatedAt: originalDate
+        )
         let page = NotePage(
             pageOrder: 0,
             searchableText: "Indexed text",
-            searchIndexUpdatedAt: Date()
+            searchIndexUpdatedAt: originalDate,
+            createdAt: originalDate,
+            updatedAt: originalDate
         )
 
         note.pages.append(page)
         context.insert(note)
         try context.save()
-        page.touch()
+        page.touch(at: touchedDate)
 
         #expect(page.searchIndexUpdatedAt == nil)
         #expect(note.searchIndexUpdatedAt == nil)
+        #expect(page.updatedAt == touchedDate)
+        #expect(note.updatedAt == touchedDate)
     }
 
     @Test func localStorageCreatesAppRelativePaths() throws {
@@ -583,6 +594,7 @@ struct BeanNotesTests {
     }
 
     @Test func drawingRenderQualityExposesSharperZoomBudget() {
+        #expect(DrawingRenderQuality.defaultQuality == .highResolution)
         #expect(DrawingRenderQuality.highResolution.maximumZoomScale > DrawingRenderQuality.balanced.maximumZoomScale)
         #expect(DrawingRenderQuality.highResolution.maximumZoomFitMultiplier > DrawingRenderQuality.balanced.maximumZoomFitMultiplier)
         #expect(DrawingRenderQuality.highResolution.drawingScaleMultiplier > DrawingRenderQuality.balanced.drawingScaleMultiplier)

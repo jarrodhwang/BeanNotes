@@ -17,7 +17,7 @@ struct NoteEditorView: View {
 
     @StateObject private var toolState = DrawingToolState()
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
-    @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.balanced.rawValue
+    @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.defaultQuality.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
@@ -53,8 +53,10 @@ struct NoteEditorView: View {
     @State private var didDrawingSaveFail = false
     @State private var isMetadataSavePending = false
     @State private var didMetadataSaveFail = false
+    @State private var drawingMetadataSaveTask: Task<Void, Never>?
 
     private let importExportService = ImportExportService()
+    private let drawingMetadataSaveDelayNanoseconds: UInt64 = 700_000_000
 
     private var selectedPage: NotePage? {
         if let selectedPageID,
@@ -74,7 +76,7 @@ struct NoteEditorView: View {
     }
 
     private var drawingRenderQuality: DrawingRenderQuality {
-        DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? .balanced
+        DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? DrawingRenderQuality.defaultQuality
     }
 
     private var pageLayoutMode: NoteEditorPageLayoutMode {
@@ -692,7 +694,11 @@ struct NoteEditorView: View {
     }
 
     private func handleDrawingChanged(pageID: UUID) {
-        note.pages.first { $0.id == pageID }?.markSearchIndexStale()
+        guard let page = note.pages.first(where: { $0.id == pageID }) else { return }
+
+        page.touch()
+        scheduleDrawingMetadataSave()
+
         guard autoAddedPlaceholderPageID == pageID else { return }
         autoAddedPlaceholderPageID = nil
     }
@@ -1230,9 +1236,34 @@ struct NoteEditorView: View {
     }
 
     private func saveNow() {
+        drawingMetadataSaveTask?.cancel()
+        drawingMetadataSaveTask = nil
         saveNowSignal += 1
         note.touch()
         saveEditorChanges("save the note")
+    }
+
+    private func scheduleDrawingMetadataSave() {
+        drawingMetadataSaveTask?.cancel()
+        isMetadataSavePending = true
+        didMetadataSaveFail = false
+        refreshAutosaveState()
+
+        drawingMetadataSaveTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: drawingMetadataSaveDelayNanoseconds)
+                try Task.checkCancellation()
+                drawingMetadataSaveTask = nil
+                _ = saveEditorChanges("save drawing metadata")
+            } catch is CancellationError {
+                // A newer drawing change or explicit save will own the pending metadata save.
+            } catch {
+                drawingMetadataSaveTask = nil
+                didMetadataSaveFail = true
+                isMetadataSavePending = false
+                refreshAutosaveState()
+            }
+        }
     }
 
     private func updatePageBackground(_ page: NotePage, styleRaw: String? = nil, colorHex: String? = nil) {
