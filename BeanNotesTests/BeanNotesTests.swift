@@ -978,6 +978,37 @@ struct BeanNotesTests {
         #expect(restoredSession.highlighterWidth == 8)
     }
 
+    @Test @MainActor func precisionStrokeWidthModeAllowsFineAdjustmentsAndPersists() throws {
+        let suiteName = "BeanNotesPrecisionStrokeWidth-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let firstSession = DrawingToolState(defaults: defaults)
+        #expect(firstSession.widthMode == .standard)
+        #expect(firstSession.activeWidthStep == 0.5)
+
+        firstSession.select(.pen)
+        firstSession.applyActiveWidth(2.26)
+        #expect(firstSession.penWidth == 2.5)
+
+        firstSession.selectWidthMode(.precision)
+        #expect(firstSession.widthMode == .precision)
+        #expect(firstSession.activeWidthStep == 0.1)
+
+        firstSession.applyActiveWidth(2.26)
+        #expect(abs(firstSession.penWidth - 2.3) < 0.001)
+
+        firstSession.nudgeActiveWidth(by: -1)
+        #expect(abs(firstSession.penWidth - 2.2) < 0.001)
+
+        let restoredSession = DrawingToolState(defaults: defaults)
+        #expect(restoredSession.widthMode == .precision)
+        #expect(abs(restoredSession.penWidth - 2.2) < 0.001)
+        #expect(abs(restoredSession.strokeWidth(for: .pen) - 2.2) < 0.001)
+    }
+
     @Test @MainActor func customPaletteRestoresSelectedColorsAndEraserMode() throws {
         let suiteName = "BeanNotesToolState-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

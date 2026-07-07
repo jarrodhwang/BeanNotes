@@ -78,6 +78,40 @@ struct DrawingStrokeWidthCalibration: Equatable {
         let stepped = (bounded / step).rounded() * step
         return min(max(stepped, minimumWidth), maximumWidth)
     }
+
+    func withStep(_ step: CGFloat) -> DrawingStrokeWidthCalibration {
+        DrawingStrokeWidthCalibration(
+            minimumWidth: minimumWidth,
+            maximumWidth: maximumWidth,
+            step: step,
+            presets: presets
+        )
+    }
+}
+
+enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
+    case standard
+    case precision
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .standard:
+            "Standard"
+        case .precision:
+            "Precision"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .standard:
+            "lineweight"
+        case .precision:
+            "scope"
+        }
+    }
 }
 
 enum DrawingEraserMode: String, CaseIterable, Identifiable {
@@ -252,6 +286,7 @@ final class DrawingToolState: ObservableObject {
         static let penPaletteColors = "drawingToolState.penPaletteColors"
         static let pencilPaletteColors = "drawingToolState.pencilPaletteColors"
         static let highlighterPaletteColors = "drawingToolState.highlighterPaletteColors"
+        static let widthMode = "drawingToolState.widthMode"
     }
 
     private static let maximumPaletteColorCount = 8
@@ -312,6 +347,10 @@ final class DrawingToolState: ObservableObject {
         didSet { defaults.set(Self.serializedPalette(highlighterPaletteColorHexes), forKey: DefaultsKey.highlighterPaletteColors) }
     }
 
+    @Published var widthMode: DrawingStrokeWidthMode = .standard {
+        didSet { defaults.set(widthMode.rawValue, forKey: DefaultsKey.widthMode) }
+    }
+
     @Published var temporaryEraserActive = false
 
     init(defaults: UserDefaults = .standard) {
@@ -345,6 +384,7 @@ final class DrawingToolState: ObservableObject {
             key: DefaultsKey.highlighterPaletteColors,
             fallback: Self.defaultPaletteColorHexes(for: .highlighter)
         )
+        widthMode = Self.storedWidthMode(defaults, key: DefaultsKey.widthMode, fallback: .standard)
     }
 
     var activeColorTool: DrawingTool {
@@ -365,7 +405,11 @@ final class DrawingToolState: ObservableObject {
     }
 
     var activeWidthCalibration: DrawingStrokeWidthCalibration {
-        Self.widthCalibration(for: activeColorTool)
+        Self.widthCalibration(for: activeColorTool, mode: widthMode)
+    }
+
+    var activeWidthStep: CGFloat {
+        activeWidthCalibration.step
     }
 
     var selectedToolUsesInkColor: Bool {
@@ -386,11 +430,11 @@ final class DrawingToolState: ObservableObject {
     func strokeWidth(for tool: DrawingTool) -> CGFloat {
         switch tool {
         case .pencil:
-            Self.widthCalibration(for: .pencil).clamped(pencilWidth)
+            Self.boundedWidth(pencilWidth, for: .pencil)
         case .highlighter:
-            Self.widthCalibration(for: .highlighter).clamped(highlighterWidth)
+            Self.boundedWidth(highlighterWidth, for: .highlighter)
         default:
-            Self.widthCalibration(for: .pen).clamped(penWidth)
+            Self.boundedWidth(penWidth, for: .pen)
         }
     }
 
@@ -506,15 +550,29 @@ final class DrawingToolState: ObservableObject {
     func applyActiveWidth(_ width: CGFloat) {
         switch activeColorTool {
         case .pencil:
-            pencilWidth = Self.widthCalibration(for: .pencil).clamped(width)
+            pencilWidth = Self.widthCalibration(for: .pencil, mode: widthMode).clamped(width)
         case .pen:
-            penWidth = Self.widthCalibration(for: .pen).clamped(width)
+            penWidth = Self.widthCalibration(for: .pen, mode: widthMode).clamped(width)
         case .highlighter:
-            highlighterWidth = Self.widthCalibration(for: .highlighter).clamped(width)
+            highlighterWidth = Self.widthCalibration(for: .highlighter, mode: widthMode).clamped(width)
         case .eraser, .lasso:
             select(.pen)
-            penWidth = Self.widthCalibration(for: .pen).clamped(width)
+            penWidth = Self.widthCalibration(for: .pen, mode: widthMode).clamped(width)
         }
+    }
+
+    func selectWidthMode(_ mode: DrawingStrokeWidthMode) {
+        widthMode = mode
+        applyActiveWidth(activeStrokeWidth)
+    }
+
+    func toggleWidthMode() {
+        selectWidthMode(widthMode == .precision ? .standard : .precision)
+    }
+
+    func nudgeActiveWidth(by steps: CGFloat) {
+        guard steps.isFinite, steps != 0 else { return }
+        applyActiveWidth(activeStrokeWidth + activeWidthStep * steps)
     }
 
     func selectEraserMode(_ mode: DrawingEraserMode) {
@@ -600,6 +658,15 @@ final class DrawingToolState: ObservableObject {
         return DrawingEraserMode(rawValue: rawValue) ?? fallback
     }
 
+    private static func storedWidthMode(
+        _ defaults: UserDefaults,
+        key: String,
+        fallback: DrawingStrokeWidthMode
+    ) -> DrawingStrokeWidthMode {
+        guard let rawValue = defaults.string(forKey: key) else { return fallback }
+        return DrawingStrokeWidthMode(rawValue: rawValue) ?? fallback
+    }
+
     private static func storedColor(_ defaults: UserDefaults, key: String, fallback: String) -> Color {
         Color(hex: defaults.string(forKey: key) ?? fallback)
     }
@@ -630,15 +697,39 @@ final class DrawingToolState: ObservableObject {
         }
     }
 
+    private static func widthCalibration(
+        for tool: DrawingTool,
+        mode: DrawingStrokeWidthMode
+    ) -> DrawingStrokeWidthCalibration {
+        let calibration = widthCalibration(for: tool)
+        guard mode == .precision else { return calibration }
+        return calibration.withStep(precisionWidthStep(for: tool))
+    }
+
+    private static func precisionWidthStep(for tool: DrawingTool) -> CGFloat {
+        switch tool {
+        case .highlighter:
+            0.5
+        case .pen, .pencil, .eraser, .lasso:
+            0.1
+        }
+    }
+
     private static func storedWidth(
         _ defaults: UserDefaults,
         key: String,
         fallback: CGFloat,
         for tool: DrawingTool
     ) -> CGFloat {
-        let calibration = widthCalibration(for: tool)
         guard defaults.object(forKey: key) != nil else { return fallback }
-        return calibration.clamped(CGFloat(defaults.double(forKey: key)))
+        return boundedWidth(CGFloat(defaults.double(forKey: key)), for: tool)
+    }
+
+    private static func boundedWidth(_ width: CGFloat, for tool: DrawingTool) -> CGFloat {
+        guard width.isFinite else { return widthCalibration(for: tool).minimumWidth }
+
+        let calibration = widthCalibration(for: tool)
+        return min(max(width, calibration.minimumWidth), calibration.maximumWidth)
     }
 
     private func paletteColorHexes(for tool: DrawingTool) -> [String] {

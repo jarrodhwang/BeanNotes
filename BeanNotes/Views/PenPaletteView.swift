@@ -148,15 +148,21 @@ struct PenPaletteView: View {
 
     private var widthControls: some View {
         HStack(spacing: 6) {
+            precisionModeButton
+
             ForEach(toolState.widthPresets(), id: \.self) { width in
                 widthButton(width)
             }
+
+            widthNudgeButton(direction: -1)
 
             Slider(value: activeWidthBinding, in: activeWidthRange, step: activeWidthStep) {
                 Text("Stroke width")
             }
             .labelsHidden()
             .frame(width: usesCompactLayout ? 124 : 108)
+
+            widthNudgeButton(direction: 1)
 
             Text(activeWidthText)
                 .font(.caption2.weight(.semibold).monospacedDigit())
@@ -166,6 +172,53 @@ struct PenPaletteView: View {
         .frame(height: 30)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(toolState.activeColorTool.label) stroke width")
+        .accessibilityValue("\(activeWidthText) points")
+    }
+
+    private var precisionModeButton: some View {
+        let isPrecision = toolState.widthMode == .precision
+
+        return Button {
+            performSelectionFeedback()
+            isShowingEraserModes = false
+            toolState.toggleWidthMode()
+        } label: {
+            Image(systemName: toolState.widthMode.systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(isPrecision ? .primary : .secondary)
+                .frame(width: 26, height: 26)
+                .background {
+                    if isPrecision {
+                        Circle()
+                            .fill(.blue.opacity(0.14))
+                    }
+                }
+                .overlay {
+                    if isPrecision {
+                        Circle()
+                            .stroke(.blue, lineWidth: 2)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isPrecision ? "Precision stroke width on" : "Precision stroke width off")
+        .accessibilityHint("Toggles finer stroke width adjustments")
+    }
+
+    private func widthNudgeButton(direction: CGFloat) -> some View {
+        Button {
+            performSelectionFeedback()
+            isShowingEraserModes = false
+            toolState.nudgeActiveWidth(by: direction)
+        } label: {
+            Image(systemName: direction < 0 ? "minus" : "plus")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .background(Color(.secondarySystemBackground).opacity(0.7), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(direction < 0 ? "Decrease stroke width" : "Increase stroke width")
         .accessibilityValue("\(activeWidthText) points")
     }
 
@@ -455,7 +508,7 @@ struct PenPaletteView: View {
     }
 
     private var activeWidthStep: Double {
-        Double(toolState.activeWidthCalibration.step)
+        Double(toolState.activeWidthStep)
     }
 
     private var activeWidthText: String {
@@ -517,10 +570,10 @@ struct PenPaletteLayoutMetrics {
 
     static func estimatedPaletteSize(isCompact: Bool, showsInkControls: Bool) -> CGSize {
         if isCompact {
-            return CGSize(width: showsInkControls ? 318 : 212, height: showsInkControls ? 126 : 44)
+            return CGSize(width: showsInkControls ? 404 : 212, height: showsInkControls ? 126 : 44)
         }
 
-        return CGSize(width: showsInkControls ? 724 : 246, height: 44)
+        return CGSize(width: showsInkControls ? 818 : 246, height: 44)
     }
 
     static func clampedCommittedOffset(

@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 7
+    static let currentWelcomeContentVersion = 8
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,7 +162,7 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Vector", systemImage: "scribble")
+                featureBadge("Precision Ink", systemImage: "scope")
                 featureBadge("Zoom Detail", systemImage: "magnifyingglass")
             }
 
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The editor now shows live zoom level and quick detail targets for handwriting, diagrams, and close-up review."
+            "The custom palette now has precision stroke controls for lighter handwriting, diagrams, and close-up annotation."
         }
     }
 
@@ -228,14 +228,14 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Live zoom readout",
-                detail: "See the current page zoom from the editor toolbar while pinching or using zoom controls.",
-                systemImage: "magnifyingglass"
+                title: "Precision stroke widths",
+                detail: "Use the new palette precision control for finer pen and pencil width steps.",
+                systemImage: "scope"
             ),
             Highlight(
-                title: "Quick detail targets",
-                detail: "Jump directly to 100%, 200%, or 300% for sharper inspection and close handwriting work.",
-                systemImage: "scope"
+                title: "Width nudges",
+                detail: "Tap plus or minus beside the width slider for repeatable light-touch adjustments.",
+                systemImage: "plusminus"
             ),
             Highlight(
                 title: "Vector-first drawing",
