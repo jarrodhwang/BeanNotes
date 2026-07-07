@@ -19,6 +19,7 @@ struct LibraryView: View {
 
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
+    @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
 
     @State private var selectedFolderID: UUID?
     @State private var searchText = ""
@@ -62,6 +63,10 @@ struct LibraryView: View {
 
     private var defaultNoteBackground: NoteBackground {
         NoteBackground.fromDefaults(styleRaw: defaultBackgroundStyleRaw, colorHex: defaultBackgroundColorHex)
+    }
+
+    private var appTheme: AppTheme {
+        AppTheme(rawValue: appThemeRaw) ?? .system
     }
 
     private var isShowingNoteEditor: Binding<Bool> {
@@ -156,6 +161,9 @@ struct LibraryView: View {
         }
         .sheet(isPresented: $isShowingSettings) {
             SettingsView()
+                .environment(\.beanNotesTheme, beanNotesTheme)
+                .preferredColorScheme(appTheme.colorScheme)
+                .presentationBackground(beanNotesTheme.appBackground)
         }
         .fileImporter(
             isPresented: $isShowingDocumentImporter,

@@ -157,45 +157,45 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
     var maximumZoomScale: CGFloat {
         switch self {
         case .balanced:
-            4
+            3.5
         case .highResolution:
-            6
+            4.5
         }
     }
 
     var maximumZoomFitMultiplier: CGFloat {
         switch self {
         case .balanced:
-            4
+            3
         case .highResolution:
-            5
+            4
         }
     }
 
     var backgroundScaleMultiplier: CGFloat {
         switch self {
         case .balanced:
-            3
+            1.5
         case .highResolution:
-            4
+            2
         }
     }
 
     var drawingScaleMultiplier: CGFloat {
         switch self {
         case .balanced:
-            4
+            2
         case .highResolution:
-            6
+            2.5
         }
     }
 
     var imageScaleMultiplier: CGFloat {
         switch self {
         case .balanced:
-            3
+            1.5
         case .highResolution:
-            4
+            2
         }
     }
 }

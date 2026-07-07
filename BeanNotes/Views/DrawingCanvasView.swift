@@ -11,7 +11,7 @@ import UIKit
 struct AttachmentImageRasterBudget: Equatable {
     private static let defaultRenderScale: CGFloat = 3
     private static let minimumPixelSize = 1_024
-    private static let maximumPixelSize = 4_096
+    private static let maximumPixelSize = 3_072
     private static let growthReloadFactor: CGFloat = 1.35
     private static let shrinkReloadFactor: CGFloat = 0.55
 
@@ -67,7 +67,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             coordinator?.selectVisiblePage(pageID)
         }
         containerView.reachedBottom = { [weak coordinator = context.coordinator] in
-            coordinator?.parent.addPageAtBottom()
+            coordinator?.requestAddPageAtBottom()
         }
 
         context.coordinator.containerView = containerView
@@ -211,8 +211,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let autoAddFooterSize: CGFloat = 56
         private let autoAddFooterTopPadding: CGFloat = 36
         private let autoAddFooterBottomPadding: CGFloat = 42
-        private let pagePreloadScreenPadding: CGFloat = 720
-        private let minimumPagePreloadPadding: CGFloat = 520
+        private let pagePreloadScreenPadding: CGFloat = 420
+        private let minimumPagePreloadPadding: CGFloat = 320
         private let topContentHeight: CGFloat = 96
         private let zoomOutMultiplier: CGFloat = 0.46
         private let absoluteMinimumZoomScale: CGFloat = 0.12
@@ -679,7 +679,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 storage: drawingStorage.storage,
                 drawingStorage: drawingStorage,
                 coordinator: coordinator,
-                attachmentChanged: coordinator.parent.attachmentChanged
+                attachmentChanged: { [weak coordinator] in
+                    coordinator?.notifyAttachmentChanged()
+                }
             )
 
             return didCreatePageView
@@ -690,8 +692,24 @@ struct DrawingCanvasView: UIViewRepresentable {
                 coordinator?.unregister(canvasView: pageView.canvasView, page: page)
             }
 
+            pageView.releaseHeavyResources()
             pageView.removeFromSuperview()
             pageViews[id] = nil
+        }
+
+        func reduceMemoryFootprint() {
+            let retainedID = selectedPageID ?? orderedPageIDs.first
+            let retiredIDs = pageViews.keys.filter { $0 != retainedID }
+
+            for id in retiredIDs {
+                if let pageView = pageViews[id] {
+                    retirePageView(id: id, pageView: pageView)
+                }
+            }
+
+            ImageMemoryCache.shared.removeAllImages()
+            DrawingStorageService.clearCache()
+            updateRasterScale(force: true)
         }
 
         private func visibleContentRect() -> CGRect {
@@ -1006,9 +1024,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             attachmentChanged: @escaping () -> Void
         ) {
             let attachmentIDs = Set(attachments.map(\.id))
-            for (id, view) in imageViews where !attachmentIDs.contains(id) {
-                view.removeFromSuperview()
-                imageViews[id] = nil
+            let removedIDs = imageViews.keys.filter { !attachmentIDs.contains($0) }
+            for id in removedIDs {
+                if let view = imageViews[id] {
+                    view.releaseImage()
+                    view.removeFromSuperview()
+                    imageViews[id] = nil
+                }
             }
 
             for attachment in attachments {
@@ -1043,6 +1065,18 @@ struct DrawingCanvasView: UIViewRepresentable {
                     bringSubviewToFront(view)
                 }
             }
+        }
+
+        func releaseHeavyResources() {
+            canvasView.delegate = nil
+            canvasView.drawing = PKDrawing()
+
+            for view in imageViews.values {
+                view.releaseImage()
+                view.removeFromSuperview()
+            }
+
+            imageViews.removeAll()
         }
     }
 
@@ -1193,6 +1227,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
         }
 
+        func releaseImage() {
+            imageView.image = nil
+            loadedStoredFileName = nil
+            loadedRasterBudget = nil
+        }
+
         @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
             guard let attachment, let superview else { return }
 
@@ -1272,6 +1312,70 @@ struct DrawingCanvasView: UIViewRepresentable {
             queue.setSpecific(key: drawingWriteQueueKey, value: ())
             return queue
         }()
+
+        private struct CanvasSaveRequest {
+            var page: NotePage
+            var drawing: PKDrawing
+            var rootURL: URL
+            var drawingFileName: String
+        }
+
+        func requestAddPageAtBottom() {
+            let addPageAtBottom = parent.addPageAtBottom
+            dispatchToSwiftUI(addPageAtBottom)
+        }
+
+        func notifyAttachmentChanged() {
+            let attachmentChanged = parent.attachmentChanged
+            dispatchToSwiftUI(attachmentChanged)
+        }
+
+        private func notifyVisiblePageChanged(_ pageID: UUID) {
+            let selectedPageID = parent.$selectedPageID
+            dispatchToSwiftUI {
+                selectedPageID.wrappedValue = pageID
+            }
+        }
+
+        private func notifyDrawingChanged(pageID: UUID) {
+            let drawingChanged = parent.drawingChanged
+            dispatchToSwiftUI {
+                drawingChanged(pageID)
+            }
+        }
+
+        private func notifySaveStarted() {
+            let saveStarted = parent.saveStarted
+            dispatchToSwiftUI(saveStarted)
+        }
+
+        private func notifySaveSucceededIfClean() {
+            let saveSucceeded = parent.saveSucceeded
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.pendingSaves.isEmpty, self.dirtyPageIDs.isEmpty else { return }
+                saveSucceeded()
+            }
+        }
+
+        private func notifySaveFailed(_ error: Error) {
+            let saveFailed = parent.saveFailed
+            dispatchToSwiftUI {
+                saveFailed(error)
+            }
+        }
+
+        private func notifyUndoRedoAvailabilityChanged(canUndo: Bool, canRedo: Bool) {
+            let undoRedoAvailabilityChanged = parent.undoRedoAvailabilityChanged
+            dispatchToSwiftUI {
+                undoRedoAvailabilityChanged(canUndo, canRedo)
+            }
+        }
+
+        private func dispatchToSwiftUI(_ action: @escaping () -> Void) {
+            DispatchQueue.main.async {
+                action()
+            }
+        }
 
         var activeCanvasView: PKCanvasView? {
             containerView?.activeCanvasView
@@ -1354,7 +1458,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func selectVisiblePage(_ pageID: UUID) {
             selectedPageID = pageID
-            parent.selectedPageID = pageID
+            notifyVisiblePageChanged(pageID)
             activeCanvasView?.becomeFirstResponder()
             applyCustomToolIfNeeded()
             configureToolPicker(mode: parent.paletteMode)
@@ -1456,8 +1560,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard let page = canvasPages[key] else { return }
 
             dirtyPageIDs.insert(page.id)
-            parent.drawingChanged(page.id)
-            parent.saveStarted()
+            notifyDrawingChanged(pageID: page.id)
+            notifySaveStarted()
             scheduleDrawingSave(for: page, canvasView: canvasView)
             publishUndoRedoAvailability()
         }
@@ -1507,7 +1611,8 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             let rootURL = parent.drawingStorage.storage.rootURL
             let drawingFileName = page.drawingFileName
-            parent.saveStarted()
+            notifySaveStarted()
+            DrawingStorageService.cache(drawing, fileName: drawingFileName)
             Self.writeDrawing(
                 drawing,
                 rootURL: rootURL,
@@ -1584,12 +1689,12 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func reportDrawingSaveSuccess() {
             guard pendingSaves.isEmpty, dirtyPageIDs.isEmpty else { return }
-            parent.saveSucceeded()
+            notifySaveSucceededIfClean()
         }
 
         private func reportDrawingSaveFailure(_ error: Error, pageID: UUID) {
             dirtyPageIDs.insert(pageID)
-            parent.saveFailed(error)
+            notifySaveFailed(error)
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
@@ -1598,14 +1703,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func performFinalDrawingFlush(reason: String, force: Bool = true, useBackgroundTask: Bool = true) {
-            let flush = { [self] in
-                self.saveAllCanvases(force: force)
-            }
-
             if useBackgroundTask {
-                withBackgroundTask(named: "BeanNotes \(reason) Drawing Flush", flush)
+                saveAllCanvasesInBackgroundTask(reason: reason, force: force)
             } else {
-                flush()
+                saveAllCanvases(synchronously: false, force: force)
             }
         }
 
@@ -1636,60 +1737,125 @@ struct DrawingCanvasView: UIViewRepresentable {
                     queue: .main
                 ) { [weak self] _ in
                     self?.performFinalDrawingFlush(reason: "Termination")
+                },
+                center.addObserver(
+                    forName: UIApplication.didReceiveMemoryWarningNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.handleMemoryWarning()
                 }
             ]
         }
 
-        private func withBackgroundTask(named name: String, _ work: () -> Void) {
+        private func handleMemoryWarning() {
+            containerView?.reduceMemoryFootprint()
+        }
+
+        private func saveAllCanvasesInBackgroundTask(reason: String, force: Bool) {
+            let requests = canvasSaveRequests(force: force)
+            guard !requests.isEmpty else { return }
+
             let application = UIApplication.shared
             var taskID: UIBackgroundTaskIdentifier = .invalid
-            taskID = application.beginBackgroundTask(withName: name) {
-                if taskID != .invalid {
+
+            let endBackgroundTask = {
+                DispatchQueue.main.async {
+                    guard taskID != .invalid else { return }
                     application.endBackgroundTask(taskID)
                     taskID = .invalid
                 }
             }
 
-            work()
-
-            if taskID != .invalid {
-                application.endBackgroundTask(taskID)
+            taskID = application.beginBackgroundTask(withName: "BeanNotes \(reason) Drawing Flush") {
+                endBackgroundTask()
             }
+
+            let group = DispatchGroup()
+            for request in requests {
+                group.enter()
+                Self.writeDrawing(
+                    request.drawing,
+                    rootURL: request.rootURL,
+                    drawingFileName: request.drawingFileName,
+                    onSuccess: { [weak self] in
+                        self?.reportDrawingSaveSuccess()
+                        group.leave()
+                    },
+                    onFailure: { [weak self] error in
+                        self?.reportDrawingSaveFailure(error, pageID: request.page.id)
+                        group.leave()
+                    }
+                )
+            }
+
+            group.notify(queue: .main, execute: endBackgroundTask)
         }
 
         func saveAllCanvases(synchronously: Bool = true, force: Bool = false) {
             var savedAtLeastOneCanvas = false
+            let requests = canvasSaveRequests(force: force)
 
-            for (page, canvasView) in containerView?.canvasPagePairs ?? [] {
-                guard force || dirtyPageIDs.contains(page.id) || pendingSaves[page.id] != nil else { continue }
-
-                parent.saveStarted()
-
+            for request in requests {
                 if synchronously {
-                    pendingSaves[page.id]?.cancel()
-                    pendingSaves[page.id] = nil
-                    pendingSaveTokens[page.id] = nil
-                    dirtyPageIDs.remove(page.id)
                     do {
                         try Self.writeDrawingSynchronously(
-                            canvasView.drawing,
-                            rootURL: parent.drawingStorage.storage.rootURL,
-                            drawingFileName: page.drawingFileName
+                            request.drawing,
+                            rootURL: request.rootURL,
+                            drawingFileName: request.drawingFileName
                         )
-                        page.touch()
+                        request.page.touch()
                         savedAtLeastOneCanvas = true
                     } catch {
-                        dirtyPageIDs.insert(page.id)
-                        parent.saveFailed(error)
+                        dirtyPageIDs.insert(request.page.id)
+                        notifySaveFailed(error)
                     }
                 } else {
-                    saveDrawingOffMain(canvasView.drawing, for: page)
+                    Self.writeDrawing(
+                        request.drawing,
+                        rootURL: request.rootURL,
+                        drawingFileName: request.drawingFileName,
+                        onSuccess: { [weak self] in
+                            self?.reportDrawingSaveSuccess()
+                        },
+                        onFailure: { [weak self] error in
+                            self?.reportDrawingSaveFailure(error, pageID: request.page.id)
+                        }
+                    )
                 }
             }
 
             if synchronously, savedAtLeastOneCanvas, dirtyPageIDs.isEmpty, pendingSaves.isEmpty {
-                parent.saveSucceeded()
+                notifySaveSucceededIfClean()
             }
+        }
+
+        private func canvasSaveRequests(force: Bool) -> [CanvasSaveRequest] {
+            let pairs = containerView?.canvasPagePairs ?? []
+            var requests: [CanvasSaveRequest] = []
+
+            for (page, canvasView) in pairs {
+                guard force || dirtyPageIDs.contains(page.id) || pendingSaves[page.id] != nil else { continue }
+
+                pendingSaves[page.id]?.cancel()
+                pendingSaves[page.id] = nil
+                pendingSaveTokens[page.id] = nil
+                dirtyPageIDs.remove(page.id)
+                notifySaveStarted()
+                let drawing = canvasView.drawing
+                DrawingStorageService.cache(drawing, fileName: page.drawingFileName)
+
+                requests.append(
+                    CanvasSaveRequest(
+                        page: page,
+                        drawing: drawing,
+                        rootURL: parent.drawingStorage.storage.rootURL,
+                        drawingFileName: page.drawingFileName
+                    )
+                )
+            }
+
+            return requests
         }
 
         @objc func handleTwoFingerTap(_ recognizer: UITapGestureRecognizer) {
@@ -1732,9 +1898,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             lastPublishedCanUndo = canUndo
             lastPublishedCanRedo = canRedo
 
-            DispatchQueue.main.async { [parent] in
-                parent.undoRedoAvailabilityChanged(canUndo, canRedo)
-            }
+            notifyUndoRedoAvailabilityChanged(canUndo: canUndo, canRedo: canRedo)
         }
 
         func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {

@@ -13,8 +13,8 @@ final class ImageMemoryCache {
     private let fileManager = FileManager.default
 
     private init() {
-        cache.countLimit = 160
-        cache.totalCostLimit = 96 * 1024 * 1024
+        cache.countLimit = 80
+        cache.totalCostLimit = 48 * 1024 * 1024
 
         NotificationCenter.default.addObserver(
             self,

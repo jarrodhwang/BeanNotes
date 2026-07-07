@@ -44,11 +44,8 @@ enum BeanNotesModelContainer {
             do {
                 return try ModelContainer(for: schema, configurations: [configuration(for: schema)])
             } catch {
-                assertionFailure("BeanNotes is running with in-memory SwiftData after persistent store recovery failed: \(error)")
-                return try! ModelContainer(
-                    for: schema,
-                    configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
-                )
+                NSLog("BeanNotes persistent store recovery failed; opening temporary in-memory store: \(error)")
+                return inMemoryFallbackContainer(for: schema)
             }
         }
     }
@@ -92,6 +89,17 @@ enum BeanNotesModelContainer {
             }
         } catch {
             NSLog("BeanNotes could not archive failed SwiftData store: \(error)")
+        }
+    }
+
+    private static func inMemoryFallbackContainer(for schema: Schema) -> ModelContainer {
+        do {
+            return try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+            )
+        } catch {
+            fatalError("BeanNotes could not create a SwiftData container: \(error)")
         }
     }
 

@@ -13,7 +13,7 @@ struct SettingsView: View {
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
-    @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.highResolution.rawValue
+    @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.balanced.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
@@ -40,6 +40,10 @@ struct SettingsView: View {
         BeanNotesTheme(rawValue: beanNotesThemeRaw) ?? .standard
     }
 
+    private var selectedAppTheme: AppTheme {
+        AppTheme(rawValue: appThemeRaw) ?? .system
+    }
+
     private var selectedPageLayoutMode: NoteEditorPageLayoutMode {
         NoteEditorPageLayoutMode(rawValue: pageLayoutModeRaw) ?? .scroll
     }
@@ -49,7 +53,7 @@ struct SettingsView: View {
     }
 
     private var selectedDrawingRenderQuality: DrawingRenderQuality {
-        DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? .highResolution
+        DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? .balanced
     }
 
     var body: some View {
@@ -220,6 +224,8 @@ struct SettingsView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(selectedMoodTheme.appBackground)
             .navigationTitle("Settings")
             .tint(selectedMoodTheme.accentColor)
             .onAppear(perform: migrateLegacyPaginationSettingIfNeeded)
@@ -229,7 +235,6 @@ struct SettingsView: View {
             .onChange(of: beanNotesThemeRaw) { _, rawValue in
                 let theme = BeanNotesTheme(rawValue: rawValue) ?? .standard
                 defaultBackgroundColorHex = theme.defaultNoteBackgroundHex
-                AppIconService.applyIcon(for: theme)
             }
             .confirmationDialog(
                 "Clean up exports older than \(oldExportAgeDays) days?",
@@ -261,6 +266,9 @@ struct SettingsView: View {
                 backupTask?.cancel()
             }
         }
+        .environment(\.beanNotesTheme, selectedMoodTheme)
+        .preferredColorScheme(selectedAppTheme.colorScheme)
+        .presentationBackground(selectedMoodTheme.appBackground)
     }
 
     private func migrateLegacyPaginationSettingIfNeeded() {

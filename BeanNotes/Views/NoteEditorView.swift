@@ -17,7 +17,7 @@ struct NoteEditorView: View {
 
     @StateObject private var toolState = DrawingToolState()
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
-    @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.highResolution.rawValue
+    @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.balanced.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
@@ -74,7 +74,7 @@ struct NoteEditorView: View {
     }
 
     private var drawingRenderQuality: DrawingRenderQuality {
-        DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? .highResolution
+        DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? .balanced
     }
 
     private var pageLayoutMode: NoteEditorPageLayoutMode {

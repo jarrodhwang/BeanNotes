@@ -622,7 +622,7 @@ struct BeanNotesTests {
 
         #expect(baseBudget.maxPixelSize == 1_024)
         #expect(zoomedBudget.maxPixelSize == 2_560)
-        #expect(cappedBudget.maxPixelSize == 4_096)
+        #expect(cappedBudget.maxPixelSize == 3_072)
         #expect(zoomedBudget.shouldReplaceLoadedBudget(baseBudget))
         #expect(baseBudget.shouldReplaceLoadedBudget(zoomedBudget))
         #expect(!moderateZoomBudget.shouldReplaceLoadedBudget(baseBudget))

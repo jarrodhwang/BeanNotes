@@ -11,8 +11,8 @@ struct DrawingStorageService {
 
     private static let drawingCache: NSCache<NSString, CachedDrawing> = {
         let cache = NSCache<NSString, CachedDrawing>()
-        cache.countLimit = 48
-        cache.totalCostLimit = 64 * 1024 * 1024
+        cache.countLimit = 24
+        cache.totalCostLimit = 32 * 1024 * 1024
         return cache
     }()
 
