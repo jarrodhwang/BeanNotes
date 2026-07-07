@@ -1211,7 +1211,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.drawing = PKDrawing()
 
             for view in imageViews.values {
-                view.releaseImage()
+                view.releaseImage(evictCachedVariants: true)
                 view.removeFromSuperview()
             }
 
@@ -1468,8 +1468,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        func releaseImage() {
+        func releaseImage(evictCachedVariants: Bool = false) {
             cancelPendingImageLoad()
+            if evictCachedVariants, let imageURL {
+                ImageMemoryCache.shared.removeImages(for: imageURL)
+            }
             imageView.image = nil
             loadedStoredFileName = nil
             loadedRasterBudget = nil

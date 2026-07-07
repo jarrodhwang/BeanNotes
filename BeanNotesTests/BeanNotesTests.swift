@@ -780,6 +780,72 @@ struct BeanNotesTests {
         #expect(!moderateZoomBudget.shouldReplaceLoadedBudget(baseBudget))
     }
 
+    @Test func imageMemoryCacheEvictsAllVariantsForFileURL() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesImageCache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let imageURL = rootURL.appendingPathComponent("diagram.png")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 96, height: 96))
+        }
+        try #require(image.pngData()).write(to: imageURL)
+
+        ImageMemoryCache.shared.removeAllImages()
+        #expect(ImageMemoryCache.shared.image(at: imageURL, maxPixelSize: 48) != nil)
+        #expect(ImageMemoryCache.shared.image(at: imageURL, maxPixelSize: 96) != nil)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 2)
+
+        ImageMemoryCache.shared.removeImages(for: imageURL)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 0)
+    }
+
+    @Test func localStorageCleanupEvictsDecodedImageVariants() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCleanupImageCache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        }
+        let storedImage = try storage.saveData(
+            try #require(image.pngData()),
+            preferredName: "cached.png",
+            contentType: .png,
+            to: .imports
+        )
+        let imageURL = storage.url(forRelativePath: storedImage.relativePath)
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Cached",
+            originalFileName: "cached.png",
+            storedFileName: storedImage.relativePath,
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png"
+        )
+
+        ImageMemoryCache.shared.removeAllImages()
+        #expect(ImageMemoryCache.shared.image(at: imageURL, maxPixelSize: 64) != nil)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
+
+        let report = storage.removeStoredFiles(matching: LocalStorageCleanupTarget(attachment: attachment))
+
+        #expect(report.failedRelativePaths.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: imageURL.path))
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 0)
+    }
+
     @Test func attachmentImageContainerDefersAndReleasesOffscreenRasters() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesAttachmentRaster-\(UUID().uuidString)", isDirectory: true)

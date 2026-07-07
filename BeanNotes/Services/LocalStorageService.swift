@@ -432,6 +432,7 @@ struct LocalStorageService {
         let fileURL = try validatedURL(forRelativePath: relativePath)
         guard fileManager.fileExists(atPath: fileURL.path) else { return false }
         try fileManager.removeItem(at: fileURL)
+        ImageMemoryCache.shared.removeImages(for: fileURL)
         return true
     }
 
