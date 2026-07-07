@@ -241,6 +241,17 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
         }
     }
 
+    var systemImage: String {
+        switch self {
+        case .balanced:
+            "speedometer"
+        case .highResolution:
+            "magnifyingglass"
+        case .ultraFine:
+            "scope"
+        }
+    }
+
     var description: String {
         switch self {
         case .balanced:

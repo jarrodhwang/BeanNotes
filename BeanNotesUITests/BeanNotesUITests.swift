@@ -37,6 +37,8 @@ final class BeanNotesUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["Back to library"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.otherElements["Pen palette"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Zoom out"].waitForExistence(timeout: 8))
     }
 
     @MainActor
@@ -45,6 +47,7 @@ final class BeanNotesUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Quick zoom controls"].waitForExistence(timeout: 8))
 
         let startWritingButton = app.buttons["Start Writing"]
         XCTAssertTrue(startWritingButton.waitForExistence(timeout: 8))

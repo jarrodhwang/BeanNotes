@@ -683,6 +683,7 @@ struct BeanNotesTests {
 
     @Test func drawingRenderQualityExposesSharperZoomBudget() {
         #expect(DrawingRenderQuality.defaultQuality == .highResolution)
+        #expect(DrawingRenderQuality.allCases.map(\.label) == ["Balanced", "High Resolution", "Ultra Fine"])
         #expect(DrawingRenderQuality.highResolution.maximumZoomScale > DrawingRenderQuality.balanced.maximumZoomScale)
         #expect(DrawingRenderQuality.ultraFine.maximumZoomScale > DrawingRenderQuality.highResolution.maximumZoomScale)
         #expect(DrawingRenderQuality.highResolution.maximumZoomFitMultiplier > DrawingRenderQuality.balanced.maximumZoomFitMultiplier)
@@ -713,7 +714,10 @@ struct BeanNotesTests {
     }
 
     @Test func drawingZoomPresetsFormatAndClampDetailTargets() {
-        #expect(DrawingZoomPreset.allCases.map(\.label) == ["100%", "200%", "300%"])
+        #expect(DrawingZoomPreset.allCases.map(\.label) == ["100%", "200%", "300%", "400%"])
+        #expect(DrawingZoomPreset.quickPresets(for: .balanced).map(\.label) == ["100%", "200%", "300%"])
+        #expect(DrawingZoomPreset.quickPresets(for: .highResolution).map(\.label) == ["100%", "200%", "300%", "400%"])
+        #expect(DrawingZoomPreset.quickPresets(for: .ultraFine).map(\.label) == ["100%", "200%", "300%", "400%"])
         #expect(DrawingZoomLevel.percentageText(for: 1.245) == "125%")
         #expect(DrawingZoomLevel.percentageText(for: -1) == "0%")
         #expect(DrawingZoomLevel.clampedScale(0.5, minimum: 0.75, maximum: 3) == 0.75)

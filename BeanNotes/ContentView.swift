@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 9
+    static let currentWelcomeContentVersion = 10
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Drawing input can now stay Apple Pencil-only for clean scrolling, or switch to Pencil or Finger for quick markups."
+            "Zoom and drawing detail now sit together in the editor, with one-tap zoom steps and finer detail presets for careful handwriting."
         }
     }
 
@@ -228,18 +228,18 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Drawing input mode",
-                detail: "Keep fingers for page navigation, or enable finger drawing from Settings when you need it.",
-                systemImage: "hand.raised"
+                title: "Quick zoom controls",
+                detail: "Step in or out from the editor toolbar, then jump to detailed zoom levels from the same control.",
+                systemImage: "plus.magnifyingglass"
             ),
             Highlight(
-                title: "Light-touch ink controls",
-                detail: "Precision width mode and nudges stay available for finer handwriting and diagrams.",
+                title: "Detail where you draw",
+                detail: "Switch Balanced, High Resolution, or Ultra Fine rendering without leaving the note.",
                 systemImage: "scope"
             ),
             Highlight(
                 title: "Vector-first drawing",
-                detail: "PencilKit strokes stay editable and crisp while BeanNotes refreshes page rendering as you zoom.",
+                detail: "PencilKit strokes stay editable while BeanNotes refreshes page rendering as you zoom.",
                 systemImage: "scribble"
             )
         ]

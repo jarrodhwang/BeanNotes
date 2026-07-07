@@ -459,7 +459,7 @@ struct NoteEditorView: View {
 
             pageActionsMenu(page: page)
 
-            zoomMenu
+            zoomControls
 
             Button {
                 isShowingBackgroundPicker = true
@@ -518,10 +518,37 @@ struct NoteEditorView: View {
         .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
     }
 
+    private var zoomControls: some View {
+        HStack(spacing: 2) {
+            Button {
+                zoomOutSignal += 1
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+                    .frame(width: 30, height: 34)
+            }
+            .keyboardShortcut("-", modifiers: [.command])
+            .accessibilityLabel("Zoom out")
+
+            zoomMenu
+
+            Button {
+                zoomInSignal += 1
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+                    .frame(width: 30, height: 34)
+            }
+            .keyboardShortcut("+", modifiers: [.command])
+            .accessibilityLabel("Zoom in")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Zoom \(currentZoomText), \(drawingRenderQuality.label) drawing detail")
+    }
+
     private var zoomMenu: some View {
         Menu {
             Section {
                 Label("Current \(currentZoomText)", systemImage: "viewfinder")
+                Label("Detail \(drawingRenderQuality.label)", systemImage: drawingRenderQuality.systemImage)
             }
 
             Section {
@@ -530,14 +557,12 @@ struct NoteEditorView: View {
                 } label: {
                     Label("Zoom In", systemImage: "plus.magnifyingglass")
                 }
-                .keyboardShortcut("+", modifiers: [.command])
 
                 Button {
                     zoomOutSignal += 1
                 } label: {
                     Label("Zoom Out", systemImage: "minus.magnifyingglass")
                 }
-                .keyboardShortcut("-", modifiers: [.command])
 
                 Button {
                     fitToPageSignal += 1
@@ -546,8 +571,22 @@ struct NoteEditorView: View {
                 }
             }
 
+            Section("Drawing Detail") {
+                ForEach(DrawingRenderQuality.allCases) { quality in
+                    Button {
+                        setDrawingRenderQuality(quality)
+                    } label: {
+                        Label(
+                            quality.label,
+                            systemImage: drawingRenderQuality == quality ? "checkmark" : quality.systemImage
+                        )
+                    }
+                    .accessibilityHint(quality.description)
+                }
+            }
+
             Section("Quick Zoom") {
-                ForEach(DrawingZoomPreset.allCases) { preset in
+                ForEach(DrawingZoomPreset.quickPresets(for: drawingRenderQuality)) { preset in
                     Button {
                         setZoomScale(preset.scale)
                     } label: {
@@ -675,6 +714,10 @@ struct NoteEditorView: View {
     private func setZoomScale(_ scale: CGFloat) {
         zoomTargetScale = scale
         zoomToScaleSignal += 1
+    }
+
+    private func setDrawingRenderQuality(_ quality: DrawingRenderQuality) {
+        drawingRenderQualityRaw = quality.rawValue
     }
 
     private var editorKeyboardShortcuts: some View {

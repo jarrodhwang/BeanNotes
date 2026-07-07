@@ -9,6 +9,7 @@ enum DrawingZoomPreset: CaseIterable, Identifiable {
     case actualSize
     case detail
     case closeDetail
+    case fineDetail
 
     var id: String { label }
 
@@ -20,6 +21,8 @@ enum DrawingZoomPreset: CaseIterable, Identifiable {
             2
         case .closeDetail:
             3
+        case .fineDetail:
+            4
         }
     }
 
@@ -35,6 +38,8 @@ enum DrawingZoomPreset: CaseIterable, Identifiable {
             "Set zoom to 200 percent"
         case .closeDetail:
             "Set zoom to 300 percent"
+        case .fineDetail:
+            "Set zoom to 400 percent"
         }
     }
 
@@ -46,7 +51,13 @@ enum DrawingZoomPreset: CaseIterable, Identifiable {
             "plus.magnifyingglass"
         case .closeDetail:
             "scope"
+        case .fineDetail:
+            "viewfinder"
         }
+    }
+
+    static func quickPresets(for renderQuality: DrawingRenderQuality) -> [DrawingZoomPreset] {
+        allCases.filter { $0.scale <= renderQuality.maximumZoomScale }
     }
 }
 
