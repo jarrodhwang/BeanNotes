@@ -918,6 +918,68 @@ struct BeanNotesTests {
         #expect(!imageContainer.isRasterImageLoaded)
     }
 
+    @Test func attachmentImageReleaseKeepsDecodedCacheUnlessEvicting() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAttachmentImageCache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96))
+        let sourceImage = renderer.image { context in
+            UIColor.systemIndigo.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 96, height: 96))
+        }
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let storedImage = try storage.saveData(
+            try #require(sourceImage.jpegData(compressionQuality: 0.9)),
+            preferredName: "pdf-page.jpg",
+            contentType: .jpeg,
+            to: .imports
+        )
+        let imageURL = storage.url(forRelativePath: storedImage.relativePath)
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "PDF Page",
+            originalFileName: "pdf-page.jpg",
+            storedFileName: storedImage.relativePath,
+            contentTypeIdentifier: UTType.jpeg.identifier,
+            fileExtension: "jpg",
+            width: 320,
+            height: 220,
+            isLocked: true,
+            rendersBehindDrawing: true
+        )
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        page.attachments.append(attachment)
+
+        ImageMemoryCache.shared.removeAllImages()
+
+        let imageContainer = DrawingCanvasView.AttachmentImageContainerView()
+        imageContainer.configure(
+            attachment: attachment,
+            storage: storage,
+            pageSize: page.pageSize,
+            changed: {}
+        )
+        imageContainer.updateRasterScale(2)
+        try await waitForRasterImage(in: imageContainer)
+        try await waitForCachedImageVariant(for: imageURL)
+        let retainedVariantCount = ImageMemoryCache.shared.cachedVariantCount(for: imageURL)
+
+        imageContainer.releaseImage()
+
+        #expect(retainedVariantCount > 0)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == retainedVariantCount)
+        #expect(!imageContainer.isRasterImageLoaded)
+
+        imageContainer.releaseImage(evictCachedVariants: true)
+
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 0)
+    }
+
     @Test func canvasUnloadFlushesPendingDrawingSaveSynchronously() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesCanvasUnload-\(UUID().uuidString)", isDirectory: true)
@@ -999,6 +1061,23 @@ struct BeanNotesTests {
         }
 
         #expect(imageContainer.isRasterImageLoaded)
+    }
+
+    private func waitForCachedImageVariant(
+        for imageURL: URL,
+        timeoutNanoseconds: UInt64 = 5_000_000_000
+    ) async throws {
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(timeoutNanoseconds))
+
+        while ContinuousClock.now < deadline {
+            if ImageMemoryCache.shared.cachedVariantCount(for: imageURL) > 0 {
+                return
+            }
+
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) > 0)
     }
 
     @Test @MainActor func customDrawingToolsMapToDistinctPencilKitTools() {

@@ -1229,12 +1229,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        func releaseHeavyResources() {
+        func releaseHeavyResources(evictCachedImages: Bool = false) {
             canvasView.delegate = nil
             canvasView.drawing = PKDrawing()
 
             for view in imageViews.values {
-                view.releaseImage(evictCachedVariants: true)
+                view.releaseImage(evictCachedVariants: evictCachedImages)
                 view.removeFromSuperview()
             }
 
