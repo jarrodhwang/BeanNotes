@@ -36,6 +36,7 @@ final class BeanNotesUITests: XCTestCase {
         createNoteButton.tap()
 
         XCTAssertTrue(app.buttons["Back to library"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["Pen palette"].waitForExistence(timeout: 8))
     }
 
     @MainActor

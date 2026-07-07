@@ -707,6 +707,42 @@ struct BeanNotesTests {
         ))
     }
 
+    @Test func penPaletteUsesCompactDockingOnNarrowIPadWidths() {
+        let narrowSize = CGSize(width: 1_024, height: 1_366)
+        let wideSize = CGSize(width: 1_366, height: 1_024)
+
+        #expect(PenPaletteLayoutMetrics.prefersCompactLayout(for: narrowSize))
+        #expect(!PenPaletteLayoutMetrics.prefersCompactLayout(for: wideSize))
+        #expect(
+            PenPaletteLayoutMetrics.defaultDockOffset(for: narrowSize).width
+            < PenPaletteLayoutMetrics.defaultDockOffset(for: wideSize).width
+        )
+    }
+
+    @Test func penPaletteDragClampsInsideEditorBounds() {
+        let availableSize = CGSize(width: 744, height: 1_024)
+        let paletteSize = CGSize(width: 288, height: 126)
+        let dockOffset = PenPaletteLayoutMetrics.defaultDockOffset(for: availableSize)
+
+        let farUpperLeft = PenPaletteLayoutMetrics.clampedCommittedOffset(
+            CGSize(width: -1_000, height: -1_000),
+            availableSize: availableSize,
+            paletteSize: paletteSize,
+            dockOffset: dockOffset
+        )
+        let farLowerRight = PenPaletteLayoutMetrics.clampedCommittedOffset(
+            CGSize(width: 2_000, height: 2_000),
+            availableSize: availableSize,
+            paletteSize: paletteSize,
+            dockOffset: dockOffset
+        )
+
+        #expect(dockOffset.width + farUpperLeft.width == 8)
+        #expect(dockOffset.height + farUpperLeft.height == 8)
+        #expect(dockOffset.width + farLowerRight.width + paletteSize.width == availableSize.width - 16)
+        #expect(dockOffset.height + farLowerRight.height + paletteSize.height == availableSize.height - 24)
+    }
+
     @Test func attachmentImageRasterBudgetBalancesSharpnessAndMemory() {
         let baseBudget = AttachmentImageRasterBudget(
             attachmentSize: CGSize(width: 320, height: 220),

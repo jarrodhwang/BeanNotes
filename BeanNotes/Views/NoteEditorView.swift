@@ -306,10 +306,10 @@ struct NoteEditorView: View {
                 }
 
                 if penPaletteMode == .custom {
-                    PenPaletteView(toolState: toolState)
-                    .padding(.top, 14)
-                    .padding(.leading, 96)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    GeometryReader { proxy in
+                        PenPaletteView(toolState: toolState, availableSize: proxy.size)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
                     .zIndex(2)
                 }
 

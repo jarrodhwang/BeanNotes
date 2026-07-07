@@ -8,22 +8,27 @@ import UIKit
 
 struct PenPaletteView: View {
     @ObservedObject var toolState: DrawingToolState
+    var availableSize: CGSize = UIScreen.main.bounds.size
 
     @State private var isCollapsed = false
     @State private var isShowingEraserModes = false
     @State private var committedOffset: CGSize = .zero
     @State private var dragOffset: CGSize = .zero
     @State private var selectedPaletteIndex = 0
+    @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
 
     private let widths: [CGFloat] = [3, 5, 8, 14]
-    private let minimumDragOffset = CGSize(width: -82, height: -10)
-    private let maximumTrailingInset: CGFloat = 128
-    private let maximumBottomInset: CGFloat = 180
 
     var body: some View {
         paletteBody
             .fixedSize()
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(key: PenPaletteSizePreferenceKey.self, value: proxy.size)
+                }
+            }
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -35,12 +40,23 @@ struct PenPaletteView: View {
                     .offset(x: 9, y: -9)
             }
             .offset(
-                x: committedOffset.width + dragOffset.width,
-                y: committedOffset.height + dragOffset.height
+                x: dockOffset.width + committedOffset.width + dragOffset.width,
+                y: dockOffset.height + committedOffset.height + dragOffset.height
             )
             .gesture(moveGesture)
             .onAppear {
                 selectionFeedback.prepare()
+                committedOffset = clampedOffset(committedOffset)
+            }
+            .onPreferenceChange(PenPaletteSizePreferenceKey.self) { size in
+                measuredPaletteSize = size
+                committedOffset = clampedOffset(committedOffset)
+            }
+            .onChange(of: availableSize) { _, _ in
+                committedOffset = clampedOffset(committedOffset)
+            }
+            .onChange(of: isCollapsed) { _, _ in
+                committedOffset = clampedOffset(committedOffset)
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Pen palette")
@@ -56,14 +72,20 @@ struct PenPaletteView: View {
     }
 
     private var expandedPalette: some View {
+        Group {
+            if usesCompactLayout {
+                compactExpandedPalette
+            } else {
+                regularExpandedPalette
+            }
+        }
+    }
+
+    private var regularExpandedPalette: some View {
         HStack(spacing: 8) {
             dragHandle
 
-            HStack(spacing: 3) {
-                ForEach(DrawingTool.allCases) { tool in
-                    toolButton(tool)
-                }
-            }
+            toolButtons
 
             if toolState.selectedTool == .eraser, isShowingEraserModes {
                 eraserModePicker
@@ -74,27 +96,65 @@ struct PenPaletteView: View {
                 Divider()
                     .frame(height: 24)
 
-                HStack(spacing: 5) {
-                    ForEach(toolState.paletteSwatches()) { swatch in
-                        swatchButton(swatch)
-                    }
-
-                    selectedPaletteColorPicker
-                }
+                colorControls
 
                 Divider()
                     .frame(height: 24)
 
-                HStack(spacing: 2) {
-                    ForEach(widths, id: \.self) { width in
-                        widthButton(width)
-                    }
-                }
+                widthControls
             }
         }
         .padding(.leading, 10)
         .padding(.trailing, 18)
         .padding(.vertical, 6)
+    }
+
+    private var compactExpandedPalette: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                dragHandle
+                toolButtons
+            }
+
+            if toolState.selectedTool == .eraser, isShowingEraserModes {
+                eraserModePicker
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+
+            if showsInkControls {
+                colorControls
+                widthControls
+            }
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 18)
+        .padding(.vertical, 7)
+    }
+
+    private var toolButtons: some View {
+        HStack(spacing: 3) {
+            ForEach(DrawingTool.allCases) { tool in
+                toolButton(tool)
+            }
+        }
+    }
+
+    private var colorControls: some View {
+        HStack(spacing: 5) {
+            ForEach(toolState.paletteSwatches()) { swatch in
+                swatchButton(swatch)
+            }
+
+            selectedPaletteColorPicker
+        }
+    }
+
+    private var widthControls: some View {
+        HStack(spacing: 2) {
+            ForEach(widths, id: \.self) { width in
+                widthButton(width)
+            }
+        }
     }
 
     private var eraserModePicker: some View {
@@ -184,16 +244,26 @@ struct PenPaletteView: View {
     }
 
     private func clampedOffset(_ proposedOffset: CGSize) -> CGSize {
-        let screenSize = UIScreen.main.bounds.size
-        let maximumOffset = CGSize(
-            width: max(minimumDragOffset.width, screenSize.width - maximumTrailingInset),
-            height: max(minimumDragOffset.height, screenSize.height - maximumBottomInset)
+        PenPaletteLayoutMetrics.clampedCommittedOffset(
+            proposedOffset,
+            availableSize: availableSize,
+            paletteSize: effectivePaletteSize,
+            dockOffset: dockOffset
         )
+    }
 
-        return CGSize(
-            width: min(max(proposedOffset.width, minimumDragOffset.width), maximumOffset.width),
-            height: min(max(proposedOffset.height, minimumDragOffset.height), maximumOffset.height)
-        )
+    private var dockOffset: CGSize {
+        PenPaletteLayoutMetrics.defaultDockOffset(for: availableSize)
+    }
+
+    private var usesCompactLayout: Bool {
+        PenPaletteLayoutMetrics.prefersCompactLayout(for: availableSize)
+    }
+
+    private var effectivePaletteSize: CGSize {
+        measuredPaletteSize == .zero
+            ? PenPaletteLayoutMetrics.estimatedPaletteSize(isCompact: usesCompactLayout, showsInkControls: showsInkControls)
+            : measuredPaletteSize
     }
 
     private var showsInkControls: Bool {
@@ -373,5 +443,70 @@ struct PenPaletteView: View {
     private func performSelectionFeedback() {
         selectionFeedback.selectionChanged()
         selectionFeedback.prepare()
+    }
+}
+
+struct PenPaletteLayoutMetrics {
+    static let compactWidthThreshold: CGFloat = 1_180
+    private static let minimumVisibleInset: CGFloat = 8
+    private static let trailingInset: CGFloat = 16
+    private static let bottomInset: CGFloat = 24
+
+    static func prefersCompactLayout(for availableSize: CGSize) -> Bool {
+        guard availableSize.width > 0 else { return false }
+        return availableSize.width < compactWidthThreshold
+    }
+
+    static func defaultDockOffset(for availableSize: CGSize) -> CGSize {
+        CGSize(
+            width: prefersCompactLayout(for: availableSize) ? 18 : 96,
+            height: 14
+        )
+    }
+
+    static func estimatedPaletteSize(isCompact: Bool, showsInkControls: Bool) -> CGSize {
+        if isCompact {
+            return CGSize(width: showsInkControls ? 288 : 212, height: showsInkControls ? 126 : 44)
+        }
+
+        return CGSize(width: showsInkControls ? 548 : 246, height: 44)
+    }
+
+    static func clampedCommittedOffset(
+        _ proposedOffset: CGSize,
+        availableSize: CGSize,
+        paletteSize: CGSize,
+        dockOffset: CGSize
+    ) -> CGSize {
+        let fallbackSize = availableSize == .zero ? UIScreen.main.bounds.size : availableSize
+        let minimumOffset = CGSize(
+            width: minimumVisibleInset - dockOffset.width,
+            height: minimumVisibleInset - dockOffset.height
+        )
+        let maximumOffset = CGSize(
+            width: max(
+                minimumOffset.width,
+                fallbackSize.width - dockOffset.width - paletteSize.width - trailingInset
+            ),
+            height: max(
+                minimumOffset.height,
+                fallbackSize.height - dockOffset.height - paletteSize.height - bottomInset
+            )
+        )
+
+        return CGSize(
+            width: min(max(proposedOffset.width, minimumOffset.width), maximumOffset.width),
+            height: min(max(proposedOffset.height, minimumOffset.height), maximumOffset.height)
+        )
+    }
+}
+
+private struct PenPaletteSizePreferenceKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        guard next != .zero else { return }
+        value = next
     }
 }

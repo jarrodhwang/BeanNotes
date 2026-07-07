@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 4
+    static let currentWelcomeContentVersion = 5
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Ultra-fine drawing detail, precision zoom controls, and safer local previews are ready for your next iPad note session."
+            "The drawing palette now adapts to iPad size changes, stays docked inside the page, and keeps precision zoom tools close by."
         }
     }
 
@@ -228,9 +228,9 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Precision zoom controls",
-                detail: "Zoom in, zoom out, or fit the page from the editor toolbar while keeping ink sharp.",
-                systemImage: "magnifyingglass"
+                title: "Responsive pen palette",
+                detail: "The custom palette folds into compact rows and stays inside the active editor when iPad size changes.",
+                systemImage: "rectangle.compress.vertical"
             ),
             Highlight(
                 title: "Ultra Fine drawing detail",
@@ -238,9 +238,9 @@ private extension WelcomeToBeanNotesView.Mode {
                 systemImage: "scribble"
             ),
             Highlight(
-                title: "Safer local previews",
-                detail: "Attachment and thumbnail previews now validate local paths before loading.",
-                systemImage: "lock.shield"
+                title: "Precision zoom controls",
+                detail: "Zoom in, zoom out, or fit the page from the editor toolbar while keeping ink sharp.",
+                systemImage: "magnifyingglass"
             )
         ]
     }
