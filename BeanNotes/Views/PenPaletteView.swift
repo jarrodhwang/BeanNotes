@@ -13,6 +13,7 @@ struct PenPaletteView: View {
     @State private var isShowingEraserModes = false
     @State private var committedOffset: CGSize = .zero
     @State private var dragOffset: CGSize = .zero
+    @State private var selectedPaletteIndex = 0
 
     private let widths: [CGFloat] = [3, 5, 8, 14]
 
@@ -67,11 +68,11 @@ struct PenPaletteView: View {
                     .frame(height: 24)
 
                 HStack(spacing: 5) {
-                    primaryPaletteColorPicker
-
-                    ForEach(Array(toolState.paletteSwatches().dropFirst())) { swatch in
+                    ForEach(toolState.paletteSwatches()) { swatch in
                         swatchButton(swatch)
                     }
+
+                    selectedPaletteColorPicker
                 }
 
                 Divider()
@@ -171,29 +172,8 @@ struct PenPaletteView: View {
             }
     }
 
-    private var primaryPaletteColor: Binding<Color> {
-        Binding {
-            toolState.primaryPaletteColor()
-        } set: { newColor in
-            isShowingEraserModes = false
-            toolState.setPrimaryPaletteColor(newColor)
-        }
-    }
-
     private var showsInkControls: Bool {
         toolState.selectedToolUsesInkColor
-    }
-
-    private var primaryPaletteColorPicker: some View {
-        ColorPicker("", selection: primaryPaletteColor, supportsOpacity: false)
-            .labelsHidden()
-            .frame(width: 24, height: 24)
-            .overlay {
-                Circle()
-                    .stroke(isPrimaryPaletteColorSelected ? .blue : Color.secondary.opacity(0.22), lineWidth: isPrimaryPaletteColorSelected ? 2 : 1)
-                    .frame(width: 29, height: 29)
-            }
-            .accessibilityLabel("\(toolState.activeColorTool.label) custom color")
     }
 
     private func toolButton(_ tool: DrawingTool) -> some View {
@@ -270,10 +250,31 @@ struct PenPaletteView: View {
         }
     }
 
+    private var selectedPaletteColorPicker: some View {
+        ColorPicker("", selection: selectedPaletteColorBinding, supportsOpacity: false)
+            .labelsHidden()
+            .frame(width: 24, height: 24)
+            .overlay {
+                Circle()
+                    .stroke(Color.secondary.opacity(0.28), lineWidth: 1)
+                    .frame(width: 29, height: 29)
+            }
+            .accessibilityLabel("Edit selected \(toolState.activeColorTool.label) color")
+            .accessibilityHint("Changes the highlighted palette swatch")
+    }
+
+    private var selectedPaletteColorBinding: Binding<Color> {
+        Binding {
+            toolState.paletteColor(at: selectedPaletteIndex)
+        } set: { newColor in
+            isShowingEraserModes = false
+            toolState.setPaletteColor(newColor, at: selectedPaletteIndex)
+        }
+    }
+
     private func swatchButton(_ swatch: DrawingColorSwatch) -> some View {
         Button {
-            isShowingEraserModes = false
-            toolState.selectPaletteColor(swatch.color)
+            selectPaletteSwatch(swatch)
         } label: {
             Circle()
                 .fill(swatch.color)
@@ -283,7 +284,7 @@ struct PenPaletteView: View {
                         .stroke(isLightSwatch(swatch) ? Color.secondary.opacity(0.42) : Color.clear, lineWidth: 1)
                 }
                 .overlay {
-                    if isCurrentColor(swatch) {
+                    if isSelectedPaletteSwatch(swatch) {
                         Circle()
                             .stroke(.blue, lineWidth: 2)
                             .frame(width: 27, height: 27)
@@ -291,7 +292,13 @@ struct PenPaletteView: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(swatch.name)
+        .accessibilityLabel("\(swatch.name) \(toolState.activeColorTool.label) color")
+    }
+
+    private func selectPaletteSwatch(_ swatch: DrawingColorSwatch) {
+        isShowingEraserModes = false
+        selectedPaletteIndex = swatch.index
+        toolState.selectPaletteColor(swatch.color)
     }
 
     private func widthButton(_ width: CGFloat) -> some View {
@@ -330,11 +337,7 @@ struct PenPaletteView: View {
         return (red * 0.299 + green * 0.587 + blue * 0.114) > 0.78
     }
 
-    private func isCurrentColor(_ swatch: DrawingColorSwatch) -> Bool {
-        UIColor(toolState.activeInkColor).hexRGB == UIColor(hex: swatch.colorHex).hexRGB
-    }
-
-    private var isPrimaryPaletteColorSelected: Bool {
-        UIColor(toolState.activeInkColor).hexRGB == UIColor(toolState.primaryPaletteColor()).hexRGB
+    private func isSelectedPaletteSwatch(_ swatch: DrawingColorSwatch) -> Bool {
+        swatch.index == selectedPaletteIndex
     }
 }

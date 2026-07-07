@@ -48,10 +48,11 @@ enum DrawingTool: String, CaseIterable, Identifiable {
 }
 
 struct DrawingColorSwatch: Identifiable, Equatable {
+    var index: Int
     var name: String
     var colorHex: String
 
-    var id: String { colorHex }
+    var id: Int { index }
 
     var color: Color {
         Color(hex: colorHex)
@@ -343,17 +344,22 @@ final class DrawingToolState: ObservableObject {
 
     func paletteSwatches(for tool: DrawingTool? = nil) -> [DrawingColorSwatch] {
         let swatchTool = tool ?? activeColorTool
-        return paletteColorHexes(for: swatchTool).map { hex in
-            DrawingColorSwatch(name: Self.colorName(for: hex), colorHex: hex)
+        return paletteColorHexes(for: swatchTool).enumerated().map { index, hex in
+            DrawingColorSwatch(index: index, name: Self.colorName(for: hex), colorHex: hex)
         }
     }
 
     func primaryPaletteColor(for tool: DrawingTool? = nil) -> Color {
+        paletteColor(at: 0, for: tool)
+    }
+
+    func paletteColor(at index: Int, for tool: DrawingTool? = nil) -> Color {
         let swatchTool = tool ?? activeColorTool
-        guard let firstColorHex = paletteColorHexes(for: swatchTool).first else {
+        let colors = paletteColorHexes(for: swatchTool)
+        guard colors.indices.contains(index) else {
             return inkColor(for: swatchTool)
         }
-        return Color(hex: firstColorHex)
+        return Color(hex: colors[index])
     }
 
     var activeInkType: PKInkingTool.InkType? {
@@ -401,14 +407,30 @@ final class DrawingToolState: ObservableObject {
     }
 
     func setPrimaryPaletteColor(_ color: Color) {
-        let tool = activeColorTool
+        setPaletteColor(color, at: 0)
+    }
+
+    func setPaletteColor(_ color: Color, at index: Int, for tool: DrawingTool? = nil) {
+        let tool = tool ?? activeColorTool
+        guard tool.usesInkColor else { return }
+
+        let colorHex = Self.normalizedHex(UIColor(color).hexRGB)
+        var colors = paletteColorHexes(for: tool)
+        guard !colors.isEmpty else {
+            setInkColor(color, for: tool)
+            setPaletteColorHexes([colorHex], for: tool)
+            return
+        }
+
+        let boundedIndex = min(max(index, 0), colors.count - 1)
+        colors[boundedIndex] = colorHex
 
         if selectedTool.usesInkColor == false {
             select(tool)
         }
 
         setInkColor(color, for: tool)
-        rememberPaletteColor(color, for: tool)
+        setPaletteColorHexes(Self.normalizedPalette(colors), for: tool)
     }
 
     func applyActiveColor(_ color: Color, remembersInPalette: Bool = true) {
@@ -574,7 +596,7 @@ final class DrawingToolState: ObservableObject {
         colors.removeAll { Self.normalizedHex($0) == colorHex }
         colors.insert(colorHex, at: 0)
 
-        colors = Self.normalizedPalette(colors)
+        colors = Self.normalizedPalette(colors, removesDuplicates: true)
         setPaletteColorHexes(colors, for: tool)
     }
 
@@ -598,14 +620,17 @@ final class DrawingToolState: ObservableObject {
         normalizedPalette(colors).joined(separator: "|")
     }
 
-    private static func normalizedPalette(_ colors: [String]) -> [String] {
+    private static func normalizedPalette(_ colors: [String], removesDuplicates: Bool = false) -> [String] {
         var seen: Set<String> = []
         var normalized: [String] = []
 
         for color in colors {
             let hex = normalizedHex(color)
-            guard hex.count == 7, !seen.contains(hex) else { continue }
-            seen.insert(hex)
+            guard hex.count == 7 else { continue }
+            if removesDuplicates {
+                guard !seen.contains(hex) else { continue }
+                seen.insert(hex)
+            }
             normalized.append(hex)
         }
 

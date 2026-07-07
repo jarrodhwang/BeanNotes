@@ -10,10 +10,13 @@ import SwiftData
 
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
+    static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
+    static let currentWelcomeContentVersion = 2
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
     @AppStorage(Self.welcomeSeenKey) private var hasSeenWelcome = false
+    @AppStorage(Self.welcomeContentVersionKey) private var seenWelcomeContentVersion = 0
 
     @State private var isShowingWelcome = false
 
@@ -28,27 +31,44 @@ struct ContentView: View {
             .background(beanNotesTheme.appBackground.ignoresSafeArea())
             .preferredColorScheme((AppTheme(rawValue: appThemeRaw) ?? .system).colorScheme)
             .onAppear {
-                guard !hasSeenWelcome else { return }
+                guard Self.shouldShowWelcome(
+                    hasSeenWelcome: hasSeenWelcome,
+                    seenContentVersion: seenWelcomeContentVersion
+                ) else { return }
                 isShowingWelcome = true
             }
             .sheet(
                 isPresented: $isShowingWelcome,
                 onDismiss: markWelcomeSeen
             ) {
-                WelcomeToBeanNotesView(theme: beanNotesTheme) {
+                WelcomeToBeanNotesView(
+                    theme: beanNotesTheme,
+                    mode: hasSeenWelcome ? .featureUpdate : .firstRun
+                ) {
                     isShowingWelcome = false
                     markWelcomeSeen()
                 }
             }
     }
 
+    static func shouldShowWelcome(hasSeenWelcome: Bool, seenContentVersion: Int) -> Bool {
+        !hasSeenWelcome || seenContentVersion < currentWelcomeContentVersion
+    }
+
     private func markWelcomeSeen() {
         hasSeenWelcome = true
+        seenWelcomeContentVersion = Self.currentWelcomeContentVersion
     }
 }
 
 private struct WelcomeToBeanNotesView: View {
+    enum Mode {
+        case firstRun
+        case featureUpdate
+    }
+
     var theme: BeanNotesTheme
+    var mode: Mode
     var dismiss: () -> Void
 
     var body: some View {
@@ -58,13 +78,13 @@ private struct WelcomeToBeanNotesView: View {
                     welcomeImage(size: imageSize(for: proxy.size))
 
                     VStack(spacing: 10) {
-                        Text("Welcome to BeanNotes")
+                        Text(mode.title)
                             .font(.largeTitle.weight(.bold))
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text("A private note space for handwritten ideas, PDFs, images, and study notes.")
+                        Text(mode.subtitle)
                             .font(.body)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -75,8 +95,10 @@ private struct WelcomeToBeanNotesView: View {
 
                     featureBadges
 
+                    featureHighlights
+
                     Button(action: dismiss) {
-                        Text("Start Writing")
+                        Text(mode.buttonTitle)
                             .font(.headline)
                             .frame(maxWidth: 300)
                             .frame(height: 48)
@@ -112,6 +134,30 @@ private struct WelcomeToBeanNotesView: View {
             .accessibilityLabel("Bean")
     }
 
+    private var featureHighlights: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(mode.highlights, id: \.title) { highlight in
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(highlight.title)
+                            .font(.subheadline.weight(.semibold))
+
+                        Text(highlight.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } icon: {
+                    Image(systemName: highlight.systemImage)
+                        .foregroundStyle(theme.accentColor)
+                        .frame(width: 26)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+        .frame(maxWidth: 430, alignment: .leading)
+    }
+
     private var featureBadges: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
@@ -142,6 +188,61 @@ private struct WelcomeToBeanNotesView: View {
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
         width < 380 ? 22 : 36
+    }
+}
+
+private extension WelcomeToBeanNotesView.Mode {
+    struct Highlight {
+        var title: String
+        var detail: String
+        var systemImage: String
+    }
+
+    var title: String {
+        switch self {
+        case .firstRun:
+            "Welcome to BeanNotes"
+        case .featureUpdate:
+            "New in BeanNotes"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .firstRun:
+            "A private note space for handwritten ideas, PDFs, images, and study notes."
+        case .featureUpdate:
+            "Drawing and palette updates are ready for your next iPad note session."
+        }
+    }
+
+    var buttonTitle: String {
+        switch self {
+        case .firstRun:
+            "Start Writing"
+        case .featureUpdate:
+            "Continue Writing"
+        }
+    }
+
+    var highlights: [Highlight] {
+        [
+            Highlight(
+                title: "Light touch palette",
+                detail: "Tap swatches to switch instantly, then edit the highlighted color when needed.",
+                systemImage: "paintpalette"
+            ),
+            Highlight(
+                title: "Sharper zoom detail",
+                detail: "High-resolution drawing mode keeps strokes, paper, and images clearer while zooming.",
+                systemImage: "pencil.tip"
+            ),
+            Highlight(
+                title: "Local autosave",
+                detail: "Drawing changes stay private on device and save in the background.",
+                systemImage: "lock.shield"
+            )
+        ]
     }
 }
 

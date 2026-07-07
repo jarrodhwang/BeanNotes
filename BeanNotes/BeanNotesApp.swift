@@ -126,6 +126,7 @@ enum BeanNotesLaunchConfiguration {
 
         if arguments.contains(skipWelcomeArgument) {
             defaults.set(true, forKey: ContentView.welcomeSeenKey)
+            defaults.set(ContentView.currentWelcomeContentVersion, forKey: ContentView.welcomeContentVersionKey)
         }
 
         didPrepare = true

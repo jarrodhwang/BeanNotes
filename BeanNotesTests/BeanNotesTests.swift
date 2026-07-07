@@ -590,6 +590,18 @@ struct BeanNotesTests {
         #expect(DrawingRenderQuality.highResolution.imageScaleMultiplier > DrawingRenderQuality.balanced.imageScaleMultiplier)
     }
 
+    @Test func welcomeModalAppearsForFirstRunAndNewContentVersions() {
+        #expect(ContentView.shouldShowWelcome(hasSeenWelcome: false, seenContentVersion: 0))
+        #expect(ContentView.shouldShowWelcome(
+            hasSeenWelcome: true,
+            seenContentVersion: ContentView.currentWelcomeContentVersion - 1
+        ))
+        #expect(!ContentView.shouldShowWelcome(
+            hasSeenWelcome: true,
+            seenContentVersion: ContentView.currentWelcomeContentVersion
+        ))
+    }
+
     @Test func attachmentImageRasterBudgetBalancesSharpnessAndMemory() {
         let baseBudget = AttachmentImageRasterBudget(
             attachmentSize: CGSize(width: 320, height: 220),
@@ -726,6 +738,61 @@ struct BeanNotesTests {
         #expect(UIColor(restoredSession.primaryPaletteColor(for: .pen)).hexRGB == penCustomHex)
         #expect(UIColor(restoredSession.primaryPaletteColor(for: .pencil)).hexRGB == pencilCustomHex)
         #expect(UIColor(restoredSession.primaryPaletteColor(for: .highlighter)).hexRGB == highlighterCustomHex)
+    }
+
+    @Test @MainActor func customPaletteEditsSelectedIndexInPlace() throws {
+        let suiteName = "BeanNotesIndexedPalette-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let selectedIndex = 3
+        let customColor = Color(uiColor: UIColor(red: 0.22, green: 0.71, blue: 0.41, alpha: 1))
+        let customHex = UIColor(customColor).hexRGB
+
+        let firstSession = DrawingToolState(defaults: defaults)
+        firstSession.select(.pen)
+        let originalPalette = firstSession.paletteSwatches(for: .pen).map(\.colorHex)
+
+        firstSession.setPaletteColor(customColor, at: selectedIndex)
+        let updatedPalette = firstSession.paletteSwatches(for: .pen).map(\.colorHex)
+
+        #expect(updatedPalette.count == originalPalette.count)
+        #expect(updatedPalette[0] == originalPalette[0])
+        #expect(updatedPalette[selectedIndex] == customHex)
+        #expect(UIColor(firstSession.activeInkColor).hexRGB == customHex)
+
+        let restoredSession = DrawingToolState(defaults: defaults)
+        let restoredPalette = restoredSession.paletteSwatches(for: .pen).map(\.colorHex)
+        #expect(restoredPalette[selectedIndex] == customHex)
+        #expect(restoredPalette[0] == originalPalette[0])
+    }
+
+    @Test @MainActor func customPaletteDuplicateColorEditDoesNotDropSwatches() throws {
+        let suiteName = "BeanNotesDuplicatePalette-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let duplicatedIndex = 4
+        let firstSession = DrawingToolState(defaults: defaults)
+        firstSession.select(.pen)
+        let originalPalette = firstSession.paletteSwatches(for: .pen).map(\.colorHex)
+        let duplicatedColor = firstSession.paletteColor(at: 0, for: .pen)
+
+        firstSession.setPaletteColor(duplicatedColor, at: duplicatedIndex)
+
+        let updatedPalette = firstSession.paletteSwatches(for: .pen).map(\.colorHex)
+        #expect(updatedPalette.count == originalPalette.count)
+        #expect(updatedPalette[0] == originalPalette[0])
+        #expect(updatedPalette[duplicatedIndex] == originalPalette[0])
+
+        let restoredSession = DrawingToolState(defaults: defaults)
+        let restoredPalette = restoredSession.paletteSwatches(for: .pen).map(\.colorHex)
+        #expect(restoredPalette.count == originalPalette.count)
+        #expect(restoredPalette[duplicatedIndex] == originalPalette[0])
     }
 
     @Test @MainActor func thumbnailGenerationStoresFirstPagePreview() throws {
