@@ -59,6 +59,27 @@ struct DrawingColorSwatch: Identifiable, Equatable {
     }
 }
 
+struct DrawingStrokeWidthCalibration: Equatable {
+    let minimumWidth: CGFloat
+    let maximumWidth: CGFloat
+    let step: CGFloat
+    let presets: [CGFloat]
+
+    var range: ClosedRange<CGFloat> {
+        minimumWidth...maximumWidth
+    }
+
+    func clamped(_ width: CGFloat) -> CGFloat {
+        guard width.isFinite else { return minimumWidth }
+
+        let bounded = min(max(width, minimumWidth), maximumWidth)
+        guard step > 0 else { return bounded }
+
+        let stepped = (bounded / step).rounded() * step
+        return min(max(stepped, minimumWidth), maximumWidth)
+    }
+}
+
 enum DrawingEraserMode: String, CaseIterable, Identifiable {
     case pixel
     case object
@@ -257,16 +278,22 @@ final class DrawingToolState: ObservableObject {
         didSet { defaults.set(highlighterColor.hexRGB, forKey: DefaultsKey.highlighterColor) }
     }
 
-    @Published var pencilWidth: CGFloat = 6 {
-        didSet { defaults.set(Double(pencilWidth), forKey: DefaultsKey.pencilWidth) }
+    @Published private(set) var pencilWidth: CGFloat = 6 {
+        didSet {
+            defaults.set(Double(pencilWidth), forKey: DefaultsKey.pencilWidth)
+        }
     }
 
-    @Published var penWidth: CGFloat = 5 {
-        didSet { defaults.set(Double(penWidth), forKey: DefaultsKey.penWidth) }
+    @Published private(set) var penWidth: CGFloat = 5 {
+        didSet {
+            defaults.set(Double(penWidth), forKey: DefaultsKey.penWidth)
+        }
     }
 
-    @Published var highlighterWidth: CGFloat = 14 {
-        didSet { defaults.set(Double(highlighterWidth), forKey: DefaultsKey.highlighterWidth) }
+    @Published private(set) var highlighterWidth: CGFloat = 14 {
+        didSet {
+            defaults.set(Double(highlighterWidth), forKey: DefaultsKey.highlighterWidth)
+        }
     }
 
     @Published var eraserMode: DrawingEraserMode = .pixel {
@@ -294,9 +321,14 @@ final class DrawingToolState: ObservableObject {
         pencilColor = Self.storedColor(defaults, key: DefaultsKey.pencilColor, fallback: "#000000")
         penColor = Self.storedColor(defaults, key: DefaultsKey.penColor, fallback: "#000000")
         highlighterColor = Self.storedColor(defaults, key: DefaultsKey.highlighterColor, fallback: "#FFFF00")
-        pencilWidth = Self.storedWidth(defaults, key: DefaultsKey.pencilWidth, fallback: 6)
-        penWidth = Self.storedWidth(defaults, key: DefaultsKey.penWidth, fallback: 5)
-        highlighterWidth = Self.storedWidth(defaults, key: DefaultsKey.highlighterWidth, fallback: 14)
+        pencilWidth = Self.storedWidth(defaults, key: DefaultsKey.pencilWidth, fallback: 6, for: .pencil)
+        penWidth = Self.storedWidth(defaults, key: DefaultsKey.penWidth, fallback: 5, for: .pen)
+        highlighterWidth = Self.storedWidth(
+            defaults,
+            key: DefaultsKey.highlighterWidth,
+            fallback: 14,
+            for: .highlighter
+        )
         eraserMode = Self.storedEraserMode(defaults, key: DefaultsKey.eraserMode, fallback: .pixel)
         penPaletteColorHexes = Self.storedPalette(
             defaults,
@@ -332,6 +364,10 @@ final class DrawingToolState: ObservableObject {
         strokeWidth(for: activeColorTool)
     }
 
+    var activeWidthCalibration: DrawingStrokeWidthCalibration {
+        Self.widthCalibration(for: activeColorTool)
+    }
+
     var selectedToolUsesInkColor: Bool {
         selectedTool.usesInkColor
     }
@@ -350,12 +386,16 @@ final class DrawingToolState: ObservableObject {
     func strokeWidth(for tool: DrawingTool) -> CGFloat {
         switch tool {
         case .pencil:
-            pencilWidth
+            Self.widthCalibration(for: .pencil).clamped(pencilWidth)
         case .highlighter:
-            highlighterWidth
+            Self.widthCalibration(for: .highlighter).clamped(highlighterWidth)
         default:
-            penWidth
+            Self.widthCalibration(for: .pen).clamped(penWidth)
         }
+    }
+
+    func widthPresets(for tool: DrawingTool? = nil) -> [CGFloat] {
+        Self.widthCalibration(for: tool ?? activeColorTool).presets
     }
 
     func paletteSwatches(for tool: DrawingTool? = nil) -> [DrawingColorSwatch] {
@@ -394,11 +434,11 @@ final class DrawingToolState: ObservableObject {
     var pkToolSignature: String {
         switch selectedTool {
         case .pen:
-            return "pen:\(penColor.hexRGB):\(Int(penWidth * 10))"
+            return "pen:\(penColor.hexRGB):\(Int(strokeWidth(for: .pen) * 10))"
         case .pencil:
-            return "pencil:\(pencilColor.hexRGB):\(Int(pencilWidth * 10))"
+            return "pencil:\(pencilColor.hexRGB):\(Int(strokeWidth(for: .pencil) * 10))"
         case .highlighter:
-            return "highlighter:\(highlighterColor.hexRGB):\(Int(highlighterWidth * 10))"
+            return "highlighter:\(highlighterColor.hexRGB):\(Int(strokeWidth(for: .highlighter) * 10))"
         case .eraser:
             return "eraser:\(eraserMode.rawValue)"
         case .lasso:
@@ -466,14 +506,14 @@ final class DrawingToolState: ObservableObject {
     func applyActiveWidth(_ width: CGFloat) {
         switch activeColorTool {
         case .pencil:
-            pencilWidth = width
+            pencilWidth = Self.widthCalibration(for: .pencil).clamped(width)
         case .pen:
-            penWidth = width
+            penWidth = Self.widthCalibration(for: .pen).clamped(width)
         case .highlighter:
-            highlighterWidth = width
+            highlighterWidth = Self.widthCalibration(for: .highlighter).clamped(width)
         case .eraser, .lasso:
             select(.pen)
-            penWidth = width
+            penWidth = Self.widthCalibration(for: .pen).clamped(width)
         }
     }
 
@@ -513,11 +553,15 @@ final class DrawingToolState: ObservableObject {
     func makePKTool() -> PKTool {
         switch selectedTool {
         case .pen:
-            PKInkingTool(activeInkType ?? .pen, color: UIColor(penColor), width: penWidth)
+            PKInkingTool(activeInkType ?? .pen, color: UIColor(penColor), width: strokeWidth(for: .pen))
         case .pencil:
-            PKInkingTool(activeInkType ?? .pencil, color: UIColor(pencilColor), width: pencilWidth)
+            PKInkingTool(activeInkType ?? .pencil, color: UIColor(pencilColor), width: strokeWidth(for: .pencil))
         case .highlighter:
-            PKInkingTool(activeInkType ?? .marker, color: UIColor(highlighterColor).withAlphaComponent(0.5), width: highlighterWidth)
+            PKInkingTool(
+                activeInkType ?? .marker,
+                color: UIColor(highlighterColor).withAlphaComponent(0.5),
+                width: strokeWidth(for: .highlighter)
+            )
         case .eraser:
             PKEraserTool(eraserMode.eraserType)
         case .lasso:
@@ -560,9 +604,41 @@ final class DrawingToolState: ObservableObject {
         Color(hex: defaults.string(forKey: key) ?? fallback)
     }
 
-    private static func storedWidth(_ defaults: UserDefaults, key: String, fallback: CGFloat) -> CGFloat {
+    static func widthCalibration(for tool: DrawingTool) -> DrawingStrokeWidthCalibration {
+        switch tool {
+        case .pencil:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 1,
+                maximumWidth: 18,
+                step: 0.5,
+                presets: [2, 4, 6, 10]
+            )
+        case .highlighter:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 4,
+                maximumWidth: 44,
+                step: 1,
+                presets: [8, 14, 22, 32]
+            )
+        case .pen, .eraser, .lasso:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 0.5,
+                maximumWidth: 24,
+                step: 0.5,
+                presets: [1, 3, 5, 8]
+            )
+        }
+    }
+
+    private static func storedWidth(
+        _ defaults: UserDefaults,
+        key: String,
+        fallback: CGFloat,
+        for tool: DrawingTool
+    ) -> CGFloat {
+        let calibration = widthCalibration(for: tool)
         guard defaults.object(forKey: key) != nil else { return fallback }
-        return CGFloat(defaults.double(forKey: key))
+        return calibration.clamped(CGFloat(defaults.double(forKey: key)))
     }
 
     private func paletteColorHexes(for tool: DrawingTool) -> [String] {

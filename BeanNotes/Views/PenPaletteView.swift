@@ -18,8 +18,6 @@ struct PenPaletteView: View {
     @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
 
-    private let widths: [CGFloat] = [3, 5, 8, 14]
-
     var body: some View {
         paletteBody
             .fixedSize()
@@ -43,7 +41,6 @@ struct PenPaletteView: View {
                 x: dockOffset.width + committedOffset.width + dragOffset.width,
                 y: dockOffset.height + committedOffset.height + dragOffset.height
             )
-            .gesture(moveGesture)
             .onAppear {
                 selectionFeedback.prepare()
                 committedOffset = clampedOffset(committedOffset)
@@ -150,11 +147,26 @@ struct PenPaletteView: View {
     }
 
     private var widthControls: some View {
-        HStack(spacing: 2) {
-            ForEach(widths, id: \.self) { width in
+        HStack(spacing: 6) {
+            ForEach(toolState.widthPresets(), id: \.self) { width in
                 widthButton(width)
             }
+
+            Slider(value: activeWidthBinding, in: activeWidthRange, step: activeWidthStep) {
+                Text("Stroke width")
+            }
+            .labelsHidden()
+            .frame(width: usesCompactLayout ? 124 : 108)
+
+            Text(activeWidthText)
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .trailing)
         }
+        .frame(height: 30)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(toolState.activeColorTool.label) stroke width")
+        .accessibilityValue("\(activeWidthText) points")
     }
 
     private var eraserModePicker: some View {
@@ -204,6 +216,8 @@ struct PenPaletteView: View {
             .font(.caption.weight(.bold))
             .foregroundStyle(.secondary)
             .frame(width: 18, height: 28)
+            .contentShape(Rectangle())
+            .gesture(moveGesture)
             .accessibilityHidden(true)
     }
 
@@ -407,7 +421,7 @@ struct PenPaletteView: View {
         } label: {
             Circle()
                 .fill(.secondary)
-                .frame(width: width + 4, height: width + 4)
+                .frame(width: widthButtonDiameter(for: width), height: widthButtonDiameter(for: width))
                 .frame(width: 26, height: 26)
                 .background {
                     if abs(toolState.activeStrokeWidth - width) < 0.5 {
@@ -423,7 +437,44 @@ struct PenPaletteView: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(Int(width)) point stroke")
+        .accessibilityLabel("\(widthLabel(for: width)) point stroke")
+    }
+
+    private var activeWidthBinding: Binding<Double> {
+        Binding {
+            Double(toolState.activeStrokeWidth)
+        } set: { newValue in
+            isShowingEraserModes = false
+            toolState.applyActiveWidth(CGFloat(newValue))
+        }
+    }
+
+    private var activeWidthRange: ClosedRange<Double> {
+        let range = toolState.activeWidthCalibration.range
+        return Double(range.lowerBound)...Double(range.upperBound)
+    }
+
+    private var activeWidthStep: Double {
+        Double(toolState.activeWidthCalibration.step)
+    }
+
+    private var activeWidthText: String {
+        widthLabel(for: toolState.activeStrokeWidth)
+    }
+
+    private func widthButtonDiameter(for width: CGFloat) -> CGFloat {
+        let calibration = toolState.activeWidthCalibration
+        let span = max(calibration.maximumWidth - calibration.minimumWidth, 0.1)
+        let progress = (width - calibration.minimumWidth) / span
+        return min(max(7 + progress * 14, 7), 21)
+    }
+
+    private func widthLabel(for width: CGFloat) -> String {
+        if abs(width.rounded() - width) < 0.01 {
+            return "\(Int(width.rounded()))"
+        }
+
+        return String(format: "%.1f", Double(width))
     }
 
     private func isLightSwatch(_ swatch: DrawingColorSwatch) -> Bool {
@@ -466,10 +517,10 @@ struct PenPaletteLayoutMetrics {
 
     static func estimatedPaletteSize(isCompact: Bool, showsInkControls: Bool) -> CGSize {
         if isCompact {
-            return CGSize(width: showsInkControls ? 288 : 212, height: showsInkControls ? 126 : 44)
+            return CGSize(width: showsInkControls ? 318 : 212, height: showsInkControls ? 126 : 44)
         }
 
-        return CGSize(width: showsInkControls ? 548 : 246, height: 44)
+        return CGSize(width: showsInkControls ? 724 : 246, height: 44)
     }
 
     static func clampedCommittedOffset(
