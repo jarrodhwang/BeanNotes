@@ -769,6 +769,56 @@ struct BeanNotesTests {
         #expect(!moderateZoomBudget.shouldReplaceLoadedBudget(baseBudget))
     }
 
+    @Test func attachmentImageContainerDefersAndReleasesOffscreenRasters() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAttachmentRaster-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 48, height: 48))
+        let sourceImage = renderer.image { context in
+            UIColor.systemGreen.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 48, height: 48))
+        }
+        let imageData = try #require(sourceImage.pngData())
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let storedImage = try storage.saveData(
+            imageData,
+            preferredName: "diagram.png",
+            contentType: .png,
+            to: .imports
+        )
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Diagram",
+            originalFileName: "diagram.png",
+            storedFileName: storedImage.relativePath,
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            width: 320,
+            height: 220
+        )
+        let imageContainer = DrawingCanvasView.AttachmentImageContainerView()
+
+        imageContainer.setImageLoadingEnabled(false)
+        imageContainer.updateRasterScale(2)
+        imageContainer.configure(
+            attachment: attachment,
+            storage: storage,
+            pageSize: CGSize(width: 612, height: 792),
+            changed: {}
+        )
+        #expect(!imageContainer.isRasterImageLoaded)
+
+        imageContainer.setImageLoadingEnabled(true)
+        #expect(imageContainer.isRasterImageLoaded)
+
+        imageContainer.setImageLoadingEnabled(false)
+        #expect(!imageContainer.isRasterImageLoaded)
+    }
+
     @Test @MainActor func customDrawingToolsMapToDistinctPencilKitTools() {
         let toolState = DrawingToolState()
         let selectedRed = Color(uiColor: UIColor(red: 1, green: 0, blue: 0, alpha: 1))

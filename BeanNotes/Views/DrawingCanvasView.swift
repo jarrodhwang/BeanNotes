@@ -225,6 +225,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let autoAddFooterBottomPadding: CGFloat = 42
         private let pagePreloadScreenPadding: CGFloat = 420
         private let minimumPagePreloadPadding: CGFloat = 320
+        private let imagePreloadScreenPadding: CGFloat = 180
+        private let minimumImagePreloadPadding: CGFloat = 96
         private let topContentHeight: CGFloat = 96
         private let zoomOutMultiplier: CGFloat = 0.46
         private let absoluteMinimumZoomScale: CGFloat = 0.12
@@ -678,6 +680,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             let visibleRect = visibleContentRect()
             let verticalPadding = max(pagePreloadScreenPadding / max(scrollView.zoomScale, 0.01), minimumPagePreloadPadding)
             let activeRect = visibleRect.insetBy(dx: -documentSize.width, dy: -verticalPadding)
+            let imageActiveRect = imageLoadingContentRect(visibleRect: visibleRect)
             var neededIDs = Set(pageIDsIntersecting(activeRect))
 
             if forceSelectedPage, let selectedPageID {
@@ -691,7 +694,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             var didChangeMaterializedPages = false
 
             for id in neededIDs {
-                if materializePageView(id: id, drawingStorage: drawingStorage, coordinator: coordinator) {
+                let shouldLoadImages = pageFrame(id: id, intersects: imageActiveRect)
+                if materializePageView(
+                    id: id,
+                    drawingStorage: drawingStorage,
+                    coordinator: coordinator,
+                    shouldLoadImages: shouldLoadImages
+                ) {
                     didChangeMaterializedPages = true
                 }
             }
@@ -704,6 +713,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
             }
 
+            updateImageLoading(in: imageActiveRect)
             updateRasterScale(force: didChangeMaterializedPages)
         }
 
@@ -720,7 +730,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func materializePageView(
             id: UUID,
             drawingStorage: DrawingStorageService,
-            coordinator: Coordinator
+            coordinator: Coordinator,
+            shouldLoadImages: Bool
         ) -> Bool {
             guard let page = pagesByID[id], let frame = pageFrames[id] else { return false }
             let didCreatePageView = pageViews[id] == nil
@@ -733,6 +744,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }()
 
             pageView.frame = frame
+            pageView.setImageLoadingEnabled(shouldLoadImages)
             pageView.configure(
                 page: page,
                 storage: drawingStorage.storage,
@@ -768,6 +780,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             ImageMemoryCache.shared.removeAllImages()
             DrawingStorageService.clearCache()
+            updateImageLoading(in: imageLoadingContentRect(visibleRect: visibleContentRect()))
             updateRasterScale(force: true)
         }
 
@@ -783,6 +796,24 @@ struct DrawingCanvasView: UIViewRepresentable {
                 width: scrollView.bounds.width / scale,
                 height: scrollView.bounds.height / scale
             )
+        }
+
+        private func imageLoadingContentRect(visibleRect: CGRect) -> CGRect {
+            let verticalPadding = max(
+                imagePreloadScreenPadding / max(scrollView.zoomScale, 0.01),
+                minimumImagePreloadPadding
+            )
+            return visibleRect.insetBy(dx: -documentSize.width, dy: -verticalPadding)
+        }
+
+        private func pageFrame(id: UUID, intersects rect: CGRect) -> Bool {
+            pageFrames[id]?.intersects(rect) == true
+        }
+
+        private func updateImageLoading(in rect: CGRect) {
+            for (id, pageView) in pageViews {
+                pageView.setImageLoadingEnabled(pageFrame(id: id, intersects: rect))
+            }
         }
 
         private func updateVisiblePage() {
@@ -933,6 +964,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastBackgroundScale: CGFloat = 0
         private var lastDrawingScale: CGFloat = 0
         private var lastImageScale: CGFloat = 0
+        private var isImageLoadingEnabled = true
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -974,6 +1006,16 @@ struct DrawingCanvasView: UIViewRepresentable {
             coordinator.register(canvasView: canvasView, page: page)
 
             layoutPage()
+        }
+
+        func setImageLoadingEnabled(_ enabled: Bool) {
+            guard isImageLoadingEnabled != enabled else { return }
+
+            isImageLoadingEnabled = enabled
+
+            for view in imageViews.values {
+                view.setImageLoadingEnabled(enabled)
+            }
         }
 
         private func staticContentSignature(for page: NotePage) -> String {
@@ -1100,6 +1142,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     return view
                 }()
 
+                imageView.setImageLoadingEnabled(isImageLoadingEnabled)
                 imageView.configure(
                     attachment: attachment,
                     storage: storage,
@@ -1190,6 +1233,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var loadedStoredFileName: String?
         private var loadedRasterBudget: AttachmentImageRasterBudget?
         private var currentRenderScale: CGFloat = 0
+        private var isImageLoadingEnabled = true
+
+        var isRasterImageLoaded: Bool {
+            imageView.image != nil
+        }
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -1213,7 +1261,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if let imageURL = try? storage.validatedURL(forRelativePath: attachment.storedFileName) {
                 self.imageURL = imageURL
-                loadImageIfNeeded(from: imageURL, attachment: attachment)
+                if isImageLoadingEnabled {
+                    loadImageIfNeeded(from: imageURL, attachment: attachment)
+                } else {
+                    releaseImage()
+                }
             } else {
                 self.imageURL = nil
                 releaseImage()
@@ -1270,8 +1322,21 @@ struct DrawingCanvasView: UIViewRepresentable {
             resizeHandle.layer.contentsScale = scale
             currentRenderScale = scale
 
-            guard let imageURL, let attachment else { return }
+            guard isImageLoadingEnabled, let imageURL, let attachment else { return }
             loadImageIfNeeded(from: imageURL, attachment: attachment)
+        }
+
+        func setImageLoadingEnabled(_ enabled: Bool) {
+            guard isImageLoadingEnabled != enabled else { return }
+
+            isImageLoadingEnabled = enabled
+
+            if enabled {
+                guard let imageURL, let attachment else { return }
+                loadImageIfNeeded(from: imageURL, attachment: attachment)
+            } else {
+                releaseImage()
+            }
         }
 
         private func loadImageIfNeeded(from imageURL: URL, attachment: Attachment) {
