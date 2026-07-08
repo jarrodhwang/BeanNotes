@@ -756,6 +756,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             let verticalPadding = max(pagePreloadScreenPadding / max(scrollView.zoomScale, 0.01), minimumPagePreloadPadding)
             let activeRect = visibleRect.insetBy(dx: -documentSize.width, dy: -verticalPadding)
             let imageActiveRect = imageLoadingContentRect(visibleRect: visibleRect)
+            let defersHeavyImageWork = isPinchZooming
             var neededIDs = Set(pageIDsIntersecting(activeRect))
 
             if forceSelectedPage, let selectedPageID {
@@ -774,22 +775,29 @@ struct DrawingCanvasView: UIViewRepresentable {
                     id: id,
                     drawingStorage: drawingStorage,
                     coordinator: coordinator,
-                    shouldLoadImages: shouldLoadImages
+                    shouldLoadImages: shouldLoadImages,
+                    updatesImageLoadingState: !defersHeavyImageWork
                 ) {
                     didChangeMaterializedPages = true
                 }
             }
 
-            let retiredIDs = pageViews.keys.filter { !neededIDs.contains($0) }
-            for id in retiredIDs {
-                if let pageView = pageViews[id] {
-                    retirePageView(id: id, pageView: pageView)
-                    didChangeMaterializedPages = true
+            if !defersHeavyImageWork {
+                let retiredIDs = pageViews.keys.filter { !neededIDs.contains($0) }
+                for id in retiredIDs {
+                    if let pageView = pageViews[id] {
+                        retirePageView(id: id, pageView: pageView)
+                        didChangeMaterializedPages = true
+                    }
                 }
+
+                updateImageLoading(in: imageActiveRect)
             }
 
-            updateImageLoading(in: imageActiveRect)
-            updateRasterScale(force: didChangeMaterializedPages)
+            updateRasterScale(
+                force: didChangeMaterializedPages,
+                reloadImageVariants: !defersHeavyImageWork
+            )
         }
 
         private func refreshVisibleCanvasesAfterZoom() {
@@ -806,12 +814,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             id: UUID,
             drawingStorage: DrawingStorageService,
             coordinator: Coordinator,
-            shouldLoadImages: Bool
+            shouldLoadImages: Bool,
+            updatesImageLoadingState: Bool
         ) -> Bool {
             guard let page = pagesByID[id], let frame = pageFrames[id] else { return false }
-            let didCreatePageView = pageViews[id] == nil
+            let existingPageView = pageViews[id]
+            let didCreatePageView = existingPageView == nil
 
-            let pageView = pageViews[id] ?? {
+            let pageView = existingPageView ?? {
                 let pageView = PageCanvasView()
                 contentView.addSubview(pageView)
                 pageViews[id] = pageView
@@ -819,7 +829,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             }()
 
             pageView.frame = frame
-            pageView.setImageLoadingEnabled(shouldLoadImages)
+            if updatesImageLoadingState {
+                pageView.setImageLoadingEnabled(shouldLoadImages)
+            } else if didCreatePageView {
+                pageView.setImageLoadingEnabled(false)
+            }
             pageView.configure(
                 page: page,
                 storage: drawingStorage.storage,
@@ -1521,9 +1535,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self.imageLoadToken = nil
                     self.loadingStoredFileName = nil
                     self.loadingRasterBudget = nil
-                    self.loadedStoredFileName = storedFileName
-                    self.loadedRasterBudget = budget
                     self.imageView.image = image
+
+                    if image == nil {
+                        self.loadedStoredFileName = nil
+                        self.loadedRasterBudget = nil
+                    } else {
+                        self.loadedStoredFileName = storedFileName
+                        self.loadedRasterBudget = budget
+                    }
                 }
             }
         }

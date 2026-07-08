@@ -970,6 +970,59 @@ struct BeanNotesTests {
         #expect(!imageContainer.isRasterImageLoaded)
     }
 
+    @Test @MainActor func attachmentImageContainerRetriesAfterTransientDecodeFailure() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAttachmentRetry-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let imageURL = try storage.directoryURL(for: .imports).appendingPathComponent("transient.png")
+
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Transient",
+            originalFileName: "transient.png",
+            storedFileName: try storage.relativePath(for: imageURL),
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            width: 320,
+            height: 220
+        )
+        let imageContainer = DrawingCanvasView.AttachmentImageContainerView()
+        defer {
+            imageContainer.releaseImage(evictCachedVariants: true)
+        }
+
+        imageContainer.updateRasterScale(2)
+        imageContainer.configure(
+            attachment: attachment,
+            storage: storage,
+            pageSize: CGSize(width: 612, height: 792),
+            changed: {}
+        )
+        try await Task.sleep(nanoseconds: 500_000_000)
+        #expect(!imageContainer.isRasterImageLoaded)
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 48, height: 48))
+        let sourceImage = renderer.image { context in
+            UIColor.systemPurple.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 48, height: 48))
+        }
+        try #require(sourceImage.pngData()).write(to: imageURL, options: [.atomic])
+
+        imageContainer.configure(
+            attachment: attachment,
+            storage: storage,
+            pageSize: CGSize(width: 612, height: 792),
+            changed: {}
+        )
+        try await waitForRasterImage(in: imageContainer)
+    }
+
     @Test @MainActor func attachmentImageReleaseKeepsDecodedCacheUnlessEvicting() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesAttachmentImageCache-\(UUID().uuidString)", isDirectory: true)
