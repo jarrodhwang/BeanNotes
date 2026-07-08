@@ -5,9 +5,18 @@
 
 import Foundation
 import PencilKit
+import UIKit
 
 struct DrawingStorageService {
     var storage = LocalStorageService()
+
+    private static let memoryWarningObserver = NotificationCenter.default.addObserver(
+        forName: UIApplication.didReceiveMemoryWarningNotification,
+        object: nil,
+        queue: nil
+    ) { _ in
+        clearCache()
+    }
 
     private static let drawingCache: NSCache<NSString, CachedDrawing> = {
         let cache = NSCache<NSString, CachedDrawing>()
@@ -22,6 +31,7 @@ struct DrawingStorageService {
     }
 
     func loadDrawing(for page: NotePage) -> PKDrawing {
+        Self.ensureMemoryWarningObservation()
         let cacheKey = Self.cacheKey(rootURL: storage.rootURL, fileName: page.drawingFileName)
         if let cached = Self.drawingCache.object(forKey: cacheKey) {
             return cached.drawing
@@ -51,6 +61,7 @@ struct DrawingStorageService {
     }
 
     static func cache(_ drawing: PKDrawing, fileName: String, rootURL: URL, approximateBytes: Int? = nil) {
+        ensureMemoryWarningObservation()
         let cost = max(approximateBytes ?? 1, 1)
         drawingCache.setObject(
             CachedDrawing(drawing),
@@ -69,6 +80,10 @@ struct DrawingStorageService {
 
     private static func cacheKey(rootURL: URL, fileName: String) -> NSString {
         "\(rootURL.standardizedFileURL.path)/\(StorageDirectory.drawings.rawValue)/\(fileName)" as NSString
+    }
+
+    private static func ensureMemoryWarningObservation() {
+        _ = memoryWarningObserver
     }
 }
 

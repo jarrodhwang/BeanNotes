@@ -457,6 +457,34 @@ struct BeanNotesTests {
         #expect(secondStorage.loadDrawing(for: secondPage).dataRepresentation() == secondDrawing.dataRepresentation())
     }
 
+    @Test func drawingStorageCacheClearsOnMemoryWarning() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingMemoryWarning-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+
+        let drawingStorage = DrawingStorageService(storage: LocalStorageService(rootURL: rootURL))
+        let page = NotePage(pageOrder: 0, drawingFileName: "memory-warning.drawing")
+        let cachedDrawing = makeTestDrawing(color: .systemRed, xOffset: 0)
+        let diskDrawing = makeTestDrawing(color: .systemBlue, xOffset: 56)
+
+        try drawingStorage.save(cachedDrawing, for: page)
+        try diskDrawing.dataRepresentation().write(to: drawingStorage.drawingURL(for: page), options: [.atomic])
+
+        let cachedLoad = drawingStorage.loadDrawing(for: page)
+        #expect(abs(cachedLoad.bounds.midX - cachedDrawing.bounds.midX) < 0.5)
+
+        NotificationCenter.default.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+
+        let warningLoad = drawingStorage.loadDrawing(for: page)
+        #expect(abs(warningLoad.bounds.midX - diskDrawing.bounds.midX) < 0.5)
+        #expect(abs(warningLoad.bounds.midX - cachedDrawing.bounds.midX) > 20)
+    }
+
     @Test func localStorageCopiesStoredFilesToIndependentPaths() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesStoredCopy-\(UUID().uuidString)", isDirectory: true)
