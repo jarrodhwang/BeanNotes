@@ -284,12 +284,17 @@ struct PDFPreviewView: UIViewRepresentable {
         }
     }
 
+    static func dismantleUIView(_ pdfView: PDFView, coordinator: Coordinator) {
+        coordinator.cancelLoad()
+        pdfView.document = nil
+    }
+
     final class Coordinator {
         var url: URL?
         private var loadTask: Task<Void, Never>?
 
         deinit {
-            loadTask?.cancel()
+            cancelLoad()
         }
 
         func load(url: URL, into pdfView: PDFView) {
@@ -297,17 +302,23 @@ struct PDFPreviewView: UIViewRepresentable {
             pdfView.document = nil
             loadTask?.cancel()
 
-            loadTask = Task {
+            loadTask = Task { [weak self, weak pdfView] in
                 let document = await Task.detached(priority: .userInitiated) {
                     PDFDocument(url: url)
                 }.value
 
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    guard self.url == url else { return }
+                    guard let self, self.url == url, let pdfView else { return }
                     pdfView.document = document
                 }
             }
+        }
+
+        func cancelLoad() {
+            loadTask?.cancel()
+            loadTask = nil
+            url = nil
         }
     }
 }

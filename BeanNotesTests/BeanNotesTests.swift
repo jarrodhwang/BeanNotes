@@ -1526,6 +1526,32 @@ struct BeanNotesTests {
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: lockedImage.storedFileName).path))
     }
 
+    @Test @MainActor func pdfPreviewDismantleCancelsLoadAndClearsDocument() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPDFPreview-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let pdfURL = rootURL.appendingPathComponent("Preview.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 320, height: 420))
+        try renderer.writePDF(to: pdfURL) { context in
+            context.beginPage()
+            "Preview".draw(at: CGPoint(x: 36, y: 48), withAttributes: [.font: UIFont.systemFont(ofSize: 18)])
+        }
+
+        let pdfView = PDFView()
+        let coordinator = PDFPreviewView.Coordinator()
+        coordinator.load(url: pdfURL, into: pdfView)
+
+        PDFPreviewView.dismantleUIView(pdfView, coordinator: coordinator)
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        #expect(coordinator.url == nil)
+        #expect(pdfView.document == nil)
+    }
+
     @Test @MainActor func stagedPDFImportRollbackRemovesCopiedFilesBeforeCommit() async throws {
         let context = try makeInMemoryModelContext()
         let rootURL = FileManager.default.temporaryDirectory
