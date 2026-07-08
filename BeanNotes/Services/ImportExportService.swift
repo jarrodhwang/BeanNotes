@@ -200,6 +200,8 @@ struct ImportExportService {
         progress: ImportExportProgressHandler? = nil
     ) async throws -> ImportedDocumentNote {
         try Task.checkCancellation()
+        let ownedStaging = staging == nil ? storage.beginImportStagingTransaction() : nil
+        let activeStaging = staging ?? ownedStaging
         let note = NoteDocument(title: sourceURL.deletingPathExtension().lastPathComponent)
         folder.notes.append(note)
 
@@ -208,10 +210,11 @@ struct ImportExportService {
                 from: sourceURL,
                 into: note,
                 startingAt: 0,
-                staging: staging,
+                staging: activeStaging,
                 progress: progress
             )
             try Task.checkCancellation()
+            try ownedStaging?.commit()
             folder.updatedAt = Date()
 
             return ImportedDocumentNote(
@@ -221,6 +224,7 @@ struct ImportExportService {
             )
         } catch {
             folder.notes.removeAll { $0.id == note.id }
+            ownedStaging?.rollback()
             throw error
         }
     }

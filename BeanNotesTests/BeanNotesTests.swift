@@ -1845,6 +1845,63 @@ struct BeanNotesTests {
         }
     }
 
+    @Test @MainActor func cancelingDirectPDFImportRemovesStagedFiles() async throws {
+        let context = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPDFImportCancel-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let thumbnailService = ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: thumbnailService
+        )
+        try storage.prepareDirectories()
+
+        let pdfURL = rootURL.appendingPathComponent("Cancel Import.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: pdfURL) { context in
+            context.beginPage()
+            "Page 1".draw(at: CGPoint(x: 72, y: 72), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+            context.beginPage()
+            "Page 2".draw(at: CGPoint(x: 72, y: 72), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+            context.beginPage()
+            "Page 3".draw(at: CGPoint(x: 72, y: 72), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+        }
+
+        let folder = NotebookFolder(name: "Class")
+        context.insert(folder)
+        try context.save()
+
+        var importTask: Task<ImportedDocumentNote, Error>?
+        importTask = Task { @MainActor in
+            try await service.importDocumentAsNote(from: pdfURL, into: folder) { _, message in
+                if message.contains("page 2") {
+                    importTask?.cancel()
+                }
+            }
+        }
+
+        do {
+            _ = try await #require(importTask).value
+            Issue.record("Expected import cancellation to throw.")
+        } catch is CancellationError {
+            let importsDirectory = try storage.directoryURL(for: .imports)
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: importsDirectory,
+                includingPropertiesForKeys: nil
+            )
+
+            #expect(contents.isEmpty)
+            #expect(folder.notes.isEmpty)
+        }
+    }
+
     @Test @MainActor func imageImportCreatesAnnotatableImageNote() async throws {
         let context = try makeInMemoryModelContext()
         let rootURL = FileManager.default.temporaryDirectory
