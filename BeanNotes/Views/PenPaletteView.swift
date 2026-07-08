@@ -45,6 +45,7 @@ struct PenPaletteView: View {
             )
             .onAppear {
                 selectionFeedback.prepare()
+                syncSelectedPaletteIndex()
                 committedOffset = clampedOffset(committedOffset)
             }
             .onPreferenceChange(PenPaletteSizePreferenceKey.self) { size in
@@ -56,6 +57,9 @@ struct PenPaletteView: View {
             }
             .onChange(of: isCollapsed) { _, _ in
                 committedOffset = clampedOffset(committedOffset)
+            }
+            .onChange(of: activePaletteSelectionSignature) { _, _ in
+                syncSelectedPaletteIndex()
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Pen palette")
@@ -100,7 +104,7 @@ struct PenPaletteView: View {
                 Divider()
                     .frame(height: 24)
 
-                widthControls
+                regularWidthControls
             }
         }
         .padding(.leading, 10)
@@ -122,7 +126,7 @@ struct PenPaletteView: View {
 
             if showsInkControls {
                 colorControls
-                widthControls
+                compactWidthControls
             }
         }
         .padding(.leading, 10)
@@ -148,14 +152,96 @@ struct PenPaletteView: View {
         }
     }
 
-    private var widthControls: some View {
+    private var regularWidthControls: some View {
         HStack(spacing: 6) {
-            strokeWidthModeMenu
+            strokeWidthModeSegment
 
+            widthPresetControls
+
+            widthSliderControls
+
+            widthReadout
+        }
+        .frame(height: 30)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(toolState.activeColorTool.label) stroke width")
+        .accessibilityValue(activeWidthReadout.accessibilityText)
+    }
+
+    private var compactWidthControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                strokeWidthModeSegment
+
+                widthPresetControls
+            }
+            .frame(height: 30)
+
+            HStack(spacing: 6) {
+                widthSliderControls
+
+                widthReadout
+            }
+            .frame(height: 30)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(toolState.activeColorTool.label) stroke width")
+        .accessibilityValue(activeWidthReadout.accessibilityText)
+    }
+
+    private var strokeWidthModeSegment: some View {
+        HStack(spacing: 2) {
+            ForEach(DrawingStrokeWidthMode.allCases) { mode in
+                strokeWidthModeButton(mode)
+            }
+        }
+        .padding(2)
+        .background(Color(.secondarySystemBackground).opacity(0.7), in: Capsule())
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Stroke width mode")
+    }
+
+    private func strokeWidthModeButton(_ mode: DrawingStrokeWidthMode) -> some View {
+        let isSelected = toolState.widthMode == mode
+
+        return Button {
+            performSelectionFeedback()
+            isShowingEraserModes = false
+            toolState.selectWidthMode(mode)
+        } label: {
+            Image(systemName: mode.systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .frame(width: 24, height: 24)
+                .background {
+                    if isSelected {
+                        Capsule()
+                            .fill(.blue.opacity(0.14))
+                    }
+                }
+                .overlay {
+                    if isSelected {
+                        Capsule()
+                            .stroke(.blue, lineWidth: 1.6)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(mode.label) stroke width mode")
+        .accessibilityHint(mode.description)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var widthPresetControls: some View {
+        HStack(spacing: 6) {
             ForEach(toolState.widthPresets(), id: \.self) { width in
                 widthButton(width)
             }
+        }
+    }
 
+    private var widthSliderControls: some View {
+        HStack(spacing: 6) {
             widthNudgeButton(direction: -1)
 
             Slider(value: activeWidthBinding, in: activeWidthRange, step: activeWidthStep) {
@@ -165,65 +251,29 @@ struct PenPaletteView: View {
             .frame(width: usesCompactLayout ? 124 : 108)
 
             widthNudgeButton(direction: 1)
-
-            ZStack(alignment: .trailing) {
-                Text(activeWidthText)
-                    .font(.caption2.weight(.semibold).monospacedDigit())
-                    .opacity(activeWidthReadout.showsEffectiveWidth ? 0 : 1)
-
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(activeWidthText)
-                        .font(.caption2.weight(.semibold).monospacedDigit())
-
-                    Text("page \(activeWidthReadout.effectiveWidthText)")
-                        .font(.caption2.weight(.semibold).monospacedDigit())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                }
-                .opacity(activeWidthReadout.showsEffectiveWidth ? 1 : 0)
-                .accessibilityHidden(true)
-            }
-            .foregroundStyle(.secondary)
-            .frame(width: 58, height: 30, alignment: .trailing)
         }
-        .frame(height: 30)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(toolState.activeColorTool.label) stroke width")
-        .accessibilityValue(activeWidthReadout.accessibilityText)
     }
 
-    private var strokeWidthModeMenu: some View {
-        Menu {
-            ForEach(DrawingStrokeWidthMode.allCases) { mode in
-                Button {
-                    performSelectionFeedback()
-                    isShowingEraserModes = false
-                    toolState.selectWidthMode(mode)
-                } label: {
-                    Label(
-                        mode.label,
-                        systemImage: toolState.widthMode == mode ? "checkmark" : mode.systemImage
-                    )
-                }
-                .accessibilityHint(mode.description)
+    private var widthReadout: some View {
+        ZStack(alignment: .trailing) {
+            Text(activeWidthText)
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .opacity(activeWidthReadout.showsEffectiveWidth ? 0 : 1)
+
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(activeWidthText)
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+
+                Text("page \(activeWidthReadout.effectiveWidthText)")
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
             }
-        } label: {
-            Image(systemName: toolState.widthMode.systemImage)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.primary)
-                .frame(width: 26, height: 26)
-                .background {
-                    Circle()
-                        .fill(.blue.opacity(0.14))
-                }
-                .overlay {
-                    Circle()
-                        .stroke(.blue, lineWidth: 2)
-                }
+            .opacity(activeWidthReadout.showsEffectiveWidth ? 1 : 0)
+            .accessibilityHidden(true)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(toolState.widthMode.label) stroke width mode")
-        .accessibilityHint(toolState.widthMode.description)
+        .foregroundStyle(.secondary)
+        .frame(width: 58, height: 30, alignment: .trailing)
     }
 
     private func widthNudgeButton(direction: CGFloat) -> some View {
@@ -358,6 +408,15 @@ struct PenPaletteView: View {
         toolState.selectedToolUsesInkColor
     }
 
+    private var activePaletteSelectionSignature: String {
+        let tool = toolState.activeColorTool
+        let activeColorHex = UIColor(toolState.inkColor(for: tool)).hexRGB
+        let paletteSignature = toolState.paletteSwatches(for: tool)
+            .map(\.colorHex)
+            .joined(separator: "|")
+        return "\(tool.rawValue)#\(activeColorHex)#\(paletteSignature)"
+    }
+
     private func toolButton(_ tool: DrawingTool) -> some View {
         Button {
             selectTool(tool)
@@ -487,6 +546,10 @@ struct PenPaletteView: View {
         toolState.selectPaletteColor(swatch.color)
     }
 
+    private func syncSelectedPaletteIndex() {
+        selectedPaletteIndex = toolState.paletteIndexMatchingActiveColor(preferredIndex: selectedPaletteIndex)
+    }
+
     private func widthButton(_ width: CGFloat) -> some View {
         Button {
             performSelectionFeedback()
@@ -600,10 +663,10 @@ struct PenPaletteLayoutMetrics {
 
     static func estimatedPaletteSize(isCompact: Bool, showsInkControls: Bool) -> CGSize {
         if isCompact {
-            return CGSize(width: showsInkControls ? 426 : 212, height: showsInkControls ? 126 : 44)
+            return CGSize(width: showsInkControls ? 286 : 212, height: showsInkControls ? 162 : 44)
         }
 
-        return CGSize(width: showsInkControls ? 842 : 246, height: 44)
+        return CGSize(width: showsInkControls ? 902 : 246, height: 44)
     }
 
     static func clampedCommittedOffset(

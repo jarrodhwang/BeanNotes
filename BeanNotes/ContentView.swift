@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 16
+    static let currentWelcomeContentVersion = 17
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -163,13 +163,13 @@ private struct WelcomeToBeanNotesView: View {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Light Touch", systemImage: "pencil.tip")
-                featureBadge("Ink Readout", systemImage: "scribble")
+                featureBadge("Ink HUD", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Light Touch", systemImage: "pencil.tip")
-                featureBadge("Ink Readout", systemImage: "scribble")
+                featureBadge("Ink HUD", systemImage: "scope")
             }
         }
         .font(.callout.weight(.semibold))
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The editor now shows the effective page ink width while zoom-calibrated strokes stay vector-backed."
+            "The editor now keeps palette, zoom, and page-ink calibration visible while PencilKit strokes stay vector-backed."
         }
     }
 
@@ -228,14 +228,14 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Zoom-calibrated ink",
-                detail: "New strokes can become finer on the page as you zoom in for small handwriting and diagrams.",
-                systemImage: "scope"
+                title: "Synced palette controls",
+                detail: "Switch Light Touch, Standard, or Precision while swatches reopen on the active ink color.",
+                systemImage: "paintpalette"
             ),
             Highlight(
-                title: "Live ink width readout",
-                detail: "The palette and zoom menu show the effective page width before you write at a detailed zoom level.",
-                systemImage: "slider.horizontal.3"
+                title: "Live ink calibration",
+                detail: "When zoomed in, a compact strip shows the actual page ink width before you write.",
+                systemImage: "scope"
             ),
             Highlight(
                 title: "Vector ink stays editable",

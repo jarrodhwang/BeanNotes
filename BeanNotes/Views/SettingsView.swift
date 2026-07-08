@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.defaultQuality.rawValue
+    @AppStorage(DrawingStrokeZoomBehavior.storageKey) private var strokeZoomBehaviorRaw = DrawingStrokeZoomBehavior.defaultBehavior.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
@@ -59,6 +60,10 @@ struct SettingsView: View {
 
     private var selectedDrawingInputMode: DrawingInputMode {
         DrawingInputMode(rawValue: drawingInputModeRaw) ?? DrawingInputMode.defaultMode
+    }
+
+    private var selectedStrokeZoomBehavior: DrawingStrokeZoomBehavior {
+        DrawingStrokeZoomBehavior(rawValue: strokeZoomBehaviorRaw) ?? DrawingStrokeZoomBehavior.defaultBehavior
     }
 
     var body: some View {
@@ -229,6 +234,16 @@ struct SettingsView: View {
                     }
 
                     Text(selectedDrawingRenderQuality.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Picker("Ink Width", selection: $strokeZoomBehaviorRaw) {
+                        ForEach(DrawingStrokeZoomBehavior.allCases) { behavior in
+                            Text(behavior.label).tag(behavior.rawValue)
+                        }
+                    }
+
+                    Text(selectedStrokeZoomBehavior.description)
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

@@ -342,20 +342,22 @@ struct NoteEditorView: View {
                     .zIndex(2)
                 }
 
-                if isWorkspaceFocusModeEnabled {
-                    focusModeExitButton
-                        .padding(.top, 14)
-                        .padding(.trailing, 18)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .zIndex(3)
-                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                } else {
+                if !isWorkspaceFocusModeEnabled {
                     editorPinnedActionToolbar(page: page)
                         .padding(.top, 14)
                         .padding(.trailing, 18)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                         .zIndex(3)
                         .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if shouldShowInkCalibrationStrip {
+                    inkCalibrationStrip
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 18)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .zIndex(4)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
         }
@@ -563,25 +565,6 @@ struct NoteEditorView: View {
         .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
     }
 
-    private var focusModeExitButton: some View {
-        Button {
-            setFocusModeEnabled(false)
-        } label: {
-            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.headline.weight(.semibold))
-                .frame(width: 42, height: 42)
-        }
-        .buttonStyle(.borderless)
-        .background(.regularMaterial, in: Circle())
-        .overlay {
-            Circle()
-                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
-        .accessibilityLabel("Exit focus mode")
-        .accessibilityHint("Show editor controls")
-    }
-
     private var zoomControls: some View {
         HStack(spacing: 2) {
             Button {
@@ -738,6 +721,76 @@ struct NoteEditorView: View {
         }
 
         return "\(toolState.activeColorTool.label) ink \(activeInkReadout.storedWidthText) pt"
+    }
+
+    private var activeInkCalibrationStatus: DrawingInkCalibrationStatus {
+        DrawingInkCalibrationStatus(tool: toolState.activeColorTool, readout: activeInkReadout)
+    }
+
+    private var shouldShowInkCalibrationStrip: Bool {
+        DrawingInkCalibrationStatus.shouldShow(
+            readout: activeInkReadout,
+            isUsingCustomPalette: penPaletteMode == .custom,
+            toolUsesInk: toolState.selectedToolUsesInkColor
+        )
+    }
+
+    private var inkCalibrationStrip: some View {
+        let status = activeInkCalibrationStatus
+
+        return HStack(spacing: 9) {
+            HStack(spacing: 9) {
+                Label {
+                    Text(status.zoomText)
+                        .monospacedDigit()
+                } icon: {
+                    Image(systemName: "scope")
+                        .foregroundStyle(beanNotesTheme.accentColor)
+                }
+
+                Divider()
+                    .frame(height: 18)
+
+                Label {
+                    Text(status.pageInkText)
+                        .monospacedDigit()
+                } icon: {
+                    Image(systemName: "scribble")
+                        .foregroundStyle(beanNotesTheme.accentColor)
+                }
+
+                Text(status.storedInkText)
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(status.accessibilityLabel)
+
+            Button {
+                fitToPageSignal += 1
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderless)
+            .background(Color(.secondarySystemBackground).opacity(0.72), in: Circle())
+            .accessibilityLabel("Fit page")
+            .accessibilityHint("Reset zoom to the selected page")
+        }
+        .font(.caption.weight(.semibold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.82)
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 8)
+        .accessibilityElement(children: .contain)
     }
 
     private func pageActionsMenu(page: NotePage) -> some View {

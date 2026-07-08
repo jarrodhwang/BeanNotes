@@ -183,6 +183,28 @@ struct DrawingStrokeWidthReadout: Equatable {
     }
 }
 
+struct DrawingInkCalibrationStatus: Equatable {
+    let zoomText: String
+    let pageInkText: String
+    let storedInkText: String
+    let accessibilityLabel: String
+
+    init(tool: DrawingTool, readout: DrawingStrokeWidthReadout) {
+        zoomText = DrawingZoomLevel.percentageText(for: readout.zoomScale)
+        pageInkText = "Page \(readout.effectiveWidthText) pt"
+        storedInkText = "Stored \(readout.storedWidthText) pt"
+        accessibilityLabel = "\(tool.label) ink, page width \(readout.effectiveWidthText) points at \(zoomText) zoom, stored width \(readout.storedWidthText) points"
+    }
+
+    static func shouldShow(
+        readout: DrawingStrokeWidthReadout,
+        isUsingCustomPalette: Bool,
+        toolUsesInk: Bool
+    ) -> Bool {
+        isUsingCustomPalette && toolUsesInk && readout.showsEffectiveWidth
+    }
+}
+
 enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
     case lightTouch
     case standard
@@ -524,9 +546,13 @@ final class DrawingToolState: ObservableObject {
         self.defaults = defaults
         selectedTool = Self.storedTool(defaults, key: DefaultsKey.selectedTool, fallback: .pen)
         previousTool = Self.storedTool(defaults, key: DefaultsKey.previousTool, fallback: .pen)
-        pencilColor = Self.storedColor(defaults, key: DefaultsKey.pencilColor, fallback: "#000000")
-        penColor = Self.storedColor(defaults, key: DefaultsKey.penColor, fallback: "#000000")
-        highlighterColor = Self.storedColor(defaults, key: DefaultsKey.highlighterColor, fallback: "#FFFF00")
+        pencilColor = Self.storedColor(defaults, key: DefaultsKey.pencilColor, fallback: Self.defaultColorHex(for: .pencil))
+        penColor = Self.storedColor(defaults, key: DefaultsKey.penColor, fallback: Self.defaultColorHex(for: .pen))
+        highlighterColor = Self.storedColor(
+            defaults,
+            key: DefaultsKey.highlighterColor,
+            fallback: Self.defaultColorHex(for: .highlighter)
+        )
         pencilWidth = Self.storedWidth(
             defaults,
             key: DefaultsKey.pencilWidth,
@@ -654,6 +680,19 @@ final class DrawingToolState: ObservableObject {
 
     func primaryPaletteColor(for tool: DrawingTool? = nil) -> Color {
         paletteColor(at: 0, for: tool)
+    }
+
+    func paletteIndexMatchingActiveColor(for tool: DrawingTool? = nil, preferredIndex: Int? = nil) -> Int {
+        let swatchTool = tool ?? activeColorTool
+        let activeColorHex = Self.normalizedHex(UIColor(inkColor(for: swatchTool)).hexRGB)
+        let colors = paletteColorHexes(for: swatchTool)
+        if let preferredIndex,
+           colors.indices.contains(preferredIndex),
+           Self.normalizedHex(colors[preferredIndex]) == activeColorHex {
+            return preferredIndex
+        }
+
+        return colors.firstIndex { Self.normalizedHex($0) == activeColorHex } ?? 0
     }
 
     func paletteColor(at index: Int, for tool: DrawingTool? = nil) -> Color {
@@ -1012,6 +1051,10 @@ final class DrawingToolState: ObservableObject {
         case .eraser, .lasso:
             defaultStrokeWidth(for: .pen)
         }
+    }
+
+    private static func defaultColorHex(for tool: DrawingTool) -> String {
+        defaultPaletteColorHexes(for: tool).first ?? "#000000"
     }
 
     private func paletteColorHexes(for tool: DrawingTool) -> [String] {

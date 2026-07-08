@@ -804,6 +804,20 @@ struct BeanNotesTests {
         )
     }
 
+    @Test func penPaletteEstimatesCompactCalibrationLayoutInTwoRows() {
+        let compactInkSize = PenPaletteLayoutMetrics.estimatedPaletteSize(
+            isCompact: true,
+            showsInkControls: true
+        )
+        let regularInkSize = PenPaletteLayoutMetrics.estimatedPaletteSize(
+            isCompact: false,
+            showsInkControls: true
+        )
+
+        #expect(compactInkSize.width < regularInkSize.width)
+        #expect(compactInkSize.height > regularInkSize.height)
+    }
+
     @Test func penPaletteDragClampsInsideEditorBounds() {
         let availableSize = CGSize(width: 744, height: 1_024)
         let paletteSize = CGSize(width: 288, height: 126)
@@ -852,6 +866,69 @@ struct BeanNotesTests {
         #expect(zoomedBudget.shouldReplaceLoadedBudget(baseBudget))
         #expect(baseBudget.shouldReplaceLoadedBudget(zoomedBudget))
         #expect(!moderateZoomBudget.shouldReplaceLoadedBudget(baseBudget))
+    }
+
+    @Test func drawingCanvasLayoutSignatureTracksOnlyDocumentLayoutInputs() {
+        let page = NotePage(
+            pageOrder: 0,
+            background: .plain(),
+            width: 612,
+            height: 792
+        )
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Page",
+            originalFileName: "page.jpg",
+            storedFileName: "Imports/page.jpg",
+            contentTypeIdentifier: UTType.jpeg.identifier,
+            fileExtension: "jpg",
+            width: 612,
+            height: 792,
+            isLocked: true,
+            rendersBehindDrawing: true
+        )
+        page.attachments.append(attachment)
+
+        let baseline = DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .continuous,
+            hasTopContent: false
+        )
+
+        page.background = NoteBackground(style: .grid, colorHex: "#FFF7BF")
+        attachment.x = 32
+        attachment.y = 44
+        attachment.width = 540
+        attachment.height = 700
+        attachment.storedFileName = "Imports/page-revised.jpg"
+        attachment.isLocked = false
+        attachment.rendersBehindDrawing = false
+
+        #expect(DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .continuous,
+            hasTopContent: false
+        ) == baseline)
+
+        #expect(DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .continuous,
+            hasTopContent: true
+        ) != baseline)
+
+        #expect(DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .singlePage,
+            hasTopContent: false
+        ) != baseline)
+
+        page.width = 640
+
+        #expect(DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .continuous,
+            hasTopContent: false
+        ) != baseline)
     }
 
     @Test func imageMemoryCacheEvictsAllVariantsForFileURL() throws {
@@ -1013,6 +1090,7 @@ struct BeanNotesTests {
             context.fill(CGRect(x: 0, y: 0, width: 48, height: 48))
         }
         try #require(sourceImage.pngData()).write(to: imageURL, options: [.atomic])
+        #expect(ImageMemoryCache.shared.image(at: imageURL, maxPixelSize: 1_024) != nil)
 
         imageContainer.configure(
             attachment: attachment,
@@ -1372,6 +1450,7 @@ struct BeanNotesTests {
 
         let firstSession = DrawingToolState(defaults: defaults)
         #expect(DrawingStrokeWidthMode.allCases.map(\.label) == ["Light Touch", "Standard", "Precision"])
+        #expect(DrawingStrokeWidthMode.allCases.map(\.systemImage) == ["pencil.tip", "lineweight", "scope"])
         #expect(firstSession.widthMode == .lightTouch)
         #expect(firstSession.penWidth == 2.5)
         #expect(firstSession.pencilWidth == 3.5)
@@ -1531,6 +1610,49 @@ struct BeanNotesTests {
         #expect(pageWidthReadout.accessibilityText == "2.5 points")
     }
 
+    @Test func drawingInkCalibrationStatusAppearsOnlyForDetailedCustomInk() {
+        let detailReadout = DrawingStrokeWidthReadout(
+            storedWidth: 2.5,
+            effectiveWidth: 0.625,
+            zoomScale: 4,
+            zoomBehavior: .zoomCalibrated
+        )
+        let status = DrawingInkCalibrationStatus(tool: .pen, readout: detailReadout)
+
+        #expect(DrawingInkCalibrationStatus.shouldShow(
+            readout: detailReadout,
+            isUsingCustomPalette: true,
+            toolUsesInk: true
+        ))
+        #expect(!DrawingInkCalibrationStatus.shouldShow(
+            readout: detailReadout,
+            isUsingCustomPalette: false,
+            toolUsesInk: true
+        ))
+        #expect(!DrawingInkCalibrationStatus.shouldShow(
+            readout: detailReadout,
+            isUsingCustomPalette: true,
+            toolUsesInk: false
+        ))
+        #expect(status.zoomText == "400%")
+        #expect(status.pageInkText == "Page 0.63 pt")
+        #expect(status.storedInkText == "Stored 2.5 pt")
+        #expect(status.accessibilityLabel == "Pen ink, page width 0.63 points at 400% zoom, stored width 2.5 points")
+
+        let pageWidthReadout = DrawingStrokeWidthReadout(
+            storedWidth: 2.5,
+            effectiveWidth: 2.5,
+            zoomScale: 4,
+            zoomBehavior: .pageWidth
+        )
+
+        #expect(!DrawingInkCalibrationStatus.shouldShow(
+            readout: pageWidthReadout,
+            isUsingCustomPalette: true,
+            toolUsesInk: true
+        ))
+    }
+
     @Test @MainActor func customPaletteRestoresSelectedColorsAndEraserMode() throws {
         let suiteName = "BeanNotesToolState-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -1575,6 +1697,45 @@ struct BeanNotesTests {
         #expect(!penPalette.contains(selectedBlueHex))
         #expect(!pencilPalette.contains(selectedGreenHex))
         #expect(!highlighterPalette.contains(selectedRedHex))
+    }
+
+    @Test @MainActor func customPaletteIndexesMatchActiveColorsAcrossTools() throws {
+        let suiteName = "BeanNotesPaletteActiveIndex-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let firstSession = DrawingToolState(defaults: defaults)
+        #expect(firstSession.paletteIndexMatchingActiveColor(for: .pen) == 0)
+        #expect(firstSession.paletteIndexMatchingActiveColor(for: .pencil) == 0)
+        #expect(firstSession.paletteIndexMatchingActiveColor(for: .highlighter) == 0)
+
+        firstSession.select(.pen)
+        firstSession.selectPaletteColor(firstSession.paletteColor(at: 3, for: .pen))
+        #expect(firstSession.paletteIndexMatchingActiveColor() == 3)
+
+        firstSession.select(.pencil)
+        firstSession.setPaletteColor(
+            Color(uiColor: UIColor(red: 0.18, green: 0.43, blue: 0.88, alpha: 1)),
+            at: 5
+        )
+        #expect(firstSession.paletteIndexMatchingActiveColor() == 5)
+
+        firstSession.select(.highlighter)
+        let duplicatedPrimaryColor = firstSession.paletteColor(at: 0, for: .highlighter)
+        firstSession.setPaletteColor(duplicatedPrimaryColor, at: 4)
+        #expect(firstSession.paletteIndexMatchingActiveColor(for: .highlighter, preferredIndex: 4) == 4)
+        #expect(firstSession.paletteIndexMatchingActiveColor(for: .highlighter) == 0)
+
+        firstSession.select(.pencil)
+        firstSession.select(.eraser)
+        #expect(firstSession.activeColorTool == .pencil)
+        #expect(firstSession.paletteIndexMatchingActiveColor() == 5)
+
+        let restoredSession = DrawingToolState(defaults: defaults)
+        #expect(restoredSession.paletteIndexMatchingActiveColor(for: .pen) == 3)
+        #expect(restoredSession.paletteIndexMatchingActiveColor(for: .pencil) == 5)
     }
 
     @Test @MainActor func customPalettePrimaryColorPersistsPerInkTool() throws {

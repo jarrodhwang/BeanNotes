@@ -715,6 +715,15 @@ private struct NoteTabbedEditorWorkspace: View {
                         CompactProgressBanner(message: "Opening note...")
                             .transition(.opacity)
                     }
+
+                    if isFocusModeEnabled {
+                        focusModeExitButton
+                            .padding(.top, 14)
+                            .padding(.trailing, 18)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .zIndex(3)
+                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    }
                 }
             }
             .background(beanNotesTheme.appBackground)
@@ -732,6 +741,25 @@ private struct NoteTabbedEditorWorkspace: View {
         } else {
             ContentUnavailableView("No Open Notes", systemImage: "note.text")
         }
+    }
+
+    private var focusModeExitButton: some View {
+        Button {
+            isFocusModeEnabled = false
+        } label: {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.headline.weight(.semibold))
+                .frame(width: 42, height: 42)
+        }
+        .buttonStyle(.borderless)
+        .background(.regularMaterial, in: Circle())
+        .overlay {
+            Circle()
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
+        .accessibilityLabel("Exit focus mode")
+        .accessibilityHint("Show editor controls")
     }
 
     private func selectTab(_ noteID: UUID) {

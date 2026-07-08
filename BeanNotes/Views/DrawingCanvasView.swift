@@ -34,6 +34,36 @@ struct AttachmentImageRasterBudget: Equatable {
     }
 }
 
+struct DrawingCanvasLayoutSignature: Equatable {
+    private struct PageSignature: Equatable {
+        var id: UUID
+        var pageOrder: Int
+        var width: Double
+        var height: Double
+    }
+
+    private var pageFlowMode: NoteEditorPageFlowMode
+    private var hasTopContent: Bool
+    private var pages: [PageSignature]
+
+    init(
+        pages: [NotePage],
+        pageFlowMode: NoteEditorPageFlowMode,
+        hasTopContent: Bool
+    ) {
+        self.pageFlowMode = pageFlowMode
+        self.hasTopContent = hasTopContent
+        self.pages = pages.map {
+            PageSignature(
+                id: $0.id,
+                pageOrder: $0.pageOrder,
+                width: $0.width,
+                height: $0.height
+            )
+        }
+    }
+}
+
 struct DrawingCanvasView: UIViewRepresentable {
     let pages: [NotePage]
     @Binding var selectedPageID: UUID?
@@ -229,7 +259,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private weak var topContentView: UIView?
         private var pageFlowMode: NoteEditorPageFlowMode = .continuous
         private var renderQuality: DrawingRenderQuality = .highResolution
-        private var layoutConfigurationSignature: String?
+        private var layoutConfigurationSignature: DrawingCanvasLayoutSignature?
         private var selectedPageID: UUID?
         private var drawingStorage: DrawingStorageService?
         private weak var coordinator: Coordinator?
@@ -324,7 +354,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.selectedPageID = selectedPageID ?? pages.first?.id
             self.drawingStorage = drawingStorage
             self.coordinator = coordinator
-            let nextSignature = layoutSignature(for: pages, pageFlowMode: pageFlowMode)
+            let nextSignature = DrawingCanvasLayoutSignature(
+                pages: pages,
+                pageFlowMode: pageFlowMode,
+                hasTopContent: topContentView != nil
+            )
             let shouldRelayout = nextSignature != layoutConfigurationSignature
 
             if shouldRelayout {
@@ -998,27 +1032,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             .map { orderedPageIDs[$0] }
         }
 
-        private func layoutSignature(for pages: [NotePage], pageFlowMode: NoteEditorPageFlowMode) -> String {
-            let pageSignature = pages.map { page in
-                let attachmentSignature = page.imageAttachments.map {
-                    "\($0.id.uuidString):\($0.storedFileName):\($0.isLocked):\($0.rendersBehindDrawing)"
-                }
-                .joined(separator: ",")
-
-                return [
-                    page.id.uuidString,
-                    "\(page.pageOrder)",
-                    "\(Int(page.width))x\(Int(page.height))",
-                    page.backgroundStyleRaw,
-                    page.backgroundColorHex,
-                    attachmentSignature
-                ].joined(separator: ":")
-            }
-            .joined(separator: "|")
-
-            return "\(pageFlowMode.rawValue)#\(topContentView == nil ? "noHeader" : "header")#\(pageSignature)"
-        }
-
         private func triggerBottomIfNeeded() {
             guard pageFlowMode.autoAddsPages, bottomTriggerArmed, documentSize.height > 0 else { return }
 
@@ -1364,8 +1377,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var changed: (() -> Void)?
         private var imageURL: URL?
         private var loadedStoredFileName: String?
+        private var loadedFileIdentity: String?
         private var loadedRasterBudget: AttachmentImageRasterBudget?
         private var loadingStoredFileName: String?
+        private var loadingFileIdentity: String?
         private var loadingRasterBudget: AttachmentImageRasterBudget?
         private var imageLoadRequestID: UUID?
         private var imageLoadToken: ImageLoadToken?
@@ -1488,13 +1503,17 @@ struct DrawingCanvasView: UIViewRepresentable {
                 renderScale: currentRenderScale
             )
             let storedFileName = attachment.storedFileName
-            let fileChanged = loadedStoredFileName != storedFileName
+            let fileIdentity = Self.fileIdentity(for: imageURL)
+            let fileChanged = loadedStoredFileName != storedFileName || loadedFileIdentity != fileIdentity
             guard fileChanged || budget.shouldReplaceLoadedBudget(loadedRasterBudget) else { return }
-            guard loadingStoredFileName != storedFileName || loadingRasterBudget != budget else { return }
+            guard loadingStoredFileName != storedFileName
+                    || loadingFileIdentity != fileIdentity
+                    || loadingRasterBudget != budget else { return }
 
             if fileChanged {
                 imageView.image = nil
                 loadedStoredFileName = nil
+                loadedFileIdentity = nil
                 loadedRasterBudget = nil
             }
 
@@ -1504,10 +1523,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             imageLoadRequestID = requestID
             imageLoadToken = token
             loadingStoredFileName = storedFileName
+            loadingFileIdentity = fileIdentity
             loadingRasterBudget = budget
 
             let maxPixelSize = CGFloat(budget.maxPixelSize)
-            Self.imageDecodeQueue.async { [imageURL, requestID, token, storedFileName, budget, maxPixelSize] in
+            Self.imageDecodeQueue.async { [imageURL, requestID, token, storedFileName, fileIdentity, budget, maxPixelSize] in
                 guard !token.isCancelled else { return }
 
                 let image = autoreleasepool {
@@ -1527,6 +1547,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                           self.isImageLoadingEnabled,
                           self.imageURL == imageURL,
                           self.loadingStoredFileName == storedFileName,
+                          self.loadingFileIdentity == fileIdentity,
                           self.loadingRasterBudget == budget else {
                         return
                     }
@@ -1534,14 +1555,17 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self.imageLoadRequestID = nil
                     self.imageLoadToken = nil
                     self.loadingStoredFileName = nil
+                    self.loadingFileIdentity = nil
                     self.loadingRasterBudget = nil
                     self.imageView.image = image
 
                     if image == nil {
                         self.loadedStoredFileName = nil
+                        self.loadedFileIdentity = nil
                         self.loadedRasterBudget = nil
                     } else {
                         self.loadedStoredFileName = storedFileName
+                        self.loadedFileIdentity = fileIdentity
                         self.loadedRasterBudget = budget
                     }
                 }
@@ -1555,6 +1579,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
             imageView.image = nil
             loadedStoredFileName = nil
+            loadedFileIdentity = nil
             loadedRasterBudget = nil
         }
 
@@ -1563,7 +1588,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             imageLoadRequestID = nil
             imageLoadToken = nil
             loadingStoredFileName = nil
+            loadingFileIdentity = nil
             loadingRasterBudget = nil
+        }
+
+        private static func fileIdentity(for url: URL) -> String {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+            return "\(modified)|\(size)"
         }
 
         @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
