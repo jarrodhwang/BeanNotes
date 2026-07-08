@@ -148,7 +148,7 @@ struct PenPaletteView: View {
 
     private var widthControls: some View {
         HStack(spacing: 6) {
-            precisionModeButton
+            strokeWidthModeMenu
 
             ForEach(toolState.widthPresets(), id: \.self) { width in
                 widthButton(width)
@@ -167,7 +167,7 @@ struct PenPaletteView: View {
             Text(activeWidthText)
                 .font(.caption2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 36, alignment: .trailing)
+                .frame(width: 38, alignment: .trailing)
         }
         .frame(height: 30)
         .accessibilityElement(children: .contain)
@@ -175,34 +175,38 @@ struct PenPaletteView: View {
         .accessibilityValue("\(activeWidthText) points")
     }
 
-    private var precisionModeButton: some View {
-        let isPrecision = toolState.widthMode == .precision
-
-        return Button {
-            performSelectionFeedback()
-            isShowingEraserModes = false
-            toolState.toggleWidthMode()
+    private var strokeWidthModeMenu: some View {
+        Menu {
+            ForEach(DrawingStrokeWidthMode.allCases) { mode in
+                Button {
+                    performSelectionFeedback()
+                    isShowingEraserModes = false
+                    toolState.selectWidthMode(mode)
+                } label: {
+                    Label(
+                        mode.label,
+                        systemImage: toolState.widthMode == mode ? "checkmark" : mode.systemImage
+                    )
+                }
+                .accessibilityHint(mode.description)
+            }
         } label: {
             Image(systemName: toolState.widthMode.systemImage)
                 .font(.caption.weight(.bold))
-                .foregroundStyle(isPrecision ? .primary : .secondary)
+                .foregroundStyle(.primary)
                 .frame(width: 26, height: 26)
                 .background {
-                    if isPrecision {
-                        Circle()
-                            .fill(.blue.opacity(0.14))
-                    }
+                    Circle()
+                        .fill(.blue.opacity(0.14))
                 }
                 .overlay {
-                    if isPrecision {
-                        Circle()
-                            .stroke(.blue, lineWidth: 2)
-                    }
+                    Circle()
+                        .stroke(.blue, lineWidth: 2)
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isPrecision ? "Precision stroke width on" : "Precision stroke width off")
-        .accessibilityHint("Toggles finer stroke width adjustments")
+        .accessibilityLabel("\(toolState.widthMode.label) stroke width mode")
+        .accessibilityHint(toolState.widthMode.description)
     }
 
     private func widthNudgeButton(direction: CGFloat) -> some View {
@@ -477,13 +481,13 @@ struct PenPaletteView: View {
                 .frame(width: widthButtonDiameter(for: width), height: widthButtonDiameter(for: width))
                 .frame(width: 26, height: 26)
                 .background {
-                    if abs(toolState.activeStrokeWidth - width) < 0.5 {
+                    if isActiveWidthPreset(width) {
                         Circle()
                             .fill(.blue.opacity(0.12))
                     }
                 }
                 .overlay {
-                    if abs(toolState.activeStrokeWidth - width) < 0.5 {
+                    if isActiveWidthPreset(width) {
                         Circle()
                             .stroke(.blue, lineWidth: 2)
                     }
@@ -522,12 +526,22 @@ struct PenPaletteView: View {
         return min(max(7 + progress * 14, 7), 21)
     }
 
+    private func isActiveWidthPreset(_ width: CGFloat) -> Bool {
+        let tolerance = max(toolState.activeWidthStep / 2, 0.05)
+        return abs(toolState.activeStrokeWidth - width) <= tolerance
+    }
+
     private func widthLabel(for width: CGFloat) -> String {
         if abs(width.rounded() - width) < 0.01 {
             return "\(Int(width.rounded()))"
         }
 
-        return String(format: "%.1f", Double(width))
+        let halfStep = (width * 2).rounded() / 2
+        if abs(halfStep - width) < 0.01 {
+            return String(format: "%.1f", Double(width))
+        }
+
+        return String(format: "%.2f", Double(width))
     }
 
     private func isLightSwatch(_ swatch: DrawingColorSwatch) -> Bool {

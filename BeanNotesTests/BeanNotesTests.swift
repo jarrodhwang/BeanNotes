@@ -1227,6 +1227,7 @@ struct BeanNotesTests {
         }
 
         let firstSession = DrawingToolState(defaults: defaults)
+        firstSession.selectWidthMode(.standard)
         firstSession.select(.pen)
         firstSession.applyActiveWidth(2.26)
         #expect(firstSession.penWidth == 2.5)
@@ -1247,9 +1248,70 @@ struct BeanNotesTests {
         #expect(firstSession.widthPresets(for: .highlighter) == [8, 14, 22, 32])
 
         let restoredSession = DrawingToolState(defaults: defaults)
+        #expect(restoredSession.widthMode == .standard)
         #expect(restoredSession.penWidth == 24)
         #expect(restoredSession.pencilWidth == 1)
         #expect(restoredSession.highlighterWidth == 8)
+    }
+
+    @Test @MainActor func lightTouchStrokeWidthModeIsDefaultForFineHandwriting() throws {
+        let suiteName = "BeanNotesLightTouchStrokeWidth-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let firstSession = DrawingToolState(defaults: defaults)
+        #expect(DrawingStrokeWidthMode.allCases.map(\.label) == ["Light Touch", "Standard", "Precision"])
+        #expect(firstSession.widthMode == .lightTouch)
+        #expect(firstSession.penWidth == 2.5)
+        #expect(firstSession.pencilWidth == 3.5)
+        #expect(firstSession.highlighterWidth == 10)
+
+        firstSession.select(.pen)
+        #expect(firstSession.activeWidthStep == 0.25)
+        #expect(firstSession.widthPresets(for: .pen) == [1, 1.5, 2.5, 4])
+
+        firstSession.applyActiveWidth(2.26)
+        #expect(firstSession.penWidth == 2.25)
+
+        firstSession.nudgeActiveWidth(by: 1)
+        #expect(firstSession.penWidth == 2.5)
+
+        firstSession.applyActiveWidth(99)
+        #expect(firstSession.penWidth == 12)
+        #expect(firstSession.strokeWidth(for: .pen) == 12)
+
+        firstSession.select(.highlighter)
+        #expect(firstSession.activeWidthStep == 0.5)
+        #expect(firstSession.widthPresets(for: .highlighter) == [6, 10, 14, 20])
+
+        let restoredSession = DrawingToolState(defaults: defaults)
+        #expect(restoredSession.widthMode == .lightTouch)
+        #expect(restoredSession.penWidth == 12)
+    }
+
+    @Test @MainActor func strokeWidthModeSwitchPreservesStoredToolWidths() throws {
+        let suiteName = "BeanNotesStrokeWidthModeSwitch-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let toolState = DrawingToolState(defaults: defaults)
+        toolState.select(.pen)
+        toolState.selectWidthMode(.standard)
+        toolState.applyActiveWidth(24)
+        #expect(toolState.penWidth == 24)
+        #expect(toolState.strokeWidth(for: .pen) == 24)
+
+        toolState.selectWidthMode(.lightTouch)
+        #expect(toolState.penWidth == 24)
+        #expect(toolState.strokeWidth(for: .pen) == 12)
+
+        toolState.selectWidthMode(.standard)
+        #expect(toolState.penWidth == 24)
+        #expect(toolState.strokeWidth(for: .pen) == 24)
     }
 
     @Test @MainActor func precisionStrokeWidthModeAllowsFineAdjustmentsAndPersists() throws {
@@ -1260,10 +1322,14 @@ struct BeanNotesTests {
         }
 
         let firstSession = DrawingToolState(defaults: defaults)
+        #expect(firstSession.widthMode == .lightTouch)
+        #expect(firstSession.activeWidthStep == 0.25)
+
+        firstSession.select(.pen)
+        firstSession.selectWidthMode(.standard)
         #expect(firstSession.widthMode == .standard)
         #expect(firstSession.activeWidthStep == 0.5)
 
-        firstSession.select(.pen)
         firstSession.applyActiveWidth(2.26)
         #expect(firstSession.penWidth == 2.5)
 

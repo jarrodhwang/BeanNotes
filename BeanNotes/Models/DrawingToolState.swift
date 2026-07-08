@@ -90,6 +90,7 @@ struct DrawingStrokeWidthCalibration: Equatable {
 }
 
 enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
+    case lightTouch
     case standard
     case precision
 
@@ -97,6 +98,8 @@ enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
+        case .lightTouch:
+            "Light Touch"
         case .standard:
             "Standard"
         case .precision:
@@ -106,10 +109,23 @@ enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .lightTouch:
+            "pencil.tip"
         case .standard:
             "lineweight"
         case .precision:
             "scope"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .lightTouch:
+            "Smaller presets and finer nudges for light handwriting."
+        case .standard:
+            "General-purpose stroke widths for notes, diagrams, and markup."
+        case .precision:
+            "Fine slider steps while keeping the full stroke-width range."
         }
     }
 }
@@ -370,19 +386,19 @@ final class DrawingToolState: ObservableObject {
         didSet { defaults.set(highlighterColor.hexRGB, forKey: DefaultsKey.highlighterColor) }
     }
 
-    @Published private(set) var pencilWidth: CGFloat = 6 {
+    @Published private(set) var pencilWidth: CGFloat = 3.5 {
         didSet {
             defaults.set(Double(pencilWidth), forKey: DefaultsKey.pencilWidth)
         }
     }
 
-    @Published private(set) var penWidth: CGFloat = 5 {
+    @Published private(set) var penWidth: CGFloat = 2.5 {
         didSet {
             defaults.set(Double(penWidth), forKey: DefaultsKey.penWidth)
         }
     }
 
-    @Published private(set) var highlighterWidth: CGFloat = 14 {
+    @Published private(set) var highlighterWidth: CGFloat = 10 {
         didSet {
             defaults.set(Double(highlighterWidth), forKey: DefaultsKey.highlighterWidth)
         }
@@ -404,7 +420,7 @@ final class DrawingToolState: ObservableObject {
         didSet { defaults.set(Self.serializedPalette(highlighterPaletteColorHexes), forKey: DefaultsKey.highlighterPaletteColors) }
     }
 
-    @Published var widthMode: DrawingStrokeWidthMode = .standard {
+    @Published var widthMode: DrawingStrokeWidthMode = .lightTouch {
         didSet { defaults.set(widthMode.rawValue, forKey: DefaultsKey.widthMode) }
     }
 
@@ -417,12 +433,22 @@ final class DrawingToolState: ObservableObject {
         pencilColor = Self.storedColor(defaults, key: DefaultsKey.pencilColor, fallback: "#000000")
         penColor = Self.storedColor(defaults, key: DefaultsKey.penColor, fallback: "#000000")
         highlighterColor = Self.storedColor(defaults, key: DefaultsKey.highlighterColor, fallback: "#FFFF00")
-        pencilWidth = Self.storedWidth(defaults, key: DefaultsKey.pencilWidth, fallback: 6, for: .pencil)
-        penWidth = Self.storedWidth(defaults, key: DefaultsKey.penWidth, fallback: 5, for: .pen)
+        pencilWidth = Self.storedWidth(
+            defaults,
+            key: DefaultsKey.pencilWidth,
+            fallback: Self.defaultStrokeWidth(for: .pencil),
+            for: .pencil
+        )
+        penWidth = Self.storedWidth(
+            defaults,
+            key: DefaultsKey.penWidth,
+            fallback: Self.defaultStrokeWidth(for: .pen),
+            for: .pen
+        )
         highlighterWidth = Self.storedWidth(
             defaults,
             key: DefaultsKey.highlighterWidth,
-            fallback: 14,
+            fallback: Self.defaultStrokeWidth(for: .highlighter),
             for: .highlighter
         )
         eraserMode = Self.storedEraserMode(defaults, key: DefaultsKey.eraserMode, fallback: .pixel)
@@ -441,7 +467,7 @@ final class DrawingToolState: ObservableObject {
             key: DefaultsKey.highlighterPaletteColors,
             fallback: Self.defaultPaletteColorHexes(for: .highlighter)
         )
-        widthMode = Self.storedWidthMode(defaults, key: DefaultsKey.widthMode, fallback: .standard)
+        widthMode = Self.storedWidthMode(defaults, key: DefaultsKey.widthMode, fallback: .lightTouch)
     }
 
     var activeColorTool: DrawingTool {
@@ -487,16 +513,16 @@ final class DrawingToolState: ObservableObject {
     func strokeWidth(for tool: DrawingTool) -> CGFloat {
         switch tool {
         case .pencil:
-            Self.boundedWidth(pencilWidth, for: .pencil)
+            Self.widthCalibration(for: .pencil, mode: widthMode).clamped(pencilWidth)
         case .highlighter:
-            Self.boundedWidth(highlighterWidth, for: .highlighter)
+            Self.widthCalibration(for: .highlighter, mode: widthMode).clamped(highlighterWidth)
         default:
-            Self.boundedWidth(penWidth, for: .pen)
+            Self.widthCalibration(for: .pen, mode: widthMode).clamped(penWidth)
         }
     }
 
     func widthPresets(for tool: DrawingTool? = nil) -> [CGFloat] {
-        Self.widthCalibration(for: tool ?? activeColorTool).presets
+        Self.widthCalibration(for: tool ?? activeColorTool, mode: widthMode).presets
     }
 
     func paletteSwatches(for tool: DrawingTool? = nil) -> [DrawingColorSwatch] {
@@ -620,11 +646,17 @@ final class DrawingToolState: ObservableObject {
 
     func selectWidthMode(_ mode: DrawingStrokeWidthMode) {
         widthMode = mode
-        applyActiveWidth(activeStrokeWidth)
     }
 
     func toggleWidthMode() {
-        selectWidthMode(widthMode == .precision ? .standard : .precision)
+        switch widthMode {
+        case .lightTouch:
+            selectWidthMode(.standard)
+        case .standard:
+            selectWidthMode(.precision)
+        case .precision:
+            selectWidthMode(.lightTouch)
+        }
     }
 
     func nudgeActiveWidth(by steps: CGFloat) {
@@ -758,9 +790,40 @@ final class DrawingToolState: ObservableObject {
         for tool: DrawingTool,
         mode: DrawingStrokeWidthMode
     ) -> DrawingStrokeWidthCalibration {
-        let calibration = widthCalibration(for: tool)
-        guard mode == .precision else { return calibration }
-        return calibration.withStep(precisionWidthStep(for: tool))
+        switch mode {
+        case .lightTouch:
+            lightTouchWidthCalibration(for: tool)
+        case .standard:
+            widthCalibration(for: tool)
+        case .precision:
+            widthCalibration(for: tool).withStep(precisionWidthStep(for: tool))
+        }
+    }
+
+    private static func lightTouchWidthCalibration(for tool: DrawingTool) -> DrawingStrokeWidthCalibration {
+        switch tool {
+        case .pencil:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 1,
+                maximumWidth: 12,
+                step: 0.25,
+                presets: [1.5, 2.5, 3.5, 5]
+            )
+        case .highlighter:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 4,
+                maximumWidth: 28,
+                step: 0.5,
+                presets: [6, 10, 14, 20]
+            )
+        case .pen, .eraser, .lasso:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 0.5,
+                maximumWidth: 12,
+                step: 0.25,
+                presets: [1, 1.5, 2.5, 4]
+            )
+        }
     }
 
     private static func precisionWidthStep(for tool: DrawingTool) -> CGFloat {
@@ -787,6 +850,19 @@ final class DrawingToolState: ObservableObject {
 
         let calibration = widthCalibration(for: tool)
         return min(max(width, calibration.minimumWidth), calibration.maximumWidth)
+    }
+
+    private static func defaultStrokeWidth(for tool: DrawingTool) -> CGFloat {
+        switch tool {
+        case .pen:
+            2.5
+        case .pencil:
+            3.5
+        case .highlighter:
+            10
+        case .eraser, .lasso:
+            defaultStrokeWidth(for: .pen)
+        }
     }
 
     private func paletteColorHexes(for tool: DrawingTool) -> [String] {
