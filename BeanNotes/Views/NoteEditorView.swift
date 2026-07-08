@@ -331,7 +331,12 @@ struct NoteEditorView: View {
 
                 if penPaletteMode == .custom {
                     GeometryReader { proxy in
-                        PenPaletteView(toolState: toolState, availableSize: proxy.size)
+                        PenPaletteView(
+                            toolState: toolState,
+                            availableSize: proxy.size,
+                            zoomScale: currentZoomScale,
+                            strokeZoomBehavior: strokeZoomBehavior
+                        )
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
                     .zIndex(2)
@@ -612,6 +617,9 @@ struct NoteEditorView: View {
                 Label("Detail \(drawingRenderQuality.label)", systemImage: drawingRenderQuality.systemImage)
                 Label("Touch \(drawingInputMode.label)", systemImage: drawingInputMode.systemImage)
                 Label("Ink \(strokeZoomBehavior.label)", systemImage: strokeZoomBehavior.systemImage)
+                if penPaletteMode == .custom, toolState.selectedToolUsesInkColor {
+                    Label(activeInkReadoutText, systemImage: "scribble")
+                }
             }
 
             Section {
@@ -714,6 +722,22 @@ struct NoteEditorView: View {
 
     private var currentZoomText: String {
         DrawingZoomLevel.percentageText(for: currentZoomScale)
+    }
+
+    private var activeInkReadout: DrawingStrokeWidthReadout {
+        toolState.strokeWidthReadout(
+            for: toolState.activeColorTool,
+            zoomScale: currentZoomScale,
+            zoomBehavior: strokeZoomBehavior
+        )
+    }
+
+    private var activeInkReadoutText: String {
+        if activeInkReadout.showsEffectiveWidth {
+            return "\(toolState.activeColorTool.label) ink \(activeInkReadout.effectiveWidthText) pt on page"
+        }
+
+        return "\(toolState.activeColorTool.label) ink \(activeInkReadout.storedWidthText) pt"
     }
 
     private func pageActionsMenu(page: NotePage) -> some View {

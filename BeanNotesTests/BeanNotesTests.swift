@@ -1432,6 +1432,16 @@ struct BeanNotesTests {
         ) - 0.625) < 0.001)
         #expect(toolState.penWidth == 2.5)
 
+        let readout = toolState.strokeWidthReadout(
+            for: .pen,
+            zoomScale: 4,
+            zoomBehavior: .zoomCalibrated
+        )
+        #expect(readout.storedWidthText == "2.5")
+        #expect(readout.effectiveWidthText == "0.63")
+        #expect(readout.showsEffectiveWidth)
+        #expect(readout.accessibilityText == "Stored 2.5 points, page ink 0.63 points at 400% zoom")
+
         let pageWidthTool = try #require(toolState.makePKTool(
             zoomScale: 4,
             zoomBehavior: .pageWidth
@@ -1451,6 +1461,21 @@ struct BeanNotesTests {
             zoomScale: 4,
             zoomBehavior: .zoomCalibrated
         ))
+    }
+
+    @Test func drawingStrokeWidthReadoutFormatsCommonPointSizes() {
+        #expect(DrawingStrokeWidthReadout.pointsText(for: 1) == "1")
+        #expect(DrawingStrokeWidthReadout.pointsText(for: 1.5) == "1.5")
+        #expect(DrawingStrokeWidthReadout.pointsText(for: 0.625) == "0.63")
+
+        let pageWidthReadout = DrawingStrokeWidthReadout(
+            storedWidth: 2.5,
+            effectiveWidth: 2.5,
+            zoomScale: 4,
+            zoomBehavior: .pageWidth
+        )
+        #expect(!pageWidthReadout.showsEffectiveWidth)
+        #expect(pageWidthReadout.accessibilityText == "2.5 points")
     }
 
     @Test @MainActor func customPaletteRestoresSelectedColorsAndEraserMode() throws {

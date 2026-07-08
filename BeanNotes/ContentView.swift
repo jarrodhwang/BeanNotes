@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 15
+    static let currentWelcomeContentVersion = 16
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -163,13 +163,13 @@ private struct WelcomeToBeanNotesView: View {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Light Touch", systemImage: "pencil.tip")
-                featureBadge("Zoom Ink", systemImage: "scope")
+                featureBadge("Ink Readout", systemImage: "scribble")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Light Touch", systemImage: "pencil.tip")
-                featureBadge("Zoom Ink", systemImage: "scope")
+                featureBadge("Ink Readout", systemImage: "scribble")
             }
         }
         .font(.callout.weight(.semibold))
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The editor now adds zoom-calibrated ink for finer detail writing while keeping PencilKit strokes vector-backed."
+            "The editor now shows the effective page ink width while zoom-calibrated strokes stay vector-backed."
         }
     }
 
@@ -233,8 +233,8 @@ private extension WelcomeToBeanNotesView.Mode {
                 systemImage: "scope"
             ),
             Highlight(
-                title: "Ink width menu",
-                detail: "Switch between Zoom Calibrated and Page Width from the zoom menu when a note needs classic sizing.",
+                title: "Live ink width readout",
+                detail: "The palette and zoom menu show the effective page width before you write at a detailed zoom level.",
                 systemImage: "slider.horizontal.3"
             ),
             Highlight(

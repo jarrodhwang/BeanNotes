@@ -9,6 +9,8 @@ import UIKit
 struct PenPaletteView: View {
     @ObservedObject var toolState: DrawingToolState
     var availableSize: CGSize = UIScreen.main.bounds.size
+    var zoomScale: CGFloat = 1
+    var strokeZoomBehavior: DrawingStrokeZoomBehavior = .pageWidth
 
     @State private var isCollapsed = false
     @State private var isShowingEraserModes = false
@@ -164,15 +166,30 @@ struct PenPaletteView: View {
 
             widthNudgeButton(direction: 1)
 
-            Text(activeWidthText)
-                .font(.caption2.weight(.semibold).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 38, alignment: .trailing)
+            ZStack(alignment: .trailing) {
+                Text(activeWidthText)
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .opacity(activeWidthReadout.showsEffectiveWidth ? 0 : 1)
+
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(activeWidthText)
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+
+                    Text("page \(activeWidthReadout.effectiveWidthText)")
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+                .opacity(activeWidthReadout.showsEffectiveWidth ? 1 : 0)
+                .accessibilityHidden(true)
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 58, height: 30, alignment: .trailing)
         }
         .frame(height: 30)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(toolState.activeColorTool.label) stroke width")
-        .accessibilityValue("\(activeWidthText) points")
+        .accessibilityValue(activeWidthReadout.accessibilityText)
     }
 
     private var strokeWidthModeMenu: some View {
@@ -223,7 +240,7 @@ struct PenPaletteView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(direction < 0 ? "Decrease stroke width" : "Increase stroke width")
-        .accessibilityValue("\(activeWidthText) points")
+        .accessibilityValue(activeWidthReadout.accessibilityText)
     }
 
     private var eraserModePicker: some View {
@@ -516,7 +533,15 @@ struct PenPaletteView: View {
     }
 
     private var activeWidthText: String {
-        widthLabel(for: toolState.activeStrokeWidth)
+        activeWidthReadout.storedWidthText
+    }
+
+    private var activeWidthReadout: DrawingStrokeWidthReadout {
+        toolState.strokeWidthReadout(
+            for: toolState.activeColorTool,
+            zoomScale: zoomScale,
+            zoomBehavior: strokeZoomBehavior
+        )
     }
 
     private func widthButtonDiameter(for width: CGFloat) -> CGFloat {
@@ -532,16 +557,7 @@ struct PenPaletteView: View {
     }
 
     private func widthLabel(for width: CGFloat) -> String {
-        if abs(width.rounded() - width) < 0.01 {
-            return "\(Int(width.rounded()))"
-        }
-
-        let halfStep = (width * 2).rounded() / 2
-        if abs(halfStep - width) < 0.01 {
-            return String(format: "%.1f", Double(width))
-        }
-
-        return String(format: "%.2f", Double(width))
+        DrawingStrokeWidthReadout.pointsText(for: width)
     }
 
     private func isLightSwatch(_ swatch: DrawingColorSwatch) -> Bool {
@@ -584,10 +600,10 @@ struct PenPaletteLayoutMetrics {
 
     static func estimatedPaletteSize(isCompact: Bool, showsInkControls: Bool) -> CGSize {
         if isCompact {
-            return CGSize(width: showsInkControls ? 404 : 212, height: showsInkControls ? 126 : 44)
+            return CGSize(width: showsInkControls ? 426 : 212, height: showsInkControls ? 126 : 44)
         }
 
-        return CGSize(width: showsInkControls ? 818 : 246, height: 44)
+        return CGSize(width: showsInkControls ? 842 : 246, height: 44)
     }
 
     static func clampedCommittedOffset(

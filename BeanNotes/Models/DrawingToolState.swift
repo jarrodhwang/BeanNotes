@@ -133,6 +133,56 @@ enum DrawingStrokeZoomBehavior: String, CaseIterable, Identifiable {
     }
 }
 
+struct DrawingStrokeWidthReadout: Equatable {
+    let storedWidth: CGFloat
+    let effectiveWidth: CGFloat
+    let zoomScale: CGFloat
+    let zoomBehavior: DrawingStrokeZoomBehavior
+
+    var showsEffectiveWidth: Bool {
+        zoomBehavior.adjustsForZoomScale
+            && zoomScale > 1.01
+            && abs(storedWidth - effectiveWidth) >= 0.05
+    }
+
+    var storedWidthText: String {
+        Self.pointsText(for: storedWidth)
+    }
+
+    var effectiveWidthText: String {
+        Self.pointsText(for: effectiveWidth)
+    }
+
+    var accessibilityText: String {
+        guard showsEffectiveWidth else {
+            return "\(storedWidthText) points"
+        }
+
+        return "Stored \(storedWidthText) points, page ink \(effectiveWidthText) points at \(zoomPercentageText) zoom"
+    }
+
+    private var zoomPercentageText: String {
+        guard zoomScale.isFinite, zoomScale > 0 else { return "100%" }
+        return "\(Int((zoomScale * 100).rounded()))%"
+    }
+
+    static func pointsText(for width: CGFloat) -> String {
+        guard width.isFinite else { return "0" }
+
+        if abs(width.rounded() - width) < 0.01 {
+            return "\(Int(width.rounded()))"
+        }
+
+        let halfStep = (width * 2).rounded() / 2
+        if abs(halfStep - width) < 0.01 {
+            return String(format: "%.1f", Double(width))
+        }
+
+        let rounded = (Double(width) * 100).rounded() / 100
+        return String(format: "%.2f", rounded)
+    }
+}
+
 enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
     case lightTouch
     case standard
@@ -576,6 +626,19 @@ final class DrawingToolState: ObservableObject {
         let detailScale = max(zoomScale.isFinite ? zoomScale : 1, 1)
         let calibration = Self.widthCalibration(for: tool, mode: widthMode)
         return calibration.bounded(baseWidth / detailScale)
+    }
+
+    func strokeWidthReadout(
+        for tool: DrawingTool,
+        zoomScale: CGFloat,
+        zoomBehavior: DrawingStrokeZoomBehavior
+    ) -> DrawingStrokeWidthReadout {
+        DrawingStrokeWidthReadout(
+            storedWidth: strokeWidth(for: tool),
+            effectiveWidth: effectiveStrokeWidth(for: tool, zoomScale: zoomScale, zoomBehavior: zoomBehavior),
+            zoomScale: zoomScale,
+            zoomBehavior: zoomBehavior
+        )
     }
 
     func widthPresets(for tool: DrawingTool? = nil) -> [CGFloat] {
