@@ -12,13 +12,15 @@ struct PenPaletteView: View {
     var zoomScale: CGFloat = 1
     var strokeZoomBehavior: DrawingStrokeZoomBehavior = .pageWidth
 
-    @State private var isCollapsed = false
+    @AppStorage(PenPaletteLayoutMetrics.isCollapsedStorageKey) private var isCollapsed = false
+    @AppStorage(PenPaletteLayoutMetrics.committedOffsetStorageKey) private var committedOffsetRaw = ""
     @State private var isShowingEraserModes = false
     @State private var committedOffset: CGSize = .zero
     @State private var dragOffset: CGSize = .zero
     @State private var selectedPaletteIndex = 0
     @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
+    @State private var hasLoadedCommittedOffset = false
 
     var body: some View {
         paletteBody
@@ -46,17 +48,17 @@ struct PenPaletteView: View {
             .onAppear {
                 selectionFeedback.prepare()
                 syncSelectedPaletteIndex()
-                committedOffset = clampedOffset(committedOffset)
+                clampCommittedOffset()
             }
             .onPreferenceChange(PenPaletteSizePreferenceKey.self) { size in
                 measuredPaletteSize = size
-                committedOffset = clampedOffset(committedOffset)
+                clampCommittedOffset()
             }
             .onChange(of: availableSize) { _, _ in
-                committedOffset = clampedOffset(committedOffset)
+                clampCommittedOffset()
             }
             .onChange(of: isCollapsed) { _, _ in
-                committedOffset = clampedOffset(committedOffset)
+                clampCommittedOffset(persisting: true)
             }
             .onChange(of: activePaletteSelectionSignature) { _, _ in
                 syncSelectedPaletteIndex()
@@ -377,8 +379,30 @@ struct PenPaletteView: View {
                     height: committedOffset.height + value.translation.height
                 )
                 committedOffset = clampedOffset(proposedOffset)
+                persistCommittedOffset()
                 dragOffset = .zero
             }
+    }
+
+    private func clampCommittedOffset(persisting: Bool = false) {
+        loadCommittedOffsetIfNeeded()
+        let clamped = clampedOffset(committedOffset)
+        guard clamped != committedOffset else { return }
+        committedOffset = clamped
+
+        if persisting {
+            persistCommittedOffset()
+        }
+    }
+
+    private func loadCommittedOffsetIfNeeded() {
+        guard !hasLoadedCommittedOffset else { return }
+        committedOffset = PenPaletteLayoutMetrics.decodedCommittedOffset(from: committedOffsetRaw) ?? .zero
+        hasLoadedCommittedOffset = true
+    }
+
+    private func persistCommittedOffset() {
+        committedOffsetRaw = PenPaletteLayoutMetrics.encodedCommittedOffset(committedOffset)
     }
 
     private func clampedOffset(_ proposedOffset: CGSize) -> CGSize {
@@ -644,6 +668,8 @@ struct PenPaletteView: View {
 }
 
 struct PenPaletteLayoutMetrics {
+    static let isCollapsedStorageKey = "penPalette.isCollapsed"
+    static let committedOffsetStorageKey = "penPalette.committedOffset"
     static let compactWidthThreshold: CGFloat = 1_180
     private static let minimumVisibleInset: CGFloat = 8
     private static let trailingInset: CGFloat = 16
@@ -695,6 +721,25 @@ struct PenPaletteLayoutMetrics {
             width: min(max(proposedOffset.width, minimumOffset.width), maximumOffset.width),
             height: min(max(proposedOffset.height, minimumOffset.height), maximumOffset.height)
         )
+    }
+
+    static func encodedCommittedOffset(_ offset: CGSize) -> String {
+        let width = offset.width.isFinite ? offset.width : 0
+        let height = offset.height.isFinite ? offset.height : 0
+        return "\(Double(width)),\(Double(height))"
+    }
+
+    static func decodedCommittedOffset(from rawValue: String) -> CGSize? {
+        let components = rawValue.split(separator: ",", omittingEmptySubsequences: false)
+        guard components.count == 2,
+              let width = Double(components[0]),
+              let height = Double(components[1]),
+              width.isFinite,
+              height.isFinite else {
+            return nil
+        }
+
+        return CGSize(width: width, height: height)
     }
 }
 

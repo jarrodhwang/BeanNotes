@@ -743,10 +743,10 @@ struct BeanNotesTests {
     }
 
     @Test func drawingZoomPresetsFormatAndClampDetailTargets() {
-        #expect(DrawingZoomPreset.allCases.map(\.label) == ["100%", "200%", "300%", "400%"])
+        #expect(DrawingZoomPreset.allCases.map(\.label) == ["100%", "200%", "300%", "400%", "600%"])
         #expect(DrawingZoomPreset.quickPresets(for: .balanced).map(\.label) == ["100%", "200%", "300%"])
         #expect(DrawingZoomPreset.quickPresets(for: .highResolution).map(\.label) == ["100%", "200%", "300%", "400%"])
-        #expect(DrawingZoomPreset.quickPresets(for: .ultraFine).map(\.label) == ["100%", "200%", "300%", "400%"])
+        #expect(DrawingZoomPreset.quickPresets(for: .ultraFine).map(\.label) == ["100%", "200%", "300%", "400%", "600%"])
         #expect(DrawingZoomLevel.percentageText(for: 1.245) == "125%")
         #expect(DrawingZoomLevel.percentageText(for: -1) == "0%")
         #expect(DrawingZoomLevel.clampedScale(0.5, minimum: 0.75, maximum: 3) == 0.75)
@@ -840,6 +840,19 @@ struct BeanNotesTests {
         #expect(dockOffset.height + farUpperLeft.height == 8)
         #expect(dockOffset.width + farLowerRight.width + paletteSize.width == availableSize.width - 16)
         #expect(dockOffset.height + farLowerRight.height + paletteSize.height == availableSize.height - 24)
+    }
+
+    @Test func penPaletteCommittedOffsetStorageRoundTripsFiniteValues() throws {
+        let offset = CGSize(width: 24.5, height: -12.25)
+        let decoded = try #require(PenPaletteLayoutMetrics.decodedCommittedOffset(
+            from: PenPaletteLayoutMetrics.encodedCommittedOffset(offset)
+        ))
+
+        #expect(abs(decoded.width - offset.width) < 0.001)
+        #expect(abs(decoded.height - offset.height) < 0.001)
+        #expect(PenPaletteLayoutMetrics.encodedCommittedOffset(CGSize(width: CGFloat.infinity, height: 3)) == "0.0,3.0")
+        #expect(PenPaletteLayoutMetrics.decodedCommittedOffset(from: "bad") == nil)
+        #expect(PenPaletteLayoutMetrics.decodedCommittedOffset(from: "1,nan") == nil)
     }
 
     @Test func attachmentImageRasterBudgetBalancesSharpnessAndMemory() {

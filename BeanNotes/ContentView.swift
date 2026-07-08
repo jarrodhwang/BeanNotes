@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 17
+    static let currentWelcomeContentVersion = 18
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,14 +162,14 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Light Touch", systemImage: "pencil.tip")
-                featureBadge("Ink HUD", systemImage: "scope")
+                featureBadge("Saved Palette", systemImage: "paintpalette")
+                featureBadge("600% Zoom", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Light Touch", systemImage: "pencil.tip")
-                featureBadge("Ink HUD", systemImage: "scope")
+                featureBadge("Saved Palette", systemImage: "paintpalette")
+                featureBadge("600% Zoom", systemImage: "scope")
             }
         }
         .font(.callout.weight(.semibold))
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The editor now keeps palette, zoom, and page-ink calibration visible while PencilKit strokes stay vector-backed."
+            "The drawing desk now remembers your palette placement and exposes Ultra Fine zoom for detailed vector handwriting."
         }
     }
 
@@ -228,13 +228,13 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Synced palette controls",
-                detail: "Switch Light Touch, Standard, or Precision while swatches reopen on the active ink color.",
+                title: "Palette remembers its spot",
+                detail: "Move or collapse the floating palette once, and it reopens in the same safe place next time.",
                 systemImage: "paintpalette"
             ),
             Highlight(
-                title: "Live ink calibration",
-                detail: "When zoomed in, a compact strip shows the actual page ink width before you write.",
+                title: "600% Ultra Fine zoom",
+                detail: "Ultra Fine detail now includes a one-tap 600% zoom target for careful handwriting and diagrams.",
                 systemImage: "scope"
             ),
             Highlight(

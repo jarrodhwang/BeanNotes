@@ -10,6 +10,7 @@ enum DrawingZoomPreset: CaseIterable, Identifiable {
     case detail
     case closeDetail
     case fineDetail
+    case ultraFineDetail
 
     var id: String { label }
 
@@ -23,6 +24,8 @@ enum DrawingZoomPreset: CaseIterable, Identifiable {
             3
         case .fineDetail:
             4
+        case .ultraFineDetail:
+            6
         }
     }
 
@@ -40,6 +43,8 @@ enum DrawingZoomPreset: CaseIterable, Identifiable {
             "Set zoom to 300 percent"
         case .fineDetail:
             "Set zoom to 400 percent"
+        case .ultraFineDetail:
+            "Set zoom to 600 percent"
         }
     }
 
@@ -53,6 +58,8 @@ enum DrawingZoomPreset: CaseIterable, Identifiable {
             "scope"
         case .fineDetail:
             "viewfinder"
+        case .ultraFineDetail:
+            "scope"
         }
     }
 
