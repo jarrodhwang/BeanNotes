@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 14
+    static let currentWelcomeContentVersion = 15
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -163,13 +163,13 @@ private struct WelcomeToBeanNotesView: View {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Light Touch", systemImage: "pencil.tip")
-                featureBadge("Detail Zoom", systemImage: "plus.magnifyingglass")
+                featureBadge("Zoom Ink", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Light Touch", systemImage: "pencil.tip")
-                featureBadge("Zoom Detail", systemImage: "magnifyingglass")
+                featureBadge("Zoom Ink", systemImage: "scope")
             }
         }
         .font(.callout.weight(.semibold))
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The editor now starts with lighter handwriting widths, a stroke-mode menu, and the same high-resolution vector ink while zooming."
+            "The editor now adds zoom-calibrated ink for finer detail writing while keeping PencilKit strokes vector-backed."
         }
     }
 
@@ -228,14 +228,14 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Light Touch widths",
-                detail: "Fresh tools use smaller handwriting defaults, finer nudges, and quick presets tuned for pencil notes.",
-                systemImage: "pencil.tip"
+                title: "Zoom-calibrated ink",
+                detail: "New strokes can become finer on the page as you zoom in for small handwriting and diagrams.",
+                systemImage: "scope"
             ),
             Highlight(
-                title: "Stroke-mode menu",
-                detail: "Switch between Light Touch, Standard, and Precision from the floating palette without leaving the page.",
-                systemImage: "lineweight"
+                title: "Ink width menu",
+                detail: "Switch between Zoom Calibrated and Page Width from the zoom menu when a note needs classic sizing.",
+                systemImage: "slider.horizontal.3"
             ),
             Highlight(
                 title: "Vector ink stays editable",

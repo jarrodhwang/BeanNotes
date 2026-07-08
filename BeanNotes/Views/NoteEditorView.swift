@@ -20,6 +20,7 @@ struct NoteEditorView: View {
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.defaultQuality.rawValue
+    @AppStorage(DrawingStrokeZoomBehavior.storageKey) private var strokeZoomBehaviorRaw = DrawingStrokeZoomBehavior.defaultBehavior.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
@@ -93,6 +94,10 @@ struct NoteEditorView: View {
 
     private var drawingRenderQuality: DrawingRenderQuality {
         DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? DrawingRenderQuality.defaultQuality
+    }
+
+    private var strokeZoomBehavior: DrawingStrokeZoomBehavior {
+        DrawingStrokeZoomBehavior(rawValue: strokeZoomBehaviorRaw) ?? DrawingStrokeZoomBehavior.defaultBehavior
     }
 
     private var pageLayoutMode: NoteEditorPageLayoutMode {
@@ -278,6 +283,7 @@ struct NoteEditorView: View {
                         paletteMode: penPaletteMode,
                         inputMode: drawingInputMode,
                         renderQuality: drawingRenderQuality,
+                        strokeZoomBehavior: strokeZoomBehavior,
                         pageFlowMode: pageFlowMode,
                         doubleTapAction: doubleTapAction,
                         saveNowSignal: saveNowSignal,
@@ -595,7 +601,7 @@ struct NoteEditorView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "Zoom \(currentZoomText), \(drawingRenderQuality.label) drawing detail, \(drawingInputMode.label) touch mode"
+            "Zoom \(currentZoomText), \(drawingRenderQuality.label) drawing detail, \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink"
         )
     }
 
@@ -605,6 +611,7 @@ struct NoteEditorView: View {
                 Label("Current \(currentZoomText)", systemImage: "viewfinder")
                 Label("Detail \(drawingRenderQuality.label)", systemImage: drawingRenderQuality.systemImage)
                 Label("Touch \(drawingInputMode.label)", systemImage: drawingInputMode.systemImage)
+                Label("Ink \(strokeZoomBehavior.label)", systemImage: strokeZoomBehavior.systemImage)
             }
 
             Section {
@@ -655,6 +662,24 @@ struct NoteEditorView: View {
                 }
             }
 
+            Section("Ink Width") {
+                if penPaletteMode == .custom {
+                    ForEach(DrawingStrokeZoomBehavior.allCases) { behavior in
+                        Button {
+                            setStrokeZoomBehavior(behavior)
+                        } label: {
+                            Label(
+                                behavior.label,
+                                systemImage: strokeZoomBehavior == behavior ? "checkmark" : behavior.systemImage
+                            )
+                        }
+                        .accessibilityHint(behavior.description)
+                    }
+                } else {
+                    Label("Apple Pencil picker controls ink width", systemImage: "pencil.tip")
+                }
+            }
+
             Section("Quick Zoom") {
                 ForEach(DrawingZoomPreset.quickPresets(for: drawingRenderQuality)) { preset in
                     Button {
@@ -683,8 +708,8 @@ struct NoteEditorView: View {
             .frame(height: 34)
             .padding(.horizontal, 3)
         }
-        .accessibilityLabel("Zoom \(currentZoomText), \(drawingInputMode.label) touch mode")
-        .accessibilityHint("Zoom, fit the selected page, change drawing detail, or change touch mode")
+        .accessibilityLabel("Zoom \(currentZoomText), \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink")
+        .accessibilityHint("Zoom, fit the selected page, change drawing detail, touch mode, or ink width")
     }
 
     private var currentZoomText: String {
@@ -791,6 +816,10 @@ struct NoteEditorView: View {
 
     private func setDrawingRenderQuality(_ quality: DrawingRenderQuality) {
         drawingRenderQualityRaw = quality.rawValue
+    }
+
+    private func setStrokeZoomBehavior(_ behavior: DrawingStrokeZoomBehavior) {
+        strokeZoomBehaviorRaw = behavior.rawValue
     }
 
     private func setDrawingInputMode(_ mode: DrawingInputMode) {

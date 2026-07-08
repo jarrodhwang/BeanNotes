@@ -41,6 +41,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var paletteMode: PenPaletteMode
     var inputMode: DrawingInputMode
     var renderQuality: DrawingRenderQuality
+    var strokeZoomBehavior: DrawingStrokeZoomBehavior
     var pageFlowMode: NoteEditorPageFlowMode
     var doubleTapAction: PencilDoubleTapAction
     var saveNowSignal: Int
@@ -1700,6 +1701,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard shouldPublish else { return }
 
             lastPublishedZoomScale = scale
+            if parent.strokeZoomBehavior.adjustsForZoomScale {
+                applyCustomToolIfNeeded()
+            }
+
             let zoomScaleChanged = parent.zoomScaleChanged
             dispatchToSwiftUI {
                 zoomScaleChanged(scale)
@@ -1839,8 +1844,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func applyToolShortcutSelection() {
-            let signature = parent.toolState.pkToolSignature
-            let tool = parent.toolState.makePKTool()
+            let signature = currentCustomToolSignature
+            let tool = currentCustomTool
 
             if let activeCanvasView {
                 applyCurrentCustomTool(tool, signature: signature, to: activeCanvasView, force: true)
@@ -1856,16 +1861,16 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func applyCurrentCustomTool(to canvasView: PKCanvasView) {
             guard parent.paletteMode == .custom else { return }
-            let signature = parent.toolState.pkToolSignature
+            let signature = currentCustomToolSignature
             let id = ObjectIdentifier(canvasView)
             guard canvasToolSignatures[id] != signature else { return }
-            canvasView.tool = parent.toolState.makePKTool()
+            canvasView.tool = currentCustomTool
             canvasToolSignatures[id] = signature
         }
 
         private func applyCurrentCustomToolToVisibleCanvases() {
-            let signature = parent.toolState.pkToolSignature
-            let tool = parent.toolState.makePKTool()
+            let signature = currentCustomToolSignature
+            let tool = currentCustomTool
             let canvasViews = containerView?.canvasPagePairs.map { $0.1 } ?? []
 
             if canvasViews.isEmpty {
@@ -1890,6 +1895,26 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard force || canvasToolSignatures[id] != signature else { return }
             canvasView.tool = tool
             canvasToolSignatures[id] = signature
+        }
+
+        private var currentCustomToolZoomScale: CGFloat {
+            let scale = containerView?.scrollView.zoomScale ?? lastPublishedZoomScale ?? 1
+            guard scale.isFinite, scale > 0 else { return 1 }
+            return scale
+        }
+
+        private var currentCustomToolSignature: String {
+            parent.toolState.pkToolSignature(
+                zoomScale: currentCustomToolZoomScale,
+                zoomBehavior: parent.strokeZoomBehavior
+            )
+        }
+
+        private var currentCustomTool: PKTool {
+            parent.toolState.makePKTool(
+                zoomScale: currentCustomToolZoomScale,
+                zoomBehavior: parent.strokeZoomBehavior
+            )
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {

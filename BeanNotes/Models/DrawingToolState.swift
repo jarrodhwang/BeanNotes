@@ -70,13 +70,16 @@ struct DrawingStrokeWidthCalibration: Equatable {
     }
 
     func clamped(_ width: CGFloat) -> CGFloat {
-        guard width.isFinite else { return minimumWidth }
-
-        let bounded = min(max(width, minimumWidth), maximumWidth)
+        let bounded = bounded(width)
         guard step > 0 else { return bounded }
 
         let stepped = (bounded / step).rounded() * step
         return min(max(stepped, minimumWidth), maximumWidth)
+    }
+
+    func bounded(_ width: CGFloat) -> CGFloat {
+        guard width.isFinite else { return minimumWidth }
+        return min(max(width, minimumWidth), maximumWidth)
     }
 
     func withStep(_ step: CGFloat) -> DrawingStrokeWidthCalibration {
@@ -86,6 +89,47 @@ struct DrawingStrokeWidthCalibration: Equatable {
             step: step,
             presets: presets
         )
+    }
+}
+
+enum DrawingStrokeZoomBehavior: String, CaseIterable, Identifiable {
+    static let storageKey = "drawingStrokeZoomBehavior"
+    static let defaultBehavior: DrawingStrokeZoomBehavior = .zoomCalibrated
+
+    case pageWidth
+    case zoomCalibrated
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .pageWidth:
+            "Page Width"
+        case .zoomCalibrated:
+            "Zoom Calibrated"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .pageWidth:
+            "doc.text"
+        case .zoomCalibrated:
+            "scope"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .pageWidth:
+            "Keep the same stored page stroke width at every zoom level."
+        case .zoomCalibrated:
+            "Make new ink finer on the page as you zoom in for detail writing."
+        }
+    }
+
+    var adjustsForZoomScale: Bool {
+        self == .zoomCalibrated
     }
 }
 
@@ -521,6 +565,19 @@ final class DrawingToolState: ObservableObject {
         }
     }
 
+    func effectiveStrokeWidth(
+        for tool: DrawingTool,
+        zoomScale: CGFloat,
+        zoomBehavior: DrawingStrokeZoomBehavior
+    ) -> CGFloat {
+        let baseWidth = strokeWidth(for: tool)
+        guard zoomBehavior.adjustsForZoomScale else { return baseWidth }
+
+        let detailScale = max(zoomScale.isFinite ? zoomScale : 1, 1)
+        let calibration = Self.widthCalibration(for: tool, mode: widthMode)
+        return calibration.bounded(baseWidth / detailScale)
+    }
+
     func widthPresets(for tool: DrawingTool? = nil) -> [CGFloat] {
         Self.widthCalibration(for: tool ?? activeColorTool, mode: widthMode).presets
     }
@@ -559,13 +616,23 @@ final class DrawingToolState: ObservableObject {
     }
 
     var pkToolSignature: String {
+        pkToolSignature(zoomScale: 1, zoomBehavior: .pageWidth)
+    }
+
+    func pkToolSignature(
+        zoomScale: CGFloat,
+        zoomBehavior: DrawingStrokeZoomBehavior
+    ) -> String {
         switch selectedTool {
         case .pen:
-            return "pen:\(penColor.hexRGB):\(Int(strokeWidth(for: .pen) * 10))"
+            let width = effectiveStrokeWidth(for: .pen, zoomScale: zoomScale, zoomBehavior: zoomBehavior)
+            return "pen:\(penColor.hexRGB):\(widthSignatureValue(width)):\(zoomBehavior.rawValue)"
         case .pencil:
-            return "pencil:\(pencilColor.hexRGB):\(Int(strokeWidth(for: .pencil) * 10))"
+            let width = effectiveStrokeWidth(for: .pencil, zoomScale: zoomScale, zoomBehavior: zoomBehavior)
+            return "pencil:\(pencilColor.hexRGB):\(widthSignatureValue(width)):\(zoomBehavior.rawValue)"
         case .highlighter:
-            return "highlighter:\(highlighterColor.hexRGB):\(Int(strokeWidth(for: .highlighter) * 10))"
+            let width = effectiveStrokeWidth(for: .highlighter, zoomScale: zoomScale, zoomBehavior: zoomBehavior)
+            return "highlighter:\(highlighterColor.hexRGB):\(widthSignatureValue(width)):\(zoomBehavior.rawValue)"
         case .eraser:
             return "eraser:\(eraserMode.rawValue)"
         case .lasso:
@@ -697,17 +764,32 @@ final class DrawingToolState: ObservableObject {
         }
     }
 
-    func makePKTool() -> PKTool {
+    func makePKTool(
+        zoomScale: CGFloat = 1,
+        zoomBehavior: DrawingStrokeZoomBehavior = .pageWidth
+    ) -> PKTool {
         switch selectedTool {
         case .pen:
-            PKInkingTool(activeInkType ?? .pen, color: UIColor(penColor), width: strokeWidth(for: .pen))
+            PKInkingTool(
+                activeInkType ?? .pen,
+                color: UIColor(penColor),
+                width: effectiveStrokeWidth(for: .pen, zoomScale: zoomScale, zoomBehavior: zoomBehavior)
+            )
         case .pencil:
-            PKInkingTool(activeInkType ?? .pencil, color: UIColor(pencilColor), width: strokeWidth(for: .pencil))
+            PKInkingTool(
+                activeInkType ?? .pencil,
+                color: UIColor(pencilColor),
+                width: effectiveStrokeWidth(for: .pencil, zoomScale: zoomScale, zoomBehavior: zoomBehavior)
+            )
         case .highlighter:
             PKInkingTool(
                 activeInkType ?? .marker,
                 color: UIColor(highlighterColor).withAlphaComponent(0.5),
-                width: strokeWidth(for: .highlighter)
+                width: effectiveStrokeWidth(
+                    for: .highlighter,
+                    zoomScale: zoomScale,
+                    zoomBehavior: zoomBehavior
+                )
             )
         case .eraser:
             PKEraserTool(eraserMode.eraserType)
@@ -731,6 +813,10 @@ final class DrawingToolState: ObservableObject {
         }
         let nextIndex = tools.index(after: index)
         select(nextIndex == tools.endIndex ? tools[0] : tools[nextIndex])
+    }
+
+    private func widthSignatureValue(_ width: CGFloat) -> Int {
+        Int((width * 100).rounded())
     }
 
     private static func storedTool(_ defaults: UserDefaults, key: String, fallback: DrawingTool) -> DrawingTool {

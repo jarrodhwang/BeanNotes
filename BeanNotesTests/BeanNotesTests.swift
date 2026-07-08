@@ -920,7 +920,7 @@ struct BeanNotesTests {
         #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 0)
     }
 
-    @Test func attachmentImageContainerDefersAndReleasesOffscreenRasters() async throws {
+    @Test @MainActor func attachmentImageContainerDefersAndReleasesOffscreenRasters() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesAttachmentRaster-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -970,7 +970,7 @@ struct BeanNotesTests {
         #expect(!imageContainer.isRasterImageLoaded)
     }
 
-    @Test func attachmentImageReleaseKeepsDecodedCacheUnlessEvicting() async throws {
+    @Test @MainActor func attachmentImageReleaseKeepsDecodedCacheUnlessEvicting() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesAttachmentImageCache-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -1129,6 +1129,7 @@ struct BeanNotesTests {
             paletteMode: .custom,
             inputMode: .pencilOnly,
             renderQuality: .balanced,
+            strokeZoomBehavior: .pageWidth,
             pageFlowMode: .continuous,
             doubleTapAction: .switchToEraser,
             saveNowSignal: 0,
@@ -1153,7 +1154,7 @@ struct BeanNotesTests {
         )
     }
 
-    private func waitForRasterImage(
+    @MainActor private func waitForRasterImage(
         in imageContainer: DrawingCanvasView.AttachmentImageContainerView,
         timeoutNanoseconds: UInt64 = 5_000_000_000
     ) async throws {
@@ -1347,6 +1348,54 @@ struct BeanNotesTests {
         #expect(restoredSession.widthMode == .precision)
         #expect(abs(restoredSession.penWidth - 2.2) < 0.001)
         #expect(abs(restoredSession.strokeWidth(for: .pen) - 2.2) < 0.001)
+    }
+
+    @Test @MainActor func zoomCalibratedInkScalesNewStrokeWidthWithoutChangingStoredWidth() throws {
+        let suiteName = "BeanNotesZoomCalibratedInk-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let toolState = DrawingToolState(defaults: defaults)
+        #expect(DrawingStrokeZoomBehavior.defaultBehavior == .zoomCalibrated)
+        #expect(DrawingStrokeZoomBehavior.allCases.map(\.label) == ["Page Width", "Zoom Calibrated"])
+
+        toolState.select(.pen)
+        toolState.applyActiveWidth(2.5)
+
+        #expect(toolState.strokeWidth(for: .pen) == 2.5)
+        #expect(toolState.effectiveStrokeWidth(
+            for: .pen,
+            zoomScale: 4,
+            zoomBehavior: .pageWidth
+        ) == 2.5)
+        #expect(abs(toolState.effectiveStrokeWidth(
+            for: .pen,
+            zoomScale: 4,
+            zoomBehavior: .zoomCalibrated
+        ) - 0.625) < 0.001)
+        #expect(toolState.penWidth == 2.5)
+
+        let pageWidthTool = try #require(toolState.makePKTool(
+            zoomScale: 4,
+            zoomBehavior: .pageWidth
+        ) as? PKInkingTool)
+        let zoomCalibratedTool = try #require(toolState.makePKTool(
+            zoomScale: 4,
+            zoomBehavior: .zoomCalibrated
+        ) as? PKInkingTool)
+
+        #expect(abs(pageWidthTool.width - 2.5) < 0.001)
+        #expect(zoomCalibratedTool.width < pageWidthTool.width)
+        #expect(zoomCalibratedTool.width > 0)
+        #expect(toolState.pkToolSignature(
+            zoomScale: 1,
+            zoomBehavior: .zoomCalibrated
+        ) != toolState.pkToolSignature(
+            zoomScale: 4,
+            zoomBehavior: .zoomCalibrated
+        ))
     }
 
     @Test @MainActor func customPaletteRestoresSelectedColorsAndEraserMode() throws {
