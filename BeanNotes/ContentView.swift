@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 18
+    static let currentWelcomeContentVersion = 19
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,13 +162,13 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Saved Palette", systemImage: "paintpalette")
+                featureBadge("Sub-Point Ink", systemImage: "pencil.tip")
                 featureBadge("600% Zoom", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Saved Palette", systemImage: "paintpalette")
+                featureBadge("Sub-Point Ink", systemImage: "pencil.tip")
                 featureBadge("600% Zoom", systemImage: "scope")
             }
         }
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The drawing desk now remembers your palette placement and exposes Ultra Fine zoom for detailed vector handwriting."
+            "Light Touch ink now reaches finer sub-point widths for careful 600% zoom handwriting while keeping notes vector-editable."
         }
     }
 
@@ -228,19 +228,19 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Palette remembers its spot",
-                detail: "Move or collapse the floating palette once, and it reopens in the same safe place next time.",
-                systemImage: "paintpalette"
+                title: "Sub-point Light Touch ink",
+                detail: "Pen strokes can now calibrate below 0.5 pt for lighter detail writing at high zoom.",
+                systemImage: "pencil.tip"
             ),
             Highlight(
-                title: "600% Ultra Fine zoom",
-                detail: "Ultra Fine detail now includes a one-tap 600% zoom target for careful handwriting and diagrams.",
+                title: "600% detail stays editable",
+                detail: "Zoom-calibrated PencilKit strokes remain vector-backed instead of flattening into a bitmap.",
                 systemImage: "scope"
             ),
             Highlight(
-                title: "Vector ink stays editable",
-                detail: "PencilKit handwriting remains vector-backed while backgrounds and attachments refine for the zoom level.",
-                systemImage: "scribble"
+                title: "Lighter palette presets",
+                detail: "The compact palette starts with finer Light Touch presets for pen, pencil, and highlighter.",
+                systemImage: "paintpalette"
             )
         ]
     }

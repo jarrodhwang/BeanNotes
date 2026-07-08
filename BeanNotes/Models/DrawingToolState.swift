@@ -237,7 +237,7 @@ enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .lightTouch:
-            "Smaller presets and finer nudges for light handwriting."
+            "Sub-point detail ink, smaller presets, and finer nudges for light handwriting."
         case .standard:
             "General-purpose stroke widths for notes, diagrams, and markup."
         case .precision:
@@ -992,24 +992,24 @@ final class DrawingToolState: ObservableObject {
         switch tool {
         case .pencil:
             DrawingStrokeWidthCalibration(
-                minimumWidth: 1,
-                maximumWidth: 12,
-                step: 0.25,
-                presets: [1.5, 2.5, 3.5, 5]
-            )
-        case .highlighter:
-            DrawingStrokeWidthCalibration(
-                minimumWidth: 4,
-                maximumWidth: 28,
-                step: 0.5,
-                presets: [6, 10, 14, 20]
-            )
-        case .pen, .eraser, .lasso:
-            DrawingStrokeWidthCalibration(
                 minimumWidth: 0.5,
                 maximumWidth: 12,
                 step: 0.25,
                 presets: [1, 1.5, 2.5, 4]
+            )
+        case .highlighter:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 3,
+                maximumWidth: 28,
+                step: 0.5,
+                presets: [4, 6, 10, 14]
+            )
+        case .pen, .eraser, .lasso:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 0.25,
+                maximumWidth: 12,
+                step: 0.25,
+                presets: [0.5, 1, 1.5, 2.5]
             )
         }
     }
@@ -1034,10 +1034,21 @@ final class DrawingToolState: ObservableObject {
     }
 
     private static func boundedWidth(_ width: CGFloat, for tool: DrawingTool) -> CGFloat {
-        guard width.isFinite else { return widthCalibration(for: tool).minimumWidth }
+        let bounds = storageWidthBounds(for: tool)
+        guard width.isFinite else { return bounds.lowerBound }
 
-        let calibration = widthCalibration(for: tool)
-        return min(max(width, calibration.minimumWidth), calibration.maximumWidth)
+        return min(max(width, bounds.lowerBound), bounds.upperBound)
+    }
+
+    private static func storageWidthBounds(for tool: DrawingTool) -> ClosedRange<CGFloat> {
+        switch tool {
+        case .pencil:
+            0.5...widthCalibration(for: .pencil).maximumWidth
+        case .highlighter:
+            3...widthCalibration(for: .highlighter).maximumWidth
+        case .pen, .eraser, .lasso:
+            0.25...widthCalibration(for: .pen).maximumWidth
+        }
     }
 
     private static func defaultStrokeWidth(for tool: DrawingTool) -> CGFloat {

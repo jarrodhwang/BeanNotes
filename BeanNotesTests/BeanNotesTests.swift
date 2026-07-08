@@ -1471,7 +1471,7 @@ struct BeanNotesTests {
 
         firstSession.select(.pen)
         #expect(firstSession.activeWidthStep == 0.25)
-        #expect(firstSession.widthPresets(for: .pen) == [1, 1.5, 2.5, 4])
+        #expect(firstSession.widthPresets(for: .pen) == [0.5, 1, 1.5, 2.5])
 
         firstSession.applyActiveWidth(2.26)
         #expect(firstSession.penWidth == 2.25)
@@ -1483,13 +1483,17 @@ struct BeanNotesTests {
         #expect(firstSession.penWidth == 12)
         #expect(firstSession.strokeWidth(for: .pen) == 12)
 
+        firstSession.applyActiveWidth(0.1)
+        #expect(firstSession.penWidth == 0.25)
+        #expect(firstSession.strokeWidth(for: .pen) == 0.25)
+
         firstSession.select(.highlighter)
         #expect(firstSession.activeWidthStep == 0.5)
-        #expect(firstSession.widthPresets(for: .highlighter) == [6, 10, 14, 20])
+        #expect(firstSession.widthPresets(for: .highlighter) == [4, 6, 10, 14])
 
         let restoredSession = DrawingToolState(defaults: defaults)
         #expect(restoredSession.widthMode == .lightTouch)
-        #expect(restoredSession.penWidth == 12)
+        #expect(restoredSession.penWidth == 0.25)
     }
 
     @Test @MainActor func strokeWidthModeSwitchPreservesStoredToolWidths() throws {
@@ -1575,6 +1579,11 @@ struct BeanNotesTests {
             zoomScale: 4,
             zoomBehavior: .zoomCalibrated
         ) - 0.625) < 0.001)
+        #expect(abs(toolState.effectiveStrokeWidth(
+            for: .pen,
+            zoomScale: 6,
+            zoomBehavior: .zoomCalibrated
+        ) - 0.416_666) < 0.001)
         #expect(toolState.penWidth == 2.5)
 
         let readout = toolState.strokeWidthReadout(
@@ -1611,6 +1620,7 @@ struct BeanNotesTests {
     @Test func drawingStrokeWidthReadoutFormatsCommonPointSizes() {
         #expect(DrawingStrokeWidthReadout.pointsText(for: 1) == "1")
         #expect(DrawingStrokeWidthReadout.pointsText(for: 1.5) == "1.5")
+        #expect(DrawingStrokeWidthReadout.pointsText(for: 0.25) == "0.25")
         #expect(DrawingStrokeWidthReadout.pointsText(for: 0.625) == "0.63")
 
         let pageWidthReadout = DrawingStrokeWidthReadout(
