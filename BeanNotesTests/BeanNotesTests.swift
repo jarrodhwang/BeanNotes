@@ -1154,6 +1154,61 @@ struct BeanNotesTests {
         )
     }
 
+    private func writeMinimalPDF(
+        to url: URL,
+        mediaBox: CGRect,
+        rotationAngle: Int
+    ) throws {
+        let stream = "BT /F1 24 Tf 72 720 Td (Rotated Page) Tj ET\n"
+        let mediaBoxText = [
+            mediaBox.minX,
+            mediaBox.minY,
+            mediaBox.maxX,
+            mediaBox.maxY
+        ]
+            .map { String(format: "%.0f", $0) }
+            .joined(separator: " ")
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            """
+            << /Type /Page /Parent 2 0 R /MediaBox [\(mediaBoxText)] /Rotate \(rotationAngle) /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+            """,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            """
+            << /Length \(stream.utf8.count) >>
+            stream
+            \(stream)endstream
+            """
+        ]
+
+        var pdf = "%PDF-1.4\n"
+        var offsets: [Int] = []
+
+        for (index, object) in objects.enumerated() {
+            offsets.append(pdf.utf8.count)
+            pdf += "\(index + 1) 0 obj\n\(object)\nendobj\n"
+        }
+
+        let xrefOffset = pdf.utf8.count
+        pdf += "xref\n0 \(objects.count + 1)\n"
+        pdf += "0000000000 65535 f \n"
+
+        for offset in offsets {
+            pdf += String(format: "%010d 00000 n \n", offset)
+        }
+
+        pdf += """
+        trailer
+        << /Size \(objects.count + 1) /Root 1 0 R >>
+        startxref
+        \(xrefOffset)
+        %%EOF
+        """
+
+        try Data(pdf.utf8).write(to: url, options: [.atomic])
+    }
+
     @MainActor private func waitForRasterImage(
         in imageContainer: DrawingCanvasView.AttachmentImageContainerView,
         timeoutNanoseconds: UInt64 = 5_000_000_000
@@ -1639,6 +1694,48 @@ struct BeanNotesTests {
 
         let lockedImage = try #require(imported.pages.first?.lockedImageAttachments.first)
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: lockedImage.storedFileName).path))
+    }
+
+    @Test @MainActor func rotatedPDFImportUsesDisplayedPageAspect() async throws {
+        let context = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesRotatedPDFImport-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let thumbnailService = ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: thumbnailService
+        )
+        try storage.prepareDirectories()
+
+        let pdfURL = rootURL.appendingPathComponent("Landscape-Rotated.pdf")
+        try writeMinimalPDF(
+            to: pdfURL,
+            mediaBox: CGRect(x: 0, y: 0, width: 612, height: 792),
+            rotationAngle: 90
+        )
+
+        let folder = NotebookFolder(name: "Class")
+        context.insert(folder)
+        try context.save()
+        let imported = try await service.importDocumentAsNote(from: pdfURL, into: folder)
+        try context.save()
+
+        let page = try #require(imported.pages.first)
+        let lockedImage = try #require(page.lockedImageAttachments.first)
+        let imageURL = storage.url(forRelativePath: lockedImage.storedFileName)
+        let importedPageImage = try #require(UIImage(contentsOfFile: imageURL.path))
+
+        #expect(page.width > page.height)
+        #expect(lockedImage.width == page.width)
+        #expect(lockedImage.height == page.height)
+        #expect(importedPageImage.size.width > importedPageImage.size.height)
     }
 
     @Test @MainActor func pdfPreviewDismantleCancelsLoadAndClearsDocument() async throws {

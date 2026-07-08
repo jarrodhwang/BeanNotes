@@ -1270,7 +1270,7 @@ struct ImportExportService {
                 }
 
                 guard let pdfPage = document.page(at: index + 1) else { continue }
-                let pageSize = normalizedPDFPageSize(for: pdfPage.getBoxRect(.mediaBox).size)
+                let pageSize = normalizedPDFPageSize(for: displayedPDFPageSize(for: pdfPage))
                 let storedImage = try autoreleasepool { () throws -> StoredFile in
                     try Task.checkCancellation()
                     guard let imageData = renderPDFPageJPEGData(pdfPage, size: pageSize, compressionQuality: 0.82) else {
@@ -1562,6 +1562,17 @@ struct ImportExportService {
             width: (width * scale).rounded(),
             height: (height * scale).rounded()
         )
+    }
+
+    nonisolated private static func displayedPDFPageSize(for page: CGPDFPage) -> CGSize {
+        let mediaBoxSize = page.getBoxRect(.mediaBox).size
+        let rotation = ((page.rotationAngle % 360) + 360) % 360
+
+        if rotation == 90 || rotation == 270 {
+            return CGSize(width: mediaBoxSize.height, height: mediaBoxSize.width)
+        }
+
+        return mediaBoxSize
     }
 
     nonisolated private static func normalizedImagePageSize(for sourceSize: CGSize) -> CGSize {
