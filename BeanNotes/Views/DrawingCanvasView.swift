@@ -98,6 +98,17 @@ struct DrawingCanvasView: UIViewRepresentable {
         threeFingerTap.cancelsTouchesInView = false
         containerView.addGestureRecognizer(threeFingerTap)
 
+        let doubleTapZoom = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleFingerDoubleTap(_:))
+        )
+        doubleTapZoom.numberOfTouchesRequired = 1
+        doubleTapZoom.numberOfTapsRequired = 2
+        doubleTapZoom.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        doubleTapZoom.delegate = context.coordinator
+        doubleTapZoom.cancelsTouchesInView = false
+        containerView.addGestureRecognizer(doubleTapZoom)
+
         if let pinchGesture = containerView.scrollView.pinchGestureRecognizer {
             twoFingerTap.require(toFail: pinchGesture)
             threeFingerTap.require(toFail: pinchGesture)
@@ -393,44 +404,61 @@ struct DrawingCanvasView: UIViewRepresentable {
             setZoomScalePreservingViewportCenter(targetScale, animated: animated)
         }
 
+        func toggleDetailZoom(at contentPoint: CGPoint, animated: Bool) {
+            guard scrollView.bounds != .zero, documentSize != .zero else { return }
+
+            updateZoomScalesIfNeeded()
+
+            let targetScale = DrawingZoomLevel.doubleTapTargetScale(
+                current: scrollView.zoomScale,
+                fitScale: lastFitScale,
+                minimum: scrollView.minimumZoomScale,
+                maximum: scrollView.maximumZoomScale
+            )
+            zoom(to: targetScale, centeredAt: contentPoint, animated: animated)
+        }
+
         private func setZoomScalePreservingViewportCenter(_ targetScale: CGFloat, animated: Bool) {
             let currentScale = max(scrollView.zoomScale, 0.01)
             guard abs(targetScale - currentScale) > 0.001 else { return }
 
-            let viewportCenter = CGPoint(
-                x: scrollView.contentOffset.x + scrollView.bounds.midX,
-                y: scrollView.contentOffset.y + scrollView.bounds.midY
-            )
-            let contentCenter = CGPoint(
-                x: viewportCenter.x / currentScale,
-                y: viewportCenter.y / currentScale
-            )
+            let viewportCenter = CGPoint(x: scrollView.bounds.midX, y: scrollView.bounds.midY)
+            let contentCenter = contentView.convert(viewportCenter, from: scrollView)
+            zoom(to: targetScale, centeredAt: contentCenter, animated: animated)
+        }
 
-            let applyZoom = {
-                self.scrollView.setZoomScale(targetScale, animated: false)
-                self.centerDocument()
+        private func zoom(to targetScale: CGFloat, centeredAt contentPoint: CGPoint, animated: Bool) {
+            guard targetScale.isFinite, targetScale > 0, documentSize != .zero else { return }
 
-                let targetOffset = CGPoint(
-                    x: contentCenter.x * targetScale - self.scrollView.bounds.width / 2,
-                    y: contentCenter.y * targetScale - self.scrollView.bounds.height / 2
-                )
-                self.scrollView.setContentOffset(self.clampedContentOffset(targetOffset), animated: false)
-                self.updateRasterScale(force: true)
-                self.materializePagesNearViewport(forceSelectedPage: true)
-                self.updateVisiblePage()
-                self.publishZoomScale(force: true)
-            }
+            let zoomRect = zoomRect(centeredAt: contentPoint, scale: targetScale)
 
             if animated {
-                UIView.animate(
-                    withDuration: 0.18,
-                    delay: 0,
-                    options: [.curveEaseInOut, .allowUserInteraction],
-                    animations: applyZoom
-                )
-            } else {
-                applyZoom()
+                scrollView.zoom(to: zoomRect, animated: true)
+                return
             }
+
+            scrollView.zoom(to: zoomRect, animated: false)
+            finishProgrammaticZoom()
+        }
+
+        private func zoomRect(centeredAt contentPoint: CGPoint, scale: CGFloat) -> CGRect {
+            let width = scrollView.bounds.width / scale
+            let height = scrollView.bounds.height / scale
+            let maxX = max(documentSize.width - width, 0)
+            let maxY = max(documentSize.height - height, 0)
+            let origin = CGPoint(
+                x: min(max(contentPoint.x - width / 2, 0), maxX),
+                y: min(max(contentPoint.y - height / 2, 0), maxY)
+            )
+            return CGRect(origin: origin, size: CGSize(width: width, height: height))
+        }
+
+        private func finishProgrammaticZoom() {
+            centerDocument()
+            updateRasterScale(force: true)
+            materializePagesNearViewport(forceSelectedPage: true)
+            updateVisiblePage()
+            publishZoomScale(force: true)
         }
 
         override func layoutSubviews() {
@@ -461,7 +489,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             let anchor = zoomAnchor()
-            updateRasterScale()
+            updateRasterScale(reloadImageVariants: !isPinchZooming)
             centerDocument()
             restoreZoomAnchor(anchor)
             materializePagesNearViewport()
@@ -471,7 +499,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
             isPinchZooming = false
             lastZoomEndTime = CACurrentMediaTime()
-            updateRasterScale(force: true)
+            updateRasterScale(force: true, reloadImageVariants: true)
             centerDocument()
             refreshVisibleCanvasesAfterZoom()
             materializePagesNearViewport(forceSelectedPage: true)
@@ -692,7 +720,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             scrollView.setContentOffset(clampedContentOffset(targetOffset), animated: false)
         }
 
-        private func updateRasterScale(force: Bool = false) {
+        private func updateRasterScale(force: Bool = false, reloadImageVariants: Bool = true) {
             let screenScale = window?.screen.scale ?? UIScreen.main.scale
             let zoomScale = max(scrollView.zoomScale, 1)
             let targetScale = zoomScale * screenScale
@@ -713,7 +741,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pageView.updateRenderScale(
                     backgroundScale: backgroundScale,
                     drawingScale: drawingScale,
-                    imageScale: imageScale
+                    imageScale: imageScale,
+                    reloadImageVariants: reloadImageVariants,
+                    force: force
                 )
             }
         }
@@ -1135,11 +1165,17 @@ struct DrawingCanvasView: UIViewRepresentable {
             addSubview(canvasView)
         }
 
-        func updateRenderScale(backgroundScale: CGFloat, drawingScale: CGFloat, imageScale: CGFloat) {
+        func updateRenderScale(
+            backgroundScale: CGFloat,
+            drawingScale: CGFloat,
+            imageScale: CGFloat,
+            reloadImageVariants: Bool = true,
+            force: Bool = false
+        ) {
             let backgroundChanged = abs(backgroundScale - lastBackgroundScale) > 0.05
             let drawingChanged = abs(drawingScale - lastDrawingScale) > 0.05
             let imageChanged = abs(imageScale - lastImageScale) > 0.05
-            guard backgroundChanged || drawingChanged || imageChanged else { return }
+            guard force || backgroundChanged || drawingChanged || imageChanged else { return }
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -1149,19 +1185,19 @@ struct DrawingCanvasView: UIViewRepresentable {
             layer.contentsScale = containerScale
             layer.rasterizationScale = containerScale
 
-            if backgroundChanged {
+            if force || backgroundChanged {
                 backgroundView.updateRenderScale(backgroundScale)
                 lastBackgroundScale = backgroundScale
             }
 
-            if drawingChanged {
+            if force || drawingChanged {
                 canvasView.applyCanvasBackingScale(drawingScale)
                 lastDrawingScale = drawingScale
             }
 
-            if imageChanged {
+            if force || imageChanged {
                 for view in imageViews.values {
-                    view.updateRasterScale(imageScale)
+                    view.updateRasterScale(imageScale, reloadImageVariant: reloadImageVariants)
                 }
                 lastImageScale = imageScale
             }
@@ -1403,7 +1439,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             resizeHandle.addGestureRecognizer(resizeGesture)
         }
 
-        func updateRasterScale(_ scale: CGFloat) {
+        func updateRasterScale(_ scale: CGFloat, reloadImageVariant: Bool = true) {
             contentScaleFactor = scale
             layer.contentsScale = scale
             imageView.contentScaleFactor = scale
@@ -1412,7 +1448,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             resizeHandle.layer.contentsScale = scale
             currentRenderScale = scale
 
-            guard isImageLoadingEnabled, let imageURL, let attachment else { return }
+            guard reloadImageVariant, isImageLoadingEnabled, let imageURL, let attachment else { return }
             loadImageIfNeeded(from: imageURL, attachment: attachment)
         }
 
@@ -2253,6 +2289,16 @@ struct DrawingCanvasView: UIViewRepresentable {
             performRedo()
         }
 
+        @objc func handleFingerDoubleTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended,
+                  parent.inputMode == .pencilOnly,
+                  let containerView else { return }
+            guard containerView.isZoomGestureActiveOrRecentlyEnded != true else { return }
+
+            let contentPoint = recognizer.location(in: containerView.contentView)
+            containerView.toggleDetailZoom(at: contentPoint, animated: true)
+        }
+
         func performUndo() {
             guard let undoManager = activeCanvasView?.undoManager, undoManager.canUndo else {
                 publishUndoRedoAvailability()
@@ -2291,7 +2337,13 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer is UITapGestureRecognizer {
+            if let tapGesture = gestureRecognizer as? UITapGestureRecognizer {
+                if tapGesture.numberOfTouchesRequired == 1,
+                   tapGesture.numberOfTapsRequired == 2,
+                   parent.inputMode != .pencilOnly {
+                    return false
+                }
+
                 return containerView?.isZoomGestureActiveOrRecentlyEnded != true
             }
 

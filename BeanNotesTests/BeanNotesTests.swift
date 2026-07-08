@@ -754,6 +754,30 @@ struct BeanNotesTests {
         #expect(DrawingZoomLevel.clampedScale(2, minimum: 0.75, maximum: 3) == 2)
         #expect(DrawingZoomLevel.isScale(2.02, closeTo: 2))
         #expect(!DrawingZoomLevel.isScale(2.08, closeTo: 2))
+        #expect(DrawingZoomLevel.doubleTapTargetScale(
+            current: 0.75,
+            fitScale: 0.7,
+            minimum: 0.3,
+            maximum: 4
+        ) == 2)
+        #expect(DrawingZoomLevel.doubleTapTargetScale(
+            current: 1.7,
+            fitScale: 0.7,
+            minimum: 0.3,
+            maximum: 4
+        ) == 0.7)
+        #expect(DrawingZoomLevel.doubleTapTargetScale(
+            current: 1,
+            fitScale: 1.2,
+            minimum: 0.5,
+            maximum: 1.5
+        ) == 1.5)
+        #expect(DrawingZoomLevel.doubleTapTargetScale(
+            current: 1.45,
+            fitScale: 1.2,
+            minimum: 0.5,
+            maximum: 1.5
+        ) == 1.2)
     }
 
     @Test func welcomeModalAppearsForFirstRunAndNewContentVersions() {

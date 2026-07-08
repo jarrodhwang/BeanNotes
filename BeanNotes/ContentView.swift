@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 12
+    static let currentWelcomeContentVersion = 13
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -163,7 +163,7 @@ private struct WelcomeToBeanNotesView: View {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
                 featureBadge("Focus Mode", systemImage: "arrow.down.right.and.arrow.up.left")
-                featureBadge("Precision Ink", systemImage: "scope")
+                featureBadge("Detail Zoom", systemImage: "plus.magnifyingglass")
             }
 
             VStack(spacing: 10) {
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "The editor now has a focus drawing mode that clears the chrome from the page while keeping vector handwriting, zoom, and autosave intact."
+            "The editor now has lighter Pencil Only navigation with quick detail zoom and smoother high-resolution redraws after pinching."
         }
     }
 
@@ -228,19 +228,19 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Focus drawing mode",
-                detail: "Hide the tab strip, title header, and action toolbar when you want more page space.",
-                systemImage: "arrow.down.right.and.arrow.up.left"
+                title: "Double-tap detail zoom",
+                detail: "In Pencil Only mode, a one-finger double tap jumps between page fit and close detail around the tapped spot.",
+                systemImage: "plus.magnifyingglass"
             ),
             Highlight(
-                title: "Vector zoom stays sharp",
-                detail: "PencilKit strokes remain editable while BeanNotes refreshes page rendering as you zoom.",
+                title: "Sharper after pinch",
+                detail: "Image attachments wait until pinch zoom settles before reloading their high-resolution variants.",
                 systemImage: "scope"
             ),
             Highlight(
-                title: "Touch mode stays nearby",
-                detail: "Switch between Pencil Only and Pencil or Finger from the drawing control while you write.",
-                systemImage: "hand.raised"
+                title: "Vector ink stays editable",
+                detail: "PencilKit handwriting remains vector-backed while page backgrounds and attachments refine for the zoom level.",
+                systemImage: "scribble"
             )
         ]
     }

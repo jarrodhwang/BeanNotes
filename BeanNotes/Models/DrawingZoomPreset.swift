@@ -74,6 +74,24 @@ enum DrawingZoomLevel {
         return min(max(scale, minimum), maximum)
     }
 
+    static func doubleTapTargetScale(
+        current: CGFloat,
+        fitScale: CGFloat,
+        minimum: CGFloat,
+        maximum: CGFloat
+    ) -> CGFloat {
+        let boundedMinimum = max(minimum, 0.01)
+        let boundedMaximum = max(maximum, boundedMinimum)
+        let fit = clampedScale(fitScale, minimum: boundedMinimum, maximum: boundedMaximum)
+        let detail = clampedScale(max(2, fit * 2.2), minimum: boundedMinimum, maximum: boundedMaximum)
+
+        guard detail > fit + 0.001 else { return fit }
+
+        let currentScale = current.isFinite && current > 0 ? current : fit
+        let midpoint = fit + (detail - fit) * 0.5
+        return currentScale >= midpoint ? fit : detail
+    }
+
     static func isScale(_ scale: CGFloat, closeTo target: CGFloat) -> Bool {
         abs(scale - target) <= presetSelectionTolerance
     }
