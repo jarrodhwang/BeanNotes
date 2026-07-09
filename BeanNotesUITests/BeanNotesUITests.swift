@@ -40,6 +40,7 @@ final class BeanNotesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Light Touch stroke width mode"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Standard stroke width mode"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Precision stroke width mode"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["Ink preview"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Zoom out"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Focus drawing mode"].waitForExistence(timeout: 8))
@@ -76,7 +77,7 @@ final class BeanNotesUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Fine width nudges"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Detail ink preview"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Light Touch Focus"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Vector handwriting"].waitForExistence(timeout: 8))
 

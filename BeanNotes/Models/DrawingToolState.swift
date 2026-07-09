@@ -191,6 +191,27 @@ struct DrawingStrokeWidthReadout: Equatable {
     }
 }
 
+struct DrawingInkPreviewMetrics: Equatable {
+    private static let visualScale: CGFloat = 3
+    private static let minimumVisualThickness: CGFloat = 1.5
+    private static let maximumVisualThickness: CGFloat = 12
+
+    let storedVisualThickness: CGFloat
+    let effectiveVisualThickness: CGFloat
+    let accessibilityLabel: String
+
+    init(readout: DrawingStrokeWidthReadout) {
+        storedVisualThickness = Self.visualThickness(for: readout.storedWidth)
+        effectiveVisualThickness = Self.visualThickness(for: readout.effectiveWidth)
+        accessibilityLabel = "Ink preview, \(readout.accessibilityText)"
+    }
+
+    static func visualThickness(for width: CGFloat) -> CGFloat {
+        guard width.isFinite, width > 0 else { return minimumVisualThickness }
+        return min(max(width * visualScale, minimumVisualThickness), maximumVisualThickness)
+    }
+}
+
 struct DrawingInkCalibrationStatus: Equatable {
     let zoomText: String
     let pageInkText: String

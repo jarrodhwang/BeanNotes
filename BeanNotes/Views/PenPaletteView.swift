@@ -163,6 +163,8 @@ struct PenPaletteView: View {
             widthSliderControls
 
             widthReadout
+
+            inkPreview
         }
         .frame(height: 30)
         .accessibilityElement(children: .contain)
@@ -176,6 +178,8 @@ struct PenPaletteView: View {
                 strokeWidthModeSegment
 
                 widthPresetControls
+
+                inkPreview
             }
             .frame(height: 30)
 
@@ -276,6 +280,40 @@ struct PenPaletteView: View {
         }
         .foregroundStyle(.secondary)
         .frame(width: 58, height: 30, alignment: .trailing)
+    }
+
+    private var inkPreview: some View {
+        let metrics = DrawingInkPreviewMetrics(readout: activeWidthReadout)
+
+        return ZStack {
+            if activeWidthReadout.showsEffectiveWidth {
+                VStack(spacing: 4) {
+                    previewStroke(thickness: metrics.storedVisualThickness, opacity: 0.36)
+                    previewStroke(thickness: metrics.effectiveVisualThickness, opacity: 1)
+                }
+            } else {
+                previewStroke(thickness: metrics.effectiveVisualThickness, opacity: 1)
+            }
+        }
+        .frame(width: usesCompactLayout ? 48 : 54, height: 30)
+        .background(Color(.secondarySystemBackground).opacity(0.48), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("Ink preview")
+        .accessibilityLabel(metrics.accessibilityLabel)
+    }
+
+    private func previewStroke(thickness: CGFloat, opacity: Double) -> some View {
+        Capsule()
+            .fill(toolState.activeInkColor.opacity(opacity))
+            .frame(width: usesCompactLayout ? 32 : 38, height: thickness)
+            .overlay {
+                Capsule()
+                    .stroke(Color.secondary.opacity(0.12), lineWidth: 0.5)
+            }
     }
 
     private func widthNudgeButton(direction: CGFloat) -> some View {
@@ -717,10 +755,10 @@ struct PenPaletteLayoutMetrics {
 
     static func estimatedPaletteSize(isCompact: Bool, showsInkControls: Bool) -> CGSize {
         if isCompact {
-            return CGSize(width: showsInkControls ? 286 : 212, height: showsInkControls ? 162 : 44)
+            return CGSize(width: showsInkControls ? 296 : 212, height: showsInkControls ? 162 : 44)
         }
 
-        return CGSize(width: showsInkControls ? 902 : 246, height: 44)
+        return CGSize(width: showsInkControls ? 962 : 246, height: 44)
     }
 
     static func clampedCommittedOffset(

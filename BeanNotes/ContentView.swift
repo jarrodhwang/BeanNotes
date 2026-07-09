@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 23
+    static let currentWelcomeContentVersion = 24
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,13 +162,13 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Fine Nudges", systemImage: "plusminus")
+                featureBadge("Ink Preview", systemImage: "scribble")
                 featureBadge("Vector Ink", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Fine Nudges", systemImage: "plusminus")
+                featureBadge("Ink Preview", systemImage: "scribble")
                 featureBadge("Vector Ink", systemImage: "scope")
             }
         }
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Light Touch ink now has press-and-hold fine width nudges for more controlled detail writing."
+            "The custom palette now previews stored and effective page ink so zoom-calibrated detail writing is easier to judge."
         }
     }
 
@@ -228,9 +228,9 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Fine width nudges",
-                detail: "Press and hold the palette width buttons for smaller ink changes while staying in flow.",
-                systemImage: "plusminus"
+                title: "Detail ink preview",
+                detail: "See the palette sample change from stored width to effective page width while writing at high zoom.",
+                systemImage: "scribble"
             ),
             Highlight(
                 title: "Vector handwriting",

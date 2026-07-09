@@ -1909,6 +1909,24 @@ struct BeanNotesTests {
         #expect(pageWidthReadout.accessibilityText == "2.5 points")
     }
 
+    @Test func drawingInkPreviewMetricsClampFineWidthsForVisibility() {
+        let detailReadout = DrawingStrokeWidthReadout(
+            storedWidth: 2.5,
+            effectiveWidth: 0.625,
+            zoomScale: 4,
+            zoomBehavior: .zoomCalibrated
+        )
+        let detailMetrics = DrawingInkPreviewMetrics(readout: detailReadout)
+
+        #expect(detailMetrics.storedVisualThickness == 7.5)
+        #expect(detailMetrics.effectiveVisualThickness == 1.875)
+        #expect(detailMetrics.accessibilityLabel == "Ink preview, Stored 2.5 points, page ink 0.63 points at 400% zoom")
+
+        #expect(DrawingInkPreviewMetrics.visualThickness(for: 0.1) == 1.5)
+        #expect(DrawingInkPreviewMetrics.visualThickness(for: 10) == 12)
+        #expect(DrawingInkPreviewMetrics.visualThickness(for: .infinity) == 1.5)
+    }
+
     @Test func drawingInkCalibrationStatusAppearsOnlyForDetailedCustomInk() {
         let detailReadout = DrawingStrokeWidthReadout(
             storedWidth: 2.5,
