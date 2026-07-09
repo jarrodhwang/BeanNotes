@@ -1914,6 +1914,40 @@ struct BeanNotesTests {
         ))
     }
 
+    @Test @MainActor func lockingPageInkStoresCurrentEffectiveWidthForConsistentZoom() throws {
+        let suiteName = "BeanNotesPageInkLock-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let toolState = DrawingToolState(defaults: defaults)
+        toolState.select(.pen)
+        toolState.selectWidthMode(.lightTouch)
+        toolState.applyActiveWidth(2.5)
+
+        #expect(toolState.lockActiveWidthToEffectivePageInk(
+            zoomScale: 4,
+            zoomBehavior: .zoomCalibrated
+        ))
+        #expect(abs(toolState.penWidth - 0.625) < 0.001)
+        #expect(abs(toolState.effectiveStrokeWidth(
+            for: .pen,
+            zoomScale: 4,
+            zoomBehavior: .pageWidth
+        ) - 0.625) < 0.001)
+        #expect(!toolState.lockActiveWidthToEffectivePageInk(
+            zoomScale: 1,
+            zoomBehavior: .zoomCalibrated
+        ))
+
+        toolState.select(.eraser)
+        #expect(!toolState.lockActiveWidthToEffectivePageInk(
+            zoomScale: 4,
+            zoomBehavior: .zoomCalibrated
+        ))
+    }
+
     @Test func drawingStrokeWidthReadoutFormatsCommonPointSizes() {
         #expect(DrawingStrokeWidthReadout.pointsText(for: 1) == "1")
         #expect(DrawingStrokeWidthReadout.pointsText(for: 1.5) == "1.5")

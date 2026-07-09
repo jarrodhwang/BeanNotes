@@ -701,6 +701,15 @@ struct NoteEditorView: View {
                 }
                 .accessibilityLabel(DrawingLightTouchFocusMode.accessibilityLabel)
                 .accessibilityHint(DrawingLightTouchFocusMode.description)
+
+                Button {
+                    lockCurrentPageInk()
+                } label: {
+                    Label("Lock Page Ink", systemImage: "lock")
+                }
+                .disabled(!canLockCurrentPageInk)
+                .accessibilityLabel("Lock current page ink width")
+                .accessibilityHint("Store the effective page ink width and keep it consistent across zoom levels")
             }
 
             Section {
@@ -849,6 +858,10 @@ struct NoteEditorView: View {
         )
     }
 
+    private var canLockCurrentPageInk: Bool {
+        shouldShowInkCalibrationStrip
+    }
+
     private var inkCalibrationStrip: some View {
         let status = activeInkCalibrationStatus
 
@@ -879,6 +892,18 @@ struct NoteEditorView: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(status.accessibilityLabel)
+
+            Button {
+                lockCurrentPageInk()
+            } label: {
+                Image(systemName: "lock")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderless)
+            .background(Color(.secondarySystemBackground).opacity(0.72), in: Circle())
+            .accessibilityLabel("Lock page ink width")
+            .accessibilityHint("Store the current page ink width and switch to Page Width ink")
 
             Button {
                 fitToPageSignal += 1
@@ -1019,6 +1044,17 @@ struct NoteEditorView: View {
         toolState.selectWidthMode(DrawingLightTouchFocusMode.widthMode)
         setZoomScale(DrawingLightTouchFocusMode.zoomScale)
         setFocusModeEnabled(true)
+    }
+
+    private func lockCurrentPageInk() {
+        guard toolState.lockActiveWidthToEffectivePageInk(
+            zoomScale: currentZoomScale,
+            zoomBehavior: strokeZoomBehavior
+        ) else {
+            return
+        }
+
+        strokeZoomBehaviorRaw = DrawingStrokeZoomBehavior.pageWidth.rawValue
     }
 
     private func setDrawingRenderQuality(_ quality: DrawingRenderQuality) {

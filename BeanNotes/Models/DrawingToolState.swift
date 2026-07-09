@@ -887,6 +887,24 @@ final class DrawingToolState: ObservableObject {
         applyActiveWidth(activeStrokeWidth + step * steps, step: step)
     }
 
+    @discardableResult
+    func lockActiveWidthToEffectivePageInk(
+        zoomScale: CGFloat,
+        zoomBehavior: DrawingStrokeZoomBehavior
+    ) -> Bool {
+        guard selectedToolUsesInkColor else { return false }
+
+        let readout = strokeWidthReadout(
+            for: activeColorTool,
+            zoomScale: zoomScale,
+            zoomBehavior: zoomBehavior
+        )
+        guard readout.showsEffectiveWidth else { return false }
+
+        applyActiveWidth(readout.effectiveWidth, step: activeFineWidthStep)
+        return true
+    }
+
     func selectEraserMode(_ mode: DrawingEraserMode) {
         eraserMode = mode
         select(.eraser)
