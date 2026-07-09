@@ -685,6 +685,27 @@ struct BeanNotesTests {
         #expect(clampedGrid.resolvedMarginWidth == NoteBackgroundStyle.grid.marginRange.upperBound)
     }
 
+    @Test func noteBackgroundRejectsNonFiniteSpacingAndMargins() {
+        let decodedGrid = NoteBackground.fromDefaults(styleRaw: "grid;spacing=nan;margin=inf", colorHex: "#FFFFFF")
+
+        #expect(decodedGrid.resolvedSpacing == NoteBackgroundStyle.grid.spacingRange.lowerBound)
+        #expect(decodedGrid.resolvedMarginWidth == NoteBackgroundStyle.grid.marginRange.upperBound)
+        #expect(!decodedGrid.storageStyleRaw.contains("nan"))
+        #expect(!decodedGrid.storageStyleRaw.contains("inf"))
+
+        let directGrid = NoteBackground(
+            style: .grid,
+            colorHex: "#FFFFFF",
+            spacing: .nan,
+            marginWidth: -.infinity
+        )
+
+        #expect(directGrid.resolvedSpacing == NoteBackgroundStyle.grid.spacingRange.lowerBound)
+        #expect(directGrid.resolvedMarginWidth == NoteBackgroundStyle.grid.marginRange.lowerBound)
+        #expect(!directGrid.storageStyleRaw.contains("nan"))
+        #expect(!directGrid.storageStyleRaw.contains("inf"))
+    }
+
     @Test func hexColorsRoundTripWithoutComponentDrift() {
         for colorHex in ["#E81E2D", "#2345EA", "#94F02B", "#0A84FF", "#FFF7BF"] {
             #expect(UIColor(hex: colorHex).hexRGB == colorHex)

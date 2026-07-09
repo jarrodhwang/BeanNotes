@@ -256,7 +256,19 @@ struct NoteBackground: Codable, Equatable, Sendable {
     }
 
     nonisolated private static func clamped(_ value: Double, to range: ClosedRange<Double>) -> Double {
-        min(max(value, range.lowerBound), range.upperBound)
+        if value.isNaN {
+            return range.lowerBound
+        }
+
+        if value == .infinity {
+            return range.upperBound
+        }
+
+        if value == -.infinity {
+            return range.lowerBound
+        }
+
+        return min(max(value, range.lowerBound), range.upperBound)
     }
 
     nonisolated private func clamped(_ value: Double, to range: ClosedRange<Double>) -> Double {
