@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 21
+    static let currentWelcomeContentVersion = 22
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,13 +162,13 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Light Touch", systemImage: "hand.raised")
+                featureBadge("Focus Controls", systemImage: "arrow.down.right.and.arrow.up.left")
                 featureBadge("Vector Ink", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Light Touch", systemImage: "hand.raised")
+                featureBadge("Focus Controls", systemImage: "arrow.down.right.and.arrow.up.left")
                 featureBadge("Vector Ink", systemImage: "scope")
             }
         }
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Light Touch Focus prepares a quieter iPad writing surface with Pencil Only input, Ultra Fine rendering, and zoom-calibrated ink."
+            "Light Touch Focus now keeps exit, undo, redo, fit, and zoom controls close at hand without restoring the full editor chrome."
         }
     }
 
@@ -228,9 +228,9 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Light Touch Focus",
-                detail: "Use the zoom menu to hide editor chrome and start a Pencil Only, close-writing surface in one step.",
-                systemImage: "hand.raised"
+                title: "Focus quick controls",
+                detail: "Exit focus, undo, redo, fit the page, and adjust zoom from a compact drawing strip.",
+                systemImage: "arrow.down.right.and.arrow.up.left"
             ),
             Highlight(
                 title: "Vector handwriting",
@@ -238,9 +238,9 @@ private extension WelcomeToBeanNotesView.Mode {
                 systemImage: "scope"
             ),
             Highlight(
-                title: "Light Touch calibration",
-                detail: "Zoom-calibrated widths keep stored ink intact while making new strokes finer on the page.",
-                systemImage: "scribble"
+                title: "Light Touch Focus",
+                detail: "Use the zoom menu to start a Pencil Only, Ultra Fine, zoom-calibrated writing surface in one step.",
+                systemImage: "hand.raised"
             )
         ]
     }

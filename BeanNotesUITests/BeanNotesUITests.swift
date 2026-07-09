@@ -59,6 +59,9 @@ final class BeanNotesUITests: XCTestCase {
 
         let exitFocusButton = app.buttons["Exit focus mode"]
         XCTAssertTrue(exitFocusButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Focus fit page"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Zoom out"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["Back to library"].waitForExistence(timeout: 1))
 
         exitFocusButton.tap()
@@ -73,6 +76,7 @@ final class BeanNotesUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Focus quick controls"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Light Touch Focus"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Vector handwriting"].waitForExistence(timeout: 8))
 

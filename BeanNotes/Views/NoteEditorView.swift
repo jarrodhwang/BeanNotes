@@ -342,7 +342,14 @@ struct NoteEditorView: View {
                     .zIndex(2)
                 }
 
-                if !isWorkspaceFocusModeEnabled {
+                if isWorkspaceFocusModeEnabled {
+                    focusModeQuickToolbar
+                        .padding(.top, 14)
+                        .padding(.trailing, 18)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .zIndex(3)
+                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                } else {
                     editorPinnedActionToolbar(page: page)
                         .padding(.top, 14)
                         .padding(.trailing, 18)
@@ -563,6 +570,71 @@ struct NoteEditorView: View {
                 .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
+    }
+
+    private var focusModeQuickToolbar: some View {
+        HStack(spacing: 8) {
+            Button {
+                setFocusModeEnabled(false)
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.headline.weight(.semibold))
+                    .frame(width: 38, height: 38)
+            }
+            .accessibilityLabel("Exit focus mode")
+            .accessibilityHint("Show editor controls")
+
+            Divider()
+                .frame(height: 24)
+
+            Button {
+                undoSignal += 1
+            } label: {
+                Image(systemName: "arrow.uturn.backward")
+                    .frame(width: 34, height: 34)
+            }
+            .disabled(!canUndoDrawing || isEditingTitle)
+            .keyboardShortcut("z", modifiers: [.command])
+            .accessibilityLabel("Undo")
+            .accessibilityHint("Undo the last drawing change on the current page")
+
+            Button {
+                redoSignal += 1
+            } label: {
+                Image(systemName: "arrow.uturn.forward")
+                    .frame(width: 34, height: 34)
+            }
+            .disabled(!canRedoDrawing || isEditingTitle)
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .accessibilityLabel("Redo")
+            .accessibilityHint("Redo the last undone drawing change on the current page")
+
+            Divider()
+                .frame(height: 24)
+
+            Button {
+                fitToPageSignal += 1
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .frame(width: 34, height: 34)
+            }
+            .accessibilityLabel("Focus fit page")
+            .accessibilityHint("Reset zoom to the selected page without leaving focus mode")
+
+            zoomControls
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.large)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Focus mode drawing controls")
     }
 
     private var zoomControls: some View {
