@@ -742,6 +742,51 @@ struct BeanNotesTests {
         #expect(pageView.canvasView.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
     }
 
+    @Test @MainActor func pageCanvasLayoutPreservesStableCanvasOffsetUntilPageSizeChanges() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPageCanvasLayout-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "stable-layout.drawing", width: 612, height: 792)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView()
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {}
+        )
+
+        let retainedOffset = CGPoint(x: 17, y: 23)
+        pageView.canvasView.contentOffset = retainedOffset
+        pageView.layoutPage()
+
+        #expect(pageView.canvasView.contentOffset == retainedOffset)
+
+        page.width = 640
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {}
+        )
+
+        #expect(pageView.canvasView.contentSize == page.pageSize)
+        #expect(pageView.canvasView.contentOffset == .zero)
+    }
+
     @Test func drawingZoomPresetsFormatAndClampDetailTargets() {
         #expect(DrawingZoomPreset.allCases.map(\.label) == ["100%", "200%", "300%", "400%", "600%"])
         #expect(DrawingZoomPreset.quickPresets(for: .balanced).map(\.label) == ["100%", "200%", "300%"])

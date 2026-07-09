@@ -1078,6 +1078,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastDrawingScale: CGFloat = 0
         private var lastImageScale: CGFloat = 0
         private var isImageLoadingEnabled = true
+        private var laidOutPageBounds: CGRect = .null
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -1111,18 +1112,22 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if isNewPage {
                 canvasView.drawing = drawingStorage.loadDrawing(for: page)
+                canvasView.contentSize = page.pageSize
+                canvasView.contentOffset = .zero
+            } else if canvasView.contentSize != page.pageSize {
+                canvasView.contentSize = page.pageSize
+                canvasView.contentOffset = .zero
             }
 
             canvasView.delegate = coordinator
             applyInputMode(inputMode)
-            canvasView.contentSize = page.pageSize
-            canvasView.contentOffset = .zero
             coordinator.register(canvasView: canvasView, page: page)
 
             layoutPage()
         }
 
         func applyInputMode(_ inputMode: DrawingInputMode) {
+            guard canvasView.drawingPolicy != inputMode.drawingPolicy else { return }
             canvasView.drawingPolicy = inputMode.drawingPolicy
         }
 
@@ -1151,12 +1156,19 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func layoutPage() {
             guard let page else { return }
-            let bounds = CGRect(origin: .zero, size: page.pageSize)
-            backgroundView.frame = bounds
-            canvasView.frame = bounds
-            canvasView.contentSize = bounds.size
-            canvasView.contentOffset = .zero
-            layer.shadowPath = UIBezierPath(rect: bounds).cgPath
+            let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+
+            if laidOutPageBounds != pageBounds {
+                backgroundView.frame = pageBounds
+                canvasView.frame = pageBounds
+                layer.shadowPath = UIBezierPath(rect: pageBounds).cgPath
+                laidOutPageBounds = pageBounds
+            }
+
+            if canvasView.contentSize != pageBounds.size {
+                canvasView.contentSize = pageBounds.size
+                canvasView.contentOffset = .zero
+            }
 
             for attachment in page.imageAttachments {
                 imageViews[attachment.id]?.frame = attachment.frame
@@ -1974,9 +1986,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             let key = ObjectIdentifier(canvasView)
             guard let page = canvasPages[key] else { return }
 
+            let wasAlreadyDirty = dirtyPageIDs.contains(page.id)
+                || pendingSaves[page.id] != nil
+                || hasInFlightSave(for: page.id)
+
             dirtyPageIDs.insert(page.id)
-            notifyDrawingChanged(pageID: page.id)
-            notifySaveStarted()
+            if !wasAlreadyDirty {
+                notifyDrawingChanged(pageID: page.id)
+                notifySaveStarted()
+            }
             scheduleDrawingSave(for: page, canvasView: canvasView)
             publishUndoRedoAvailability()
         }
