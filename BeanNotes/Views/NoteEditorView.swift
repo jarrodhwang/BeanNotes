@@ -607,6 +607,19 @@ struct NoteEditorView: View {
 
             Section {
                 Button {
+                    applyDetailWritingMode()
+                } label: {
+                    Label(
+                        DrawingDetailWritingMode.label,
+                        systemImage: isDetailWritingModeActive ? "checkmark" : DrawingDetailWritingMode.systemImage
+                    )
+                }
+                .accessibilityLabel(DrawingDetailWritingMode.accessibilityLabel)
+                .accessibilityHint(DrawingDetailWritingMode.description)
+            }
+
+            Section {
+                Button {
                     zoomInSignal += 1
                 } label: {
                     Label("Zoom In", systemImage: "plus.magnifyingglass")
@@ -705,6 +718,13 @@ struct NoteEditorView: View {
 
     private var currentZoomText: String {
         DrawingZoomLevel.percentageText(for: currentZoomScale)
+    }
+
+    private var isDetailWritingModeActive: Bool {
+        drawingRenderQuality == DrawingDetailWritingMode.renderQuality
+            && strokeZoomBehavior == DrawingDetailWritingMode.strokeZoomBehavior
+            && toolState.widthMode == DrawingDetailWritingMode.widthMode
+            && DrawingZoomLevel.isScale(currentZoomScale, closeTo: DrawingDetailWritingMode.zoomScale)
     }
 
     private var activeInkReadout: DrawingStrokeWidthReadout {
@@ -889,6 +909,13 @@ struct NoteEditorView: View {
     private func setZoomScale(_ scale: CGFloat) {
         zoomTargetScale = scale
         zoomToScaleSignal += 1
+    }
+
+    private func applyDetailWritingMode() {
+        drawingRenderQualityRaw = DrawingDetailWritingMode.renderQuality.rawValue
+        strokeZoomBehaviorRaw = DrawingDetailWritingMode.strokeZoomBehavior.rawValue
+        toolState.selectWidthMode(DrawingDetailWritingMode.widthMode)
+        setZoomScale(DrawingDetailWritingMode.zoomScale)
     }
 
     private func setDrawingRenderQuality(_ quality: DrawingRenderQuality) {

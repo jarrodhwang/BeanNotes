@@ -780,6 +780,15 @@ struct BeanNotesTests {
         ) == 1.2)
     }
 
+    @Test func detailWritingModeBundlesUltraFineZoomAndLightTouchInk() {
+        #expect(DrawingDetailWritingMode.label == "Detail Writing Mode")
+        #expect(DrawingDetailWritingMode.renderQuality == .ultraFine)
+        #expect(DrawingDetailWritingMode.strokeZoomBehavior == .zoomCalibrated)
+        #expect(DrawingDetailWritingMode.widthMode == .lightTouch)
+        #expect(DrawingDetailWritingMode.zoomScale == DrawingZoomPreset.ultraFineDetail.scale)
+        #expect(DrawingDetailWritingMode.description.contains("600 percent zoom"))
+    }
+
     @Test func welcomeModalAppearsForFirstRunAndNewContentVersions() {
         #expect(ContentView.shouldShowWelcome(hasSeenWelcome: false, seenContentVersion: 0))
         #expect(ContentView.shouldShowWelcome(
@@ -967,6 +976,62 @@ struct BeanNotesTests {
 
         ImageMemoryCache.shared.removeImages(for: imageURL)
         #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 0)
+    }
+
+    @Test func imageMemoryCacheBoundedLoadsRespectPixelBudget() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesBoundedImageCache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let imageURL = rootURL.appendingPathComponent("large-diagram.jpg")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 240)).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 640, height: 240))
+        }
+        try #require(image.jpegData(compressionQuality: 0.9)).write(to: imageURL)
+
+        ImageMemoryCache.shared.removeAllImages()
+        let boundedImage = try #require(ImageMemoryCache.shared.image(at: imageURL, maxPixelSize: 80))
+        let cgImage = try #require(boundedImage.cgImage)
+
+        #expect(max(cgImage.width, cgImage.height) <= 80)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
+    }
+
+    @Test func imageMemoryCacheReusesStandardizedURLVariants() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesStandardizedImageCache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: rootURL.appendingPathComponent("Alias", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let imageURL = rootURL.appendingPathComponent("diagram.png")
+        let aliasURL = rootURL
+            .appendingPathComponent("Alias", isDirectory: true)
+            .appendingPathComponent("..", isDirectory: true)
+            .appendingPathComponent("diagram.png")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96)).image { context in
+            UIColor.systemMint.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 96, height: 96))
+        }
+        try #require(image.pngData()).write(to: imageURL)
+
+        ImageMemoryCache.shared.removeAllImages()
+        let firstImage = try #require(ImageMemoryCache.shared.image(at: aliasURL, maxPixelSize: 64))
+        let secondImage = try #require(ImageMemoryCache.shared.image(at: imageURL, maxPixelSize: 64))
+
+        #expect(firstImage === secondImage)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
     }
 
     @Test func localStorageCleanupEvictsDecodedImageVariants() throws {

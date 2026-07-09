@@ -83,7 +83,7 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
         ] as CFDictionary
 
         guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
-            return UIImage(contentsOfFile: url.path)
+            return nil
         }
 
         let thumbnailOptions = [
@@ -94,18 +94,19 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
         ] as CFDictionary
 
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else {
-            return UIImage(contentsOfFile: url.path)
+            return nil
         }
 
         return UIImage(cgImage: cgImage)
     }
 
     private func cacheKey(for url: URL, maxPixelSize: CGFloat?) -> NSString {
-        let attributes = try? fileManager.attributesOfItem(atPath: url.path)
+        let path = standardizedPath(for: url)
+        let attributes = try? fileManager.attributesOfItem(atPath: path)
         let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
         let pixelSize = Int((maxPixelSize ?? 0).rounded())
-        return "\(url.path)|\(modified)|\(size)|\(pixelSize)" as NSString
+        return "\(path)|\(modified)|\(size)|\(pixelSize)" as NSString
     }
 
     private func recordCachedKey(_ key: NSString, path: String) {

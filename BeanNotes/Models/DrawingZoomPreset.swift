@@ -103,3 +103,20 @@ enum DrawingZoomLevel {
         abs(scale - target) <= presetSelectionTolerance
     }
 }
+
+enum DrawingDetailWritingMode {
+    static let label = "Detail Writing Mode"
+    static let systemImage = "pencil.tip"
+    static let renderQuality: DrawingRenderQuality = .ultraFine
+    static let strokeZoomBehavior: DrawingStrokeZoomBehavior = .zoomCalibrated
+    static let widthMode: DrawingStrokeWidthMode = .lightTouch
+    static let zoomScale: CGFloat = DrawingZoomPreset.ultraFineDetail.scale
+
+    static var description: String {
+        "Use Ultra Fine rendering, Light Touch ink, zoom-calibrated widths, and 600 percent zoom for careful handwriting."
+    }
+
+    static var accessibilityLabel: String {
+        "Enable detail writing mode"
+    }
+}

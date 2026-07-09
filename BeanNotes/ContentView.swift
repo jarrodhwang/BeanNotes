@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 19
+    static let currentWelcomeContentVersion = 20
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,13 +162,13 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Sub-Point Ink", systemImage: "pencil.tip")
+                featureBadge("Detail Mode", systemImage: "pencil.tip")
                 featureBadge("600% Zoom", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Sub-Point Ink", systemImage: "pencil.tip")
+                featureBadge("Detail Mode", systemImage: "pencil.tip")
                 featureBadge("600% Zoom", systemImage: "scope")
             }
         }
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Light Touch ink now reaches finer sub-point widths for careful 600% zoom handwriting while keeping notes vector-editable."
+            "Detail Writing Mode now prepares Ultra Fine rendering, Light Touch ink, zoom-calibrated widths, and 600% zoom in one step."
         }
     }
 
@@ -228,19 +228,19 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Sub-point Light Touch ink",
-                detail: "Pen strokes can now calibrate below 0.5 pt for lighter detail writing at high zoom.",
+                title: "One-tap detail setup",
+                detail: "Use the zoom menu to switch into a careful handwriting setup without tuning each control manually.",
                 systemImage: "pencil.tip"
             ),
             Highlight(
-                title: "600% detail stays editable",
-                detail: "Zoom-calibrated PencilKit strokes remain vector-backed instead of flattening into a bitmap.",
+                title: "600% vector handwriting",
+                detail: "PencilKit strokes stay editable while the page uses Ultra Fine render scaling for close work.",
                 systemImage: "scope"
             ),
             Highlight(
-                title: "Lighter palette presets",
-                detail: "The compact palette starts with finer Light Touch presets for pen, pencil, and highlighter.",
-                systemImage: "paintpalette"
+                title: "Light Touch calibration",
+                detail: "The shortcut keeps stored widths intact while making new ink finer on the page at high zoom.",
+                systemImage: "scribble"
             )
         ]
     }
