@@ -69,7 +69,15 @@ struct DrawingStrokeWidthCalibration: Equatable {
         minimumWidth...maximumWidth
     }
 
+    var fineStep: CGFloat {
+        max(step / 2, 0.05)
+    }
+
     func clamped(_ width: CGFloat) -> CGFloat {
+        clamped(width, step: step)
+    }
+
+    func clamped(_ width: CGFloat, step: CGFloat) -> CGFloat {
         let bounded = bounded(width)
         guard step > 0 else { return bounded }
 
@@ -203,6 +211,11 @@ struct DrawingInkCalibrationStatus: Equatable {
     ) -> Bool {
         isUsingCustomPalette && toolUsesInk && readout.showsEffectiveWidth
     }
+}
+
+enum DrawingStrokeWidthNudgePrecision {
+    case normal
+    case fine
 }
 
 enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
@@ -615,6 +628,10 @@ final class DrawingToolState: ObservableObject {
         activeWidthCalibration.step
     }
 
+    var activeFineWidthStep: CGFloat {
+        activeWidthCalibration.fineStep
+    }
+
     var selectedToolUsesInkColor: Bool {
         selectedTool.usesInkColor
     }
@@ -633,11 +650,11 @@ final class DrawingToolState: ObservableObject {
     func strokeWidth(for tool: DrawingTool) -> CGFloat {
         switch tool {
         case .pencil:
-            Self.widthCalibration(for: .pencil, mode: widthMode).clamped(pencilWidth)
+            Self.widthCalibration(for: .pencil, mode: widthMode).bounded(pencilWidth)
         case .highlighter:
-            Self.widthCalibration(for: .highlighter, mode: widthMode).clamped(highlighterWidth)
+            Self.widthCalibration(for: .highlighter, mode: widthMode).bounded(highlighterWidth)
         default:
-            Self.widthCalibration(for: .pen, mode: widthMode).clamped(penWidth)
+            Self.widthCalibration(for: .pen, mode: widthMode).bounded(penWidth)
         }
     }
 
@@ -800,16 +817,20 @@ final class DrawingToolState: ObservableObject {
     }
 
     func applyActiveWidth(_ width: CGFloat) {
+        applyActiveWidth(width, step: activeWidthStep)
+    }
+
+    private func applyActiveWidth(_ width: CGFloat, step: CGFloat) {
         switch activeColorTool {
         case .pencil:
-            pencilWidth = Self.widthCalibration(for: .pencil, mode: widthMode).clamped(width)
+            pencilWidth = Self.widthCalibration(for: .pencil, mode: widthMode).clamped(width, step: step)
         case .pen:
-            penWidth = Self.widthCalibration(for: .pen, mode: widthMode).clamped(width)
+            penWidth = Self.widthCalibration(for: .pen, mode: widthMode).clamped(width, step: step)
         case .highlighter:
-            highlighterWidth = Self.widthCalibration(for: .highlighter, mode: widthMode).clamped(width)
+            highlighterWidth = Self.widthCalibration(for: .highlighter, mode: widthMode).clamped(width, step: step)
         case .eraser, .lasso:
             select(.pen)
-            penWidth = Self.widthCalibration(for: .pen, mode: widthMode).clamped(width)
+            penWidth = Self.widthCalibration(for: .pen, mode: widthMode).clamped(width, step: step)
         }
     }
 
@@ -828,9 +849,21 @@ final class DrawingToolState: ObservableObject {
         }
     }
 
-    func nudgeActiveWidth(by steps: CGFloat) {
+    func nudgeActiveWidth(
+        by steps: CGFloat,
+        precision: DrawingStrokeWidthNudgePrecision = .normal
+    ) {
         guard steps.isFinite, steps != 0 else { return }
-        applyActiveWidth(activeStrokeWidth + activeWidthStep * steps)
+
+        let step: CGFloat
+        switch precision {
+        case .normal:
+            step = activeWidthStep
+        case .fine:
+            step = activeFineWidthStep
+        }
+
+        applyActiveWidth(activeStrokeWidth + step * steps, step: step)
     }
 
     func selectEraserMode(_ mode: DrawingEraserMode) {

@@ -76,7 +76,7 @@ final class BeanNotesUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Focus quick controls"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Fine width nudges"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Light Touch Focus"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Vector handwriting"].waitForExistence(timeout: 8))
 

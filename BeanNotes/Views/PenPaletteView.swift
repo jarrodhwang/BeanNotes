@@ -279,20 +279,20 @@ struct PenPaletteView: View {
     }
 
     private func widthNudgeButton(direction: CGFloat) -> some View {
-        Button {
-            performSelectionFeedback()
-            isShowingEraserModes = false
-            toolState.nudgeActiveWidth(by: direction)
-        } label: {
-            Image(systemName: direction < 0 ? "minus" : "plus")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
-                .background(Color(.secondarySystemBackground).opacity(0.7), in: Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(direction < 0 ? "Decrease stroke width" : "Increase stroke width")
-        .accessibilityValue(activeWidthReadout.accessibilityText)
+        Image(systemName: direction < 0 ? "minus" : "plus")
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .background(Color(.secondarySystemBackground).opacity(0.7), in: Circle())
+            .contentShape(Circle())
+            .gesture(widthNudgeGesture(direction: direction))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(direction < 0 ? "Decrease stroke width" : "Increase stroke width")
+            .accessibilityValue(activeWidthReadout.accessibilityText)
+            .accessibilityHint("Press and hold for a \(fineNudgeStepText) point adjustment")
+            .accessibilityAction {
+                handleWidthNudge(direction: direction, precision: .normal)
+            }
     }
 
     private var eraserModePicker: some View {
@@ -617,6 +617,34 @@ struct PenPaletteView: View {
 
     private var activeWidthStep: Double {
         Double(toolState.activeWidthStep)
+    }
+
+    private var fineNudgeStepText: String {
+        DrawingStrokeWidthReadout.pointsText(for: toolState.activeFineWidthStep)
+    }
+
+    private func widthNudgeGesture(direction: CGFloat) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.42)
+            .exclusively(before: TapGesture())
+            .onEnded { value in
+                switch value {
+                case .first(true):
+                    handleWidthNudge(direction: direction, precision: .fine)
+                case .second:
+                    handleWidthNudge(direction: direction, precision: .normal)
+                default:
+                    break
+                }
+            }
+    }
+
+    private func handleWidthNudge(
+        direction: CGFloat,
+        precision: DrawingStrokeWidthNudgePrecision
+    ) {
+        performSelectionFeedback()
+        isShowingEraserModes = false
+        toolState.nudgeActiveWidth(by: direction, precision: precision)
     }
 
     private var activeWidthText: String {

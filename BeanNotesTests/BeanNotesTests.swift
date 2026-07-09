@@ -1676,6 +1676,7 @@ struct BeanNotesTests {
 
         firstSession.select(.pen)
         #expect(firstSession.activeWidthStep == 0.25)
+        #expect(abs(firstSession.activeFineWidthStep - 0.125) < 0.001)
         #expect(firstSession.widthPresets(for: .pen) == [0.5, 1, 1.5, 2.5])
 
         firstSession.applyActiveWidth(2.26)
@@ -1683,6 +1684,11 @@ struct BeanNotesTests {
 
         firstSession.nudgeActiveWidth(by: 1)
         #expect(firstSession.penWidth == 2.5)
+
+        firstSession.applyActiveWidth(2.26)
+        firstSession.nudgeActiveWidth(by: 1, precision: .fine)
+        #expect(abs(firstSession.penWidth - 2.375) < 0.001)
+        #expect(abs(firstSession.activeStrokeWidth - 2.375) < 0.001)
 
         firstSession.applyActiveWidth(99)
         #expect(firstSession.penWidth == 12)
