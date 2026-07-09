@@ -905,7 +905,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func retirePageView(
             id: UUID,
             pageView: PageCanvasView,
-            flushDrawingBeforeRelease: Bool = true
+            flushDrawingBeforeRelease: Bool = true,
+            evictCachedImages: Bool = false
         ) {
             if let page = pageView.page {
                 coordinator?.unregister(
@@ -915,7 +916,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 )
             }
 
-            pageView.releaseHeavyResources()
+            pageView.releaseHeavyResources(evictCachedImages: evictCachedImages)
             pageView.removeFromSuperview()
             pageViews[id] = nil
         }
@@ -926,7 +927,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             for id in retiredIDs {
                 if let pageView = pageViews[id] {
-                    retirePageView(id: id, pageView: pageView)
+                    retirePageView(id: id, pageView: pageView, evictCachedImages: true)
                 }
             }
 
@@ -1383,6 +1384,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private final class ImageLoadToken {
             private let lock = NSLock()
             private var isCancelledStorage = false
+            private var evictsCachedVariantsOnCompletionStorage = false
 
             var isCancelled: Bool {
                 lock.lock()
@@ -1390,8 +1392,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return isCancelledStorage
             }
 
-            func cancel() {
+            var evictsCachedVariantsOnCompletion: Bool {
                 lock.lock()
+                defer { lock.unlock() }
+                return evictsCachedVariantsOnCompletionStorage
+            }
+
+            func cancel(evictCachedVariantsOnCompletion: Bool = false) {
+                lock.lock()
+                evictsCachedVariantsOnCompletionStorage = evictsCachedVariantsOnCompletionStorage || evictCachedVariantsOnCompletion
                 isCancelledStorage = true
                 lock.unlock()
             }
@@ -1571,9 +1580,11 @@ struct DrawingCanvasView: UIViewRepresentable {
                     )
                 }
 
-                guard !token.isCancelled else { return }
+                guard !Self.evictCancelledImageIfNeeded(token, imageURL: imageURL) else { return }
 
                 DispatchQueue.main.async { [weak self] in
+                    guard !Self.evictCancelledImageIfNeeded(token, imageURL: imageURL) else { return }
+
                     guard let self,
                           self.imageLoadRequestID == requestID,
                           self.imageLoadToken === token,
@@ -1583,6 +1594,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                           self.loadingStoredFileName == storedFileName,
                           self.loadingFileIdentity == fileIdentity,
                           self.loadingRasterBudget == budget else {
+                        Self.evictCancelledImageIfNeeded(token, imageURL: imageURL)
                         return
                     }
 
@@ -1607,7 +1619,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func releaseImage(evictCachedVariants: Bool = false) {
-            cancelPendingImageLoad()
+            cancelPendingImageLoad(evictCachedVariantsAfterDecode: evictCachedVariants)
             if evictCachedVariants, let imageURL {
                 ImageMemoryCache.shared.removeImages(for: imageURL)
             }
@@ -1617,13 +1629,23 @@ struct DrawingCanvasView: UIViewRepresentable {
             loadedRasterBudget = nil
         }
 
-        private func cancelPendingImageLoad() {
-            imageLoadToken?.cancel()
+        private func cancelPendingImageLoad(evictCachedVariantsAfterDecode: Bool = false) {
+            imageLoadToken?.cancel(evictCachedVariantsOnCompletion: evictCachedVariantsAfterDecode)
             imageLoadRequestID = nil
             imageLoadToken = nil
             loadingStoredFileName = nil
             loadingFileIdentity = nil
             loadingRasterBudget = nil
+        }
+
+        private static func evictCancelledImageIfNeeded(_ token: ImageLoadToken, imageURL: URL) -> Bool {
+            guard token.isCancelled else { return false }
+
+            if token.evictsCachedVariantsOnCompletion {
+                ImageMemoryCache.shared.removeImages(for: imageURL)
+            }
+
+            return true
         }
 
         private static func fileIdentity(for url: URL) -> String {
