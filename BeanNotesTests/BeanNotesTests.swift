@@ -1403,6 +1403,70 @@ struct BeanNotesTests {
         #expect(!coordinator.dirtyPageIDs.contains(page.id))
     }
 
+    @Test @MainActor func canvasDismantleReleasesMaterializedPagesAfterFinalFlush() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCanvasDismantle-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "dismantle-flush.drawing")
+        let drawing = makeTestDrawing(color: .systemTeal, xOffset: 36)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        canvasView.drawing = drawing
+        coordinator.canvasViewDrawingDidChange(canvasView)
+
+        #expect(!container.canvasPagePairs.isEmpty)
+        #expect(!coordinator.registeredCanvasIDs.isEmpty)
+        #expect(coordinator.pendingSaves[page.id] != nil)
+
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+
+        #expect(container.canvasPagePairs.isEmpty)
+        #expect(coordinator.registeredCanvasIDs.isEmpty)
+        #expect(coordinator.pendingSaves[page.id] == nil)
+        #expect(coordinator.containerView == nil)
+
+        let deadline = ContinuousClock.now + .seconds(5)
+        var savedDrawing: PKDrawing?
+
+        while ContinuousClock.now < deadline {
+            if let data = try? Data(contentsOf: drawingStorage.drawingURL(for: page)),
+               let loaded = try? PKDrawing(data: data),
+               loaded.strokes.count == drawing.strokes.count {
+                savedDrawing = loaded
+                break
+            }
+
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        let finalDrawing = try #require(savedDrawing)
+        #expect(abs(finalDrawing.bounds.midX - drawing.bounds.midX) < 0.5)
+        #expect(abs(finalDrawing.bounds.midY - drawing.bounds.midY) < 0.5)
+    }
+
     private func makeDrawingCanvasView(
         page: NotePage,
         drawingStorage: DrawingStorageService

@@ -236,6 +236,8 @@ struct DrawingCanvasView: UIViewRepresentable {
     static func dismantleUIView(_ containerView: CanvasContainerView, coordinator: Coordinator) {
         coordinator.performFinalDrawingFlush(reason: "Editor closed")
         coordinator.hideToolPicker()
+        containerView.releaseAllMaterializedPages(flushDrawingsBeforeRelease: false)
+        coordinator.containerView = nil
     }
 
     final class CanvasContainerView: UIView, UIScrollViewDelegate {
@@ -888,9 +890,29 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        private func retirePageView(id: UUID, pageView: PageCanvasView) {
+        func releaseAllMaterializedPages(flushDrawingsBeforeRelease: Bool = true) {
+            for id in Array(pageViews.keys) {
+                if let pageView = pageViews[id] {
+                    retirePageView(
+                        id: id,
+                        pageView: pageView,
+                        flushDrawingBeforeRelease: flushDrawingsBeforeRelease
+                    )
+                }
+            }
+        }
+
+        private func retirePageView(
+            id: UUID,
+            pageView: PageCanvasView,
+            flushDrawingBeforeRelease: Bool = true
+        ) {
             if let page = pageView.page {
-                coordinator?.unregister(canvasView: pageView.canvasView, page: page)
+                coordinator?.unregister(
+                    canvasView: pageView.canvasView,
+                    page: page,
+                    flushDrawingBeforeRelease: flushDrawingBeforeRelease
+                )
             }
 
             pageView.releaseHeavyResources()
@@ -1846,9 +1868,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        func unregister(canvasView: PKCanvasView, page: NotePage) {
+        func unregister(
+            canvasView: PKCanvasView,
+            page: NotePage,
+            flushDrawingBeforeRelease: Bool = true
+        ) {
             let id = ObjectIdentifier(canvasView)
-            flushDrawingBeforeCanvasRelease(canvasView, for: page)
+            if flushDrawingBeforeRelease {
+                flushDrawingBeforeCanvasRelease(canvasView, for: page)
+            }
             pendingSaves[page.id]?.cancel()
             pendingSaves[page.id] = nil
             pendingSaveTokens[page.id] = nil
