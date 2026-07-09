@@ -8,6 +8,11 @@ import SwiftData
 
 @Model
 final class NotePage {
+    static let defaultPageWidth: Double = 1024
+    static let defaultPageHeight: Double = 1366
+    static let minimumPageDimension: Double = 1
+    static let maximumPageDimension: Double = 4096
+
     var id: UUID
     var pageOrder: Int
     var drawingFileName: String
@@ -48,8 +53,8 @@ final class NotePage {
         self.searchIndexUpdatedAt = searchIndexUpdatedAt
         self.backgroundStyleRaw = background.storageStyleRaw
         self.backgroundColorHex = background.colorHex
-        self.width = width
-        self.height = height
+        self.width = Self.normalizedPageDimension(width, fallback: Self.defaultPageWidth)
+        self.height = Self.normalizedPageDimension(height, fallback: Self.defaultPageHeight)
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.note = note
@@ -57,7 +62,15 @@ final class NotePage {
     }
 
     var pageSize: CGSize {
-        CGSize(width: width, height: height)
+        CGSize(width: normalizedWidth, height: normalizedHeight)
+    }
+
+    var normalizedWidth: Double {
+        Self.normalizedPageDimension(width, fallback: Self.defaultPageWidth)
+    }
+
+    var normalizedHeight: Double {
+        Self.normalizedPageDimension(height, fallback: Self.defaultPageHeight)
     }
 
     var background: NoteBackground {
@@ -94,5 +107,10 @@ final class NotePage {
     func markSearchIndexStale() {
         searchIndexUpdatedAt = nil
         note?.markSearchIndexStale()
+    }
+
+    static func normalizedPageDimension(_ value: Double, fallback: Double) -> Double {
+        guard value.isFinite, value >= minimumPageDimension else { return fallback }
+        return min(value, maximumPageDimension)
     }
 }

@@ -166,6 +166,53 @@ struct BeanNotesTests {
         #expect(note.updatedAt == touchedDate)
     }
 
+    @Test func notePageNormalizesCorruptStoredDimensions() {
+        let page = NotePage(pageOrder: 0, width: .nan, height: .infinity)
+
+        #expect(page.normalizedWidth == NotePage.defaultPageWidth)
+        #expect(page.normalizedHeight == NotePage.defaultPageHeight)
+        #expect(page.pageSize == CGSize(width: NotePage.defaultPageWidth, height: NotePage.defaultPageHeight))
+
+        page.width = 0
+        page.height = -12
+
+        #expect(page.pageSize == CGSize(width: NotePage.defaultPageWidth, height: NotePage.defaultPageHeight))
+
+        page.width = NotePage.maximumPageDimension + 900
+        page.height = 612
+
+        #expect(page.normalizedWidth == NotePage.maximumPageDimension)
+        #expect(page.normalizedHeight == 612)
+    }
+
+    @Test func attachmentFrameNormalizesCorruptStoredGeometry() {
+        let pageSize = CGSize(width: 612, height: 792)
+        let corruptFrame = Attachment.normalizedFrame(
+            x: .nan,
+            y: .infinity,
+            width: .nan,
+            height: -.infinity,
+            pageSize: pageSize
+        )
+
+        #expect(corruptFrame == CGRect(
+            x: Attachment.defaultX,
+            y: Attachment.defaultY,
+            width: Attachment.defaultWidth,
+            height: Attachment.defaultHeight
+        ))
+
+        let oversizedFrame = Attachment.normalizedFrame(
+            x: 800,
+            y: 900,
+            width: 900,
+            height: 1_200,
+            pageSize: pageSize
+        )
+
+        #expect(oversizedFrame == CGRect(x: 0, y: 0, width: 612, height: 792))
+    }
+
     @Test func localStorageCreatesAppRelativePaths() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesTests-\(UUID().uuidString)", isDirectory: true)
@@ -966,6 +1013,25 @@ struct BeanNotesTests {
         #expect(!moderateZoomBudget.shouldReplaceLoadedBudget(baseBudget))
     }
 
+    @Test func attachmentImageRasterBudgetNormalizesCorruptGeometry() {
+        let corruptBudget = AttachmentImageRasterBudget(
+            attachmentSize: CGSize(width: CGFloat.nan, height: CGFloat.infinity),
+            renderScale: .infinity
+        )
+        let partiallyValidBudget = AttachmentImageRasterBudget(
+            attachmentSize: CGSize(width: CGFloat.nan, height: 900),
+            renderScale: 2
+        )
+        let extremeZoomBudget = AttachmentImageRasterBudget(
+            attachmentSize: CGSize(width: CGFloat.greatestFiniteMagnitude, height: 1),
+            renderScale: CGFloat.greatestFiniteMagnitude
+        )
+
+        #expect(corruptBudget.maxPixelSize == 1_024)
+        #expect(partiallyValidBudget.maxPixelSize == 1_800)
+        #expect(extremeZoomBudget.maxPixelSize == 3_072)
+    }
+
     @Test func drawingCanvasLayoutSignatureTracksOnlyDocumentLayoutInputs() {
         let page = NotePage(
             pageOrder: 0,
@@ -1027,6 +1093,101 @@ struct BeanNotesTests {
             pageFlowMode: .continuous,
             hasTopContent: false
         ) != baseline)
+    }
+
+    @Test func drawingCanvasLayoutSignatureNormalizesCorruptPageDimensions() {
+        let page = NotePage(
+            pageOrder: 0,
+            background: .plain(),
+            width: .nan,
+            height: .infinity
+        )
+        let baseline = DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .continuous,
+            hasTopContent: false
+        )
+
+        #expect(DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .continuous,
+            hasTopContent: false
+        ) == baseline)
+
+        page.width = NotePage.maximumPageDimension + 100
+        page.height = 612
+        let clamped = DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .continuous,
+            hasTopContent: false
+        )
+
+        page.width = NotePage.maximumPageDimension + 900
+
+        #expect(DrawingCanvasLayoutSignature(
+            pages: [page],
+            pageFlowMode: .continuous,
+            hasTopContent: false
+        ) == clamped)
+    }
+
+    @Test @MainActor func drawingStaticSignatureNormalizesCorruptAttachmentGeometry() {
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Corrupt Image",
+            originalFileName: "corrupt.png",
+            storedFileName: "Imports/corrupt.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            isLocked: true,
+            rendersBehindDrawing: true
+        )
+        attachment.x = .nan
+        attachment.y = .infinity
+        attachment.width = .nan
+        attachment.height = .infinity
+
+        let signature = DrawingCanvasStaticContentSignature.attachmentComponent(for: attachment)
+
+        #expect(signature.contains("320x220"))
+    }
+
+    @Test @MainActor func renderSnapshotNormalizesCorruptPageAndAttachmentGeometry() {
+        let page = NotePage(
+            pageOrder: 0,
+            background: .plain()
+        )
+        page.width = .nan
+        page.height = .infinity
+
+        let snapshot = NotePageRenderSnapshot(page: page)
+
+        let corruptAttachment = Attachment(
+            kind: .image,
+            displayName: "Corrupt Render Image",
+            originalFileName: "corrupt-render.png",
+            storedFileName: "Imports/corrupt-render.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            isLocked: true,
+            rendersBehindDrawing: true
+        )
+        corruptAttachment.x = .nan
+        corruptAttachment.y = .infinity
+        corruptAttachment.width = .nan
+        corruptAttachment.height = .infinity
+        let attachmentSnapshot = NoteImageAttachmentRenderSnapshot(
+            attachment: corruptAttachment,
+            pageSize: snapshot.pageSize
+        )
+
+        #expect(snapshot.pageSize == CGSize(width: NotePage.defaultPageWidth, height: NotePage.defaultPageHeight))
+        #expect(attachmentSnapshot.frame == CGRect(
+            x: Attachment.defaultX,
+            y: Attachment.defaultY,
+            width: Attachment.defaultWidth,
+            height: Attachment.defaultHeight
+        ))
     }
 
     @Test func imageMemoryCacheEvictsAllVariantsForFileURL() throws {
@@ -1097,6 +1258,27 @@ struct BeanNotesTests {
         let cgImage = try #require(renderedImage.cgImage)
 
         #expect(max(cgImage.width, cgImage.height) <= 90)
+    }
+
+    @Test func thumbnailAttachmentRenderingNormalizesCorruptPixelBudget() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesThumbnailBudget-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let imageURL = rootURL.appendingPathComponent("image.png")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
+        try #require(image.pngData()).write(to: imageURL, options: [.atomic])
+
+        let rendered = try #require(ThumbnailService.renderAttachmentImage(at: imageURL, maxPixelSize: .nan))
+
+        #expect(rendered.size.width >= 1)
+        #expect(rendered.size.height >= 1)
     }
 
     @Test func imageMemoryCacheReusesStandardizedURLVariants() throws {

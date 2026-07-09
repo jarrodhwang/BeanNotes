@@ -15,10 +15,12 @@ struct ImageAttachmentView: View {
     @State private var resizeStart: CGRect?
 
     var body: some View {
+        let attachmentFrame = attachment.frame
+
         Image(uiImage: image)
             .resizable()
             .scaledToFit()
-            .frame(width: attachment.width, height: attachment.height)
+            .frame(width: attachmentFrame.width, height: attachmentFrame.height)
             .background {
                 if !attachment.isLocked {
                     Rectangle()
@@ -44,7 +46,7 @@ struct ImageAttachmentView: View {
                         .stroke(.blue.opacity(0.65), lineWidth: 1.5)
                 }
             }
-            .position(x: attachment.x + attachment.width / 2, y: attachment.y + attachment.height / 2)
+            .position(x: attachmentFrame.midX, y: attachmentFrame.midY)
             .gesture(moveGesture)
             .allowsHitTesting(!attachment.isLocked)
             .accessibilityElement(children: .ignore)

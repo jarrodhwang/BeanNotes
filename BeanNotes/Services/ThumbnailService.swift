@@ -18,12 +18,13 @@ struct NoteImageAttachmentRenderSnapshot: Sendable {
     var rendersBehindDrawing: Bool
 
     @MainActor
-    init(attachment: Attachment) {
+    init(attachment: Attachment, pageSize: CGSize?) {
+        let frame = attachment.normalizedFrame(for: pageSize)
         self.storedFileName = attachment.storedFileName
-        self.x = attachment.x
-        self.y = attachment.y
-        self.width = attachment.width
-        self.height = attachment.height
+        self.x = Double(frame.origin.x)
+        self.y = Double(frame.origin.y)
+        self.width = Double(frame.width)
+        self.height = Double(frame.height)
         self.createdAt = attachment.createdAt
         self.rendersBehindDrawing = attachment.rendersBehindDrawing
     }
@@ -45,14 +46,17 @@ struct NotePageRenderSnapshot: Sendable {
 
     @MainActor
     init(page: NotePage) {
+        let pageSize = page.pageSize
         self.id = page.id
         self.pageOrder = page.pageOrder
         self.drawingFileName = page.drawingFileName
         self.backgroundStyleRaw = page.backgroundStyleRaw
         self.backgroundColorHex = page.backgroundColorHex
-        self.width = page.width
-        self.height = page.height
-        self.imageAttachments = page.imageAttachments.map(NoteImageAttachmentRenderSnapshot.init)
+        self.width = Double(pageSize.width)
+        self.height = Double(pageSize.height)
+        self.imageAttachments = page.imageAttachments.map {
+            NoteImageAttachmentRenderSnapshot(attachment: $0, pageSize: pageSize)
+        }
     }
 
     nonisolated var pageSize: CGSize {
@@ -61,6 +65,8 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
+    nonisolated private static let maximumAttachmentThumbnailPixelSize = 16_384
+
     var storage = LocalStorageService()
     var drawingStorage = DrawingStorageService()
 
@@ -278,7 +284,7 @@ struct ThumbnailService {
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: max(1, Int(maxPixelSize.rounded()))
+            kCGImageSourceThumbnailMaxPixelSize: normalizedThumbnailPixelSize(maxPixelSize)
         ] as CFDictionary
 
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else {
@@ -286,6 +292,11 @@ struct ThumbnailService {
         }
 
         return UIImage(cgImage: cgImage)
+    }
+
+    nonisolated private static func normalizedThumbnailPixelSize(_ value: CGFloat) -> Int {
+        guard value.isFinite, value > 0 else { return 1 }
+        return max(1, Int(min(value.rounded(), CGFloat(maximumAttachmentThumbnailPixelSize))))
     }
 
 }

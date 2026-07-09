@@ -18,10 +18,14 @@ struct AttachmentImageRasterBudget: Equatable {
     let maxPixelSize: Int
 
     init(attachmentSize: CGSize, renderScale: CGFloat) {
-        let longestEdge = max(attachmentSize.width, attachmentSize.height)
-        let effectiveScale = renderScale > 0 ? renderScale : Self.defaultRenderScale
-        let requestedPixelSize = Int((longestEdge * effectiveScale).rounded(.up))
-        maxPixelSize = min(max(requestedPixelSize, Self.minimumPixelSize), Self.maximumPixelSize)
+        let longestEdge = Self.finitePositiveLongestEdge(in: attachmentSize)
+        let effectiveScale = renderScale.isFinite && renderScale > 0 ? renderScale : Self.defaultRenderScale
+        let scaledPixelSize = longestEdge * effectiveScale
+        let boundedPixelSize = scaledPixelSize.isFinite
+            ? min(scaledPixelSize.rounded(.up), CGFloat(Self.maximumPixelSize))
+            : CGFloat(Self.maximumPixelSize)
+        let requestedPixelSize = Int(max(boundedPixelSize, CGFloat(Self.minimumPixelSize)))
+        maxPixelSize = requestedPixelSize
     }
 
     func shouldReplaceLoadedBudget(_ loadedBudget: AttachmentImageRasterBudget?) -> Bool {
@@ -31,6 +35,13 @@ struct AttachmentImageRasterBudget: Equatable {
         let requested = CGFloat(maxPixelSize)
         return requested > loaded * Self.growthReloadFactor
             || requested < loaded * Self.shrinkReloadFactor
+    }
+
+    private static func finitePositiveLongestEdge(in size: CGSize) -> CGFloat {
+        let width = size.width.isFinite && size.width > 0 ? size.width : 0
+        let height = size.height.isFinite && size.height > 0 ? size.height : 0
+        let longestEdge = max(width, height)
+        return longestEdge > 0 ? longestEdge : CGFloat(minimumPixelSize) / defaultRenderScale
     }
 }
 
@@ -57,10 +68,37 @@ struct DrawingCanvasLayoutSignature: Equatable {
             PageSignature(
                 id: $0.id,
                 pageOrder: $0.pageOrder,
-                width: $0.width,
-                height: $0.height
+                width: $0.normalizedWidth,
+                height: $0.normalizedHeight
             )
         }
+    }
+}
+
+@MainActor
+enum DrawingCanvasStaticContentSignature {
+    static func signature(for page: NotePage) -> String {
+        let attachments = page.imageAttachments
+            .map(attachmentComponent)
+            .joined(separator: "|")
+
+        return [
+            page.backgroundStyleRaw,
+            page.backgroundColorHex,
+            attachments
+        ].joined(separator: "#")
+    }
+
+    static func attachmentComponent(for attachment: Attachment) -> String {
+        let frame = attachment.frame
+        let size = "\(Int(frame.width.rounded()))x\(Int(frame.height.rounded()))"
+        return [
+            attachment.id.uuidString,
+            attachment.storedFileName,
+            "\(attachment.isLocked)",
+            "\(attachment.rendersBehindDrawing)",
+            size
+        ].joined(separator: ":")
     }
 }
 
@@ -1165,16 +1203,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func staticContentSignature(for page: NotePage) -> String {
-            let attachments = page.imageAttachments.map {
-                "\($0.id.uuidString):\($0.storedFileName):\($0.isLocked):\($0.rendersBehindDrawing):\(Int($0.width))x\(Int($0.height))"
-            }
-            .joined(separator: "|")
-
-            return [
-                page.backgroundStyleRaw,
-                page.backgroundColorHex,
-                attachments
-            ].joined(separator: "#")
+            DrawingCanvasStaticContentSignature.signature(for: page)
         }
 
         func layoutPage() {
@@ -1470,7 +1499,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 releaseImage()
             }
 
-            frame = attachment.frame
+            frame = attachment.normalizedFrame(for: pageSize)
             isUserInteractionEnabled = !attachment.isLocked
             resizeHandle.isHidden = attachment.isLocked
             layer.borderWidth = attachment.isLocked ? 0 : 1.5
@@ -1542,7 +1571,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard isImageLoadingEnabled else { return }
 
             let budget = AttachmentImageRasterBudget(
-                attachmentSize: CGSize(width: attachment.width, height: attachment.height),
+                attachmentSize: attachment.normalizedFrame(for: pageSize).size,
                 renderScale: currentRenderScale
             )
             let storedFileName = attachment.storedFileName
@@ -1594,7 +1623,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                           self.loadingStoredFileName == storedFileName,
                           self.loadingFileIdentity == fileIdentity,
                           self.loadingRasterBudget == budget else {
-                        Self.evictCancelledImageIfNeeded(token, imageURL: imageURL)
+                        _ = Self.evictCancelledImageIfNeeded(token, imageURL: imageURL)
                         return
                     }
 

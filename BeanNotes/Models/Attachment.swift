@@ -36,6 +36,12 @@ enum AttachmentKind: String, Codable, CaseIterable, Sendable {
 
 @Model
 final class Attachment {
+    static let defaultX: Double = 80
+    static let defaultY: Double = 100
+    static let defaultWidth: Double = 320
+    static let defaultHeight: Double = 220
+    static let minimumDimension: Double = 1
+
     var id: UUID
     var kindRaw: String
     var displayName: String
@@ -78,10 +84,17 @@ final class Attachment {
         self.storedFileName = storedFileName
         self.contentTypeIdentifier = contentTypeIdentifier
         self.fileExtension = fileExtension
-        self.x = x
-        self.y = y
-        self.width = width
-        self.height = height
+        let frame = Self.normalizedFrame(
+            x: x,
+            y: y,
+            width: width,
+            height: height,
+            pageSize: nil
+        )
+        self.x = Double(frame.origin.x)
+        self.y = Double(frame.origin.y)
+        self.width = Double(frame.width)
+        self.height = Double(frame.height)
         self.isLocked = isLocked
         self.rendersBehindDrawing = rendersBehindDrawing ?? isLocked
         self.createdAt = createdAt
@@ -100,13 +113,20 @@ final class Attachment {
 
     var frame: CGRect {
         get {
-            CGRect(x: x, y: y, width: width, height: height)
+            normalizedFrame(for: nil)
         }
         set {
-            x = newValue.origin.x
-            y = newValue.origin.y
-            width = newValue.width
-            height = newValue.height
+            let frame = Self.normalizedFrame(
+                x: Double(newValue.origin.x),
+                y: Double(newValue.origin.y),
+                width: Double(newValue.width),
+                height: Double(newValue.height),
+                pageSize: nil
+            )
+            x = Double(frame.origin.x)
+            y = Double(frame.origin.y)
+            width = Double(frame.width)
+            height = Double(frame.height)
             touch()
         }
     }
@@ -114,5 +134,56 @@ final class Attachment {
     func touch(at date: Date = Date()) {
         updatedAt = date
         page?.touch(at: date)
+    }
+
+    func normalizedFrame(for pageSize: CGSize?) -> CGRect {
+        Self.normalizedFrame(
+            x: x,
+            y: y,
+            width: width,
+            height: height,
+            pageSize: pageSize
+        )
+    }
+
+    static func normalizedFrame(
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+        pageSize: CGSize?
+    ) -> CGRect {
+        let maxWidth = pageDimensionLimit(pageSize?.width)
+        let maxHeight = pageDimensionLimit(pageSize?.height)
+
+        let resolvedWidth = normalizedDimension(width, fallback: defaultWidth, maximum: maxWidth)
+        let resolvedHeight = normalizedDimension(height, fallback: defaultHeight, maximum: maxHeight)
+        let resolvedX = normalizedCoordinate(x, fallback: defaultX, maximum: max(maxWidth - resolvedWidth, 0))
+        let resolvedY = normalizedCoordinate(y, fallback: defaultY, maximum: max(maxHeight - resolvedHeight, 0))
+
+        return CGRect(x: resolvedX, y: resolvedY, width: resolvedWidth, height: resolvedHeight)
+    }
+
+    private static func normalizedDimension(_ value: Double, fallback: Double, maximum: Double) -> Double {
+        guard value.isFinite, value >= minimumDimension else {
+            return min(max(fallback, minimumDimension), maximum)
+        }
+
+        return min(value, maximum)
+    }
+
+    private static func normalizedCoordinate(_ value: Double, fallback: Double, maximum: Double) -> Double {
+        guard value.isFinite else {
+            return min(max(fallback, 0), maximum)
+        }
+
+        return min(max(value, 0), maximum)
+    }
+
+    private static func pageDimensionLimit(_ dimension: CGFloat?) -> Double {
+        guard let dimension else { return NotePage.maximumPageDimension }
+        let value = Double(dimension)
+        guard value.isFinite, value > 0 else { return NotePage.maximumPageDimension }
+        return max(value, minimumDimension)
     }
 }
