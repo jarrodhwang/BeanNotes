@@ -193,25 +193,27 @@ struct ThumbnailService {
         maxDimension: CGFloat
     ) async throws -> StoredFile {
         try await Task.detached(priority: .utility) {
-            let drawing = loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
-            let thumbnail = renderThumbnailImage(
-                snapshot: snapshot,
-                drawing: drawing,
-                rootURL: rootURL,
-                maxDimension: maxDimension
-            )
-            guard let data = thumbnail.jpegData(compressionQuality: 0.82) else {
-                throw ImportExportError.exportFailed
-            }
+            try autoreleasepool {
+                let drawing = loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
+                let thumbnail = renderThumbnailImage(
+                    snapshot: snapshot,
+                    drawing: drawing,
+                    rootURL: rootURL,
+                    maxDimension: maxDimension
+                )
+                guard let data = thumbnail.jpegData(compressionQuality: 0.82) else {
+                    throw ImportExportError.exportFailed
+                }
 
-            let storage = LocalStorageService(rootURL: rootURL)
-            return try storage.saveData(
-                data,
-                fileName: fileName,
-                contentType: .jpeg,
-                to: .thumbnails,
-                replacingExisting: true
-            )
+                let storage = LocalStorageService(rootURL: rootURL)
+                return try storage.saveData(
+                    data,
+                    fileName: fileName,
+                    contentType: .jpeg,
+                    to: .thumbnails,
+                    replacingExisting: true
+                )
+            }
         }.value
     }
 
@@ -258,18 +260,18 @@ struct ThumbnailService {
                 continue
             }
             let maxPixelSize = max(attachment.width, attachment.height) * max(renderScale, 0.25)
-            guard let image = renderImage(at: imageURL, maxPixelSize: maxPixelSize) else { continue }
+            guard let image = renderAttachmentImage(at: imageURL, maxPixelSize: maxPixelSize) else { continue }
             image.draw(in: attachment.frame)
         }
     }
 
-    nonisolated private static func renderImage(at url: URL, maxPixelSize: CGFloat) -> UIImage? {
+    nonisolated static func renderAttachmentImage(at url: URL, maxPixelSize: CGFloat) -> UIImage? {
         let options = [
             kCGImageSourceShouldCache: false
         ] as CFDictionary
 
         guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
-            return UIImage(contentsOfFile: url.path)
+            return nil
         }
 
         let thumbnailOptions = [
@@ -280,7 +282,7 @@ struct ThumbnailService {
         ] as CFDictionary
 
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else {
-            return UIImage(contentsOfFile: url.path)
+            return nil
         }
 
         return UIImage(cgImage: cgImage)

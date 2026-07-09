@@ -1057,6 +1057,27 @@ struct BeanNotesTests {
         #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
     }
 
+    @Test func thumbnailAttachmentRenderingUsesBoundedRaster() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesThumbnailAttachmentRaster-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let imageURL = rootURL.appendingPathComponent("large-attachment.jpg")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 720, height: 280)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 720, height: 280))
+        }
+        try #require(image.jpegData(compressionQuality: 0.9)).write(to: imageURL)
+
+        let renderedImage = try #require(ThumbnailService.renderAttachmentImage(at: imageURL, maxPixelSize: 90))
+        let cgImage = try #require(renderedImage.cgImage)
+
+        #expect(max(cgImage.width, cgImage.height) <= 90)
+    }
+
     @Test func imageMemoryCacheReusesStandardizedURLVariants() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesStandardizedImageCache-\(UUID().uuidString)", isDirectory: true)

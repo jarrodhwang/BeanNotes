@@ -1461,30 +1461,32 @@ struct ImportExportService {
         renderScale: CGFloat
     ) async throws {
         try await Task.detached(priority: .userInitiated) { () throws -> Void in
-            try Task.checkCancellation()
-            let drawing = ThumbnailService.loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
-            try Task.checkCancellation()
-            let image = ThumbnailService.renderPageImage(
-                snapshot: snapshot,
-                drawing: drawing,
-                rootURL: rootURL,
-                scale: renderScale
-            )
-            try Task.checkCancellation()
+            try autoreleasepool {
+                try Task.checkCancellation()
+                let drawing = ThumbnailService.loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
+                try Task.checkCancellation()
+                let image = ThumbnailService.renderPageImage(
+                    snapshot: snapshot,
+                    drawing: drawing,
+                    rootURL: rootURL,
+                    scale: renderScale
+                )
+                try Task.checkCancellation()
 
-            switch format {
-            case .png:
-                guard let data = image.pngData() else { throw ImportExportError.exportFailed }
+                switch format {
+                case .png:
+                    guard let data = image.pngData() else { throw ImportExportError.exportFailed }
+                    try Task.checkCancellation()
+                    try data.write(to: exportURL, options: [.atomic])
+                case .jpeg:
+                    guard let data = image.jpegData(compressionQuality: 0.9) else { throw ImportExportError.exportFailed }
+                    try Task.checkCancellation()
+                    try data.write(to: exportURL, options: [.atomic])
+                case .pdf:
+                    try writePDFImage(image, pageSize: snapshot.pageSize, exportURL: exportURL)
+                }
                 try Task.checkCancellation()
-                try data.write(to: exportURL, options: [.atomic])
-            case .jpeg:
-                guard let data = image.jpegData(compressionQuality: 0.9) else { throw ImportExportError.exportFailed }
-                try Task.checkCancellation()
-                try data.write(to: exportURL, options: [.atomic])
-            case .pdf:
-                try writePDFImage(image, pageSize: snapshot.pageSize, exportURL: exportURL)
             }
-            try Task.checkCancellation()
         }.value
     }
 
