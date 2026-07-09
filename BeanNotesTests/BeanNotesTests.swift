@@ -792,6 +792,40 @@ struct BeanNotesTests {
         #expect(DrawingRenderQuality.ultraFine.imageScaleMultiplier > DrawingRenderQuality.highResolution.imageScaleMultiplier)
     }
 
+    @Test func drawingResolutionStatusReportsCurrentBackingScale() {
+        let ultraFineStatus = DrawingRenderResolutionStatus(
+            quality: .ultraFine,
+            zoomScale: 6,
+            screenScale: 2
+        )
+
+        #expect(ultraFineStatus.qualityLabel == "Ultra Fine")
+        #expect(ultraFineStatus.zoomText == "600%")
+        #expect(ultraFineStatus.drawingScaleText == "6.5x")
+        #expect(ultraFineStatus.maximumZoomText == "600%")
+        #expect(ultraFineStatus.maximumDrawingScaleText == "6.5x")
+        #expect(ultraFineStatus.menuSummary == "Ultra Fine detail, 6.5x drawing backing")
+        #expect(ultraFineStatus.stripText == "6.5x backing")
+        #expect(ultraFineStatus.settingsSummary.contains("PencilKit strokes stay vector data"))
+        #expect(ultraFineStatus.accessibilityLabel == "Ultra Fine detail, 600% zoom, drawing backing 6.5 times")
+
+        #expect(DrawingRenderResolutionStatus.drawingBackingScale(
+            quality: .balanced,
+            zoomScale: 10,
+            screenScale: 2
+        ) == 4)
+        #expect(DrawingRenderResolutionStatus.drawingBackingScale(
+            quality: .highResolution,
+            zoomScale: 0.75,
+            screenScale: 2
+        ) == 2)
+        #expect(DrawingRenderResolutionStatus.drawingBackingScale(
+            quality: .highResolution,
+            zoomScale: .infinity,
+            screenScale: .nan
+        ) == 1)
+    }
+
     @Test func drawingInputModeMapsToPencilKitPolicies() {
         #expect(DrawingInputMode.defaultMode == .pencilOnly)
         #expect(DrawingInputMode.allCases.map(\.label) == ["Pencil Only", "Pencil or Finger"])

@@ -5,6 +5,7 @@
 
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct NoteEditorView: View {
     @Environment(\.modelContext) private var modelContext
@@ -661,7 +662,7 @@ struct NoteEditorView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "Zoom \(currentZoomText), \(drawingRenderQuality.label) drawing detail, \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink"
+            "Zoom \(currentZoomText), \(drawingRenderQuality.label) drawing detail, \(activeResolutionStatus.drawingScaleText) drawing backing, \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink"
         )
     }
 
@@ -670,6 +671,7 @@ struct NoteEditorView: View {
             Section {
                 Label("Current \(currentZoomText)", systemImage: "viewfinder")
                 Label("Detail \(drawingRenderQuality.label)", systemImage: drawingRenderQuality.systemImage)
+                Label(activeResolutionStatus.menuSummary, systemImage: "ruler")
                 Label("Touch \(drawingInputMode.label)", systemImage: drawingInputMode.systemImage)
                 Label("Ink \(strokeZoomBehavior.label)", systemImage: strokeZoomBehavior.systemImage)
                 if penPaletteMode == .custom, toolState.selectedToolUsesInkColor {
@@ -806,12 +808,21 @@ struct NoteEditorView: View {
             .frame(height: 34)
             .padding(.horizontal, 3)
         }
-        .accessibilityLabel("Zoom \(currentZoomText), \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink")
-        .accessibilityHint("Zoom, fit the selected page, change drawing detail, touch mode, or ink width")
+        .accessibilityIdentifier("Zoom resolution status")
+        .accessibilityLabel("Zoom \(currentZoomText), \(activeResolutionStatus.menuSummary), \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink")
+        .accessibilityHint("Zoom, fit the selected page, change drawing detail, touch mode, resolution, or ink width")
     }
 
     private var currentZoomText: String {
         DrawingZoomLevel.percentageText(for: currentZoomScale)
+    }
+
+    private var activeResolutionStatus: DrawingRenderResolutionStatus {
+        DrawingRenderResolutionStatus(
+            quality: drawingRenderQuality,
+            zoomScale: currentZoomScale,
+            screenScale: UIScreen.main.scale
+        )
     }
 
     private var isDetailWritingModeActive: Bool {
@@ -889,9 +900,20 @@ struct NoteEditorView: View {
                 Text(status.storedInkText)
                     .font(.caption2.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
+
+                Divider()
+                    .frame(height: 18)
+
+                Label {
+                    Text(activeResolutionStatus.stripText)
+                        .monospacedDigit()
+                } icon: {
+                    Image(systemName: "ruler")
+                        .foregroundStyle(beanNotesTheme.accentColor)
+                }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(status.accessibilityLabel)
+            .accessibilityLabel("\(status.accessibilityLabel), \(activeResolutionStatus.accessibilityLabel)")
 
             Button {
                 lockCurrentPageInk()

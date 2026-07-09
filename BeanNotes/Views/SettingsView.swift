@@ -66,6 +66,14 @@ struct SettingsView: View {
         DrawingStrokeZoomBehavior(rawValue: strokeZoomBehaviorRaw) ?? DrawingStrokeZoomBehavior.defaultBehavior
     }
 
+    private var selectedDrawingResolutionStatus: DrawingRenderResolutionStatus {
+        DrawingRenderResolutionStatus(
+            quality: selectedDrawingRenderQuality,
+            zoomScale: selectedDrawingRenderQuality.maximumZoomScale,
+            screenScale: UIScreen.main.scale
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -234,6 +242,10 @@ struct SettingsView: View {
                     }
 
                     Text(selectedDrawingRenderQuality.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text(selectedDrawingResolutionStatus.settingsSummary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

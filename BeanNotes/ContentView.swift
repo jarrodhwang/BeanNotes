@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 25
+    static let currentWelcomeContentVersion = 26
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,13 +162,13 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Ink Lock", systemImage: "lock")
+                featureBadge("Resolution", systemImage: "ruler")
                 featureBadge("Vector Ink", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Ink Lock", systemImage: "lock")
+                featureBadge("Resolution", systemImage: "ruler")
                 featureBadge("Vector Ink", systemImage: "scope")
             }
         }
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Detail writing now has a page-ink lock for keeping tiny strokes consistent after zooming in."
+            "Detail writing now reports its active resolution budget while keeping PencilKit strokes as vector data."
         }
     }
 
@@ -228,14 +228,14 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
+                title: "Resolution status",
+                detail: "See active drawing backing scale in the zoom menu, calibration strip, and Apple Pencil settings.",
+                systemImage: "ruler"
+            ),
+            Highlight(
                 title: "Lock Page Ink",
                 detail: "Save the current effective page width from the zoom strip or menu, then keep that ink size across zoom levels.",
                 systemImage: "lock"
-            ),
-            Highlight(
-                title: "Detail ink preview",
-                detail: "See the palette sample change from stored width to effective page width while writing at high zoom.",
-                systemImage: "scribble"
             ),
             Highlight(
                 title: "Light Touch Focus",

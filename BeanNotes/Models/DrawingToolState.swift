@@ -494,6 +494,83 @@ enum DrawingRenderQuality: String, CaseIterable, Identifiable {
     }
 }
 
+struct DrawingRenderResolutionStatus: Equatable {
+    let qualityLabel: String
+    let zoomText: String
+    let drawingScaleText: String
+    let maximumZoomText: String
+    let maximumDrawingScaleText: String
+    let menuSummary: String
+    let stripText: String
+    let settingsSummary: String
+    let accessibilityLabel: String
+
+    init(
+        quality: DrawingRenderQuality,
+        zoomScale: CGFloat,
+        screenScale: CGFloat
+    ) {
+        let normalizedZoomScale = Self.normalizedPositive(zoomScale, fallback: 1)
+        let normalizedScreenScale = Self.normalizedPositive(screenScale, fallback: 1)
+        let drawingBackingScale = Self.drawingBackingScale(
+            quality: quality,
+            zoomScale: normalizedZoomScale,
+            screenScale: normalizedScreenScale
+        )
+        let maximumDrawingBackingScale = Self.maximumDrawingBackingScale(
+            quality: quality,
+            screenScale: normalizedScreenScale
+        )
+
+        qualityLabel = quality.label
+        zoomText = DrawingZoomLevel.percentageText(for: normalizedZoomScale)
+        drawingScaleText = Self.scaleText(for: drawingBackingScale)
+        maximumZoomText = DrawingZoomLevel.percentageText(for: quality.maximumZoomScale)
+        maximumDrawingScaleText = Self.scaleText(for: maximumDrawingBackingScale)
+        menuSummary = "\(quality.label) detail, \(drawingScaleText) drawing backing"
+        stripText = "\(drawingScaleText) backing"
+        settingsSummary = "Detail presets up to \(maximumZoomText); drawing backing caps at \(maximumDrawingScaleText) on this device. PencilKit strokes stay vector data."
+        accessibilityLabel = "\(quality.label) detail, \(zoomText) zoom, drawing backing \(Self.accessibilityScaleText(for: drawingBackingScale))"
+    }
+
+    static func drawingBackingScale(
+        quality: DrawingRenderQuality,
+        zoomScale: CGFloat,
+        screenScale: CGFloat
+    ) -> CGFloat {
+        let normalizedZoomScale = Self.normalizedPositive(zoomScale, fallback: 1)
+        let normalizedScreenScale = Self.normalizedPositive(screenScale, fallback: 1)
+        let requestedScale = max(normalizedZoomScale, 1) * normalizedScreenScale
+        return min(requestedScale, maximumDrawingBackingScale(quality: quality, screenScale: normalizedScreenScale))
+    }
+
+    static func maximumDrawingBackingScale(
+        quality: DrawingRenderQuality,
+        screenScale: CGFloat
+    ) -> CGFloat {
+        normalizedPositive(screenScale, fallback: 1) * quality.drawingScaleMultiplier
+    }
+
+    private static func normalizedPositive(_ value: CGFloat, fallback: CGFloat) -> CGFloat {
+        guard value.isFinite, value > 0 else { return fallback }
+        return value
+    }
+
+    private static func scaleText(for scale: CGFloat) -> String {
+        guard scale.isFinite, scale > 0 else { return "1x" }
+
+        if abs(scale.rounded() - scale) < 0.01 {
+            return "\(Int(scale.rounded()))x"
+        }
+
+        return String(format: "%.1fx", Double(scale))
+    }
+
+    private static func accessibilityScaleText(for scale: CGFloat) -> String {
+        scaleText(for: scale).replacingOccurrences(of: "x", with: " times")
+    }
+}
+
 @MainActor
 final class DrawingToolState: ObservableObject {
     private enum DefaultsKey {

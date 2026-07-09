@@ -43,6 +43,7 @@ final class BeanNotesUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["Ink preview"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Zoom out"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Zoom resolution status"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Focus drawing mode"].waitForExistence(timeout: 8))
     }
 
@@ -77,8 +78,8 @@ final class BeanNotesUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Resolution status"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Lock Page Ink"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Detail ink preview"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Light Touch Focus"].waitForExistence(timeout: 8))
 
         let startWritingButton = app.buttons["Start Writing"]
