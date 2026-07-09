@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 20
+    static let currentWelcomeContentVersion = 21
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
@@ -162,14 +162,14 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Detail Mode", systemImage: "pencil.tip")
-                featureBadge("600% Zoom", systemImage: "scope")
+                featureBadge("Light Touch", systemImage: "hand.raised")
+                featureBadge("Vector Ink", systemImage: "scope")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Detail Mode", systemImage: "pencil.tip")
-                featureBadge("600% Zoom", systemImage: "scope")
+                featureBadge("Light Touch", systemImage: "hand.raised")
+                featureBadge("Vector Ink", systemImage: "scope")
             }
         }
         .font(.callout.weight(.semibold))
@@ -212,7 +212,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private note space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Detail Writing Mode now prepares Ultra Fine rendering, Light Touch ink, zoom-calibrated widths, and 600% zoom in one step."
+            "Light Touch Focus prepares a quieter iPad writing surface with Pencil Only input, Ultra Fine rendering, and zoom-calibrated ink."
         }
     }
 
@@ -228,18 +228,18 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "One-tap detail setup",
-                detail: "Use the zoom menu to switch into a careful handwriting setup without tuning each control manually.",
-                systemImage: "pencil.tip"
+                title: "Light Touch Focus",
+                detail: "Use the zoom menu to hide editor chrome and start a Pencil Only, close-writing surface in one step.",
+                systemImage: "hand.raised"
             ),
             Highlight(
-                title: "600% vector handwriting",
-                detail: "PencilKit strokes stay editable while the page uses Ultra Fine render scaling for close work.",
+                title: "Vector handwriting",
+                detail: "PencilKit strokes stay editable while Ultra Fine rendering keeps close writing crisp as you zoom.",
                 systemImage: "scope"
             ),
             Highlight(
                 title: "Light Touch calibration",
-                detail: "The shortcut keeps stored widths intact while making new ink finer on the page at high zoom.",
+                detail: "Zoom-calibrated widths keep stored ink intact while making new strokes finer on the page.",
                 systemImage: "scribble"
             )
         ]

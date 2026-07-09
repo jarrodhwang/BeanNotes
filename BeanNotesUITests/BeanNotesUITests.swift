@@ -73,8 +73,8 @@ final class BeanNotesUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to BeanNotes"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["One-tap detail setup"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["600% vector handwriting"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Light Touch Focus"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Vector handwriting"].waitForExistence(timeout: 8))
 
         let startWritingButton = app.buttons["Start Writing"]
         XCTAssertTrue(startWritingButton.waitForExistence(timeout: 8))

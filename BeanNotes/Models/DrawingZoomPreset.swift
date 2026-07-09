@@ -120,3 +120,21 @@ enum DrawingDetailWritingMode {
         "Enable detail writing mode"
     }
 }
+
+enum DrawingLightTouchFocusMode {
+    static let label = "Light Touch Focus"
+    static let systemImage = "hand.raised"
+    static let renderQuality: DrawingRenderQuality = .ultraFine
+    static let inputMode: DrawingInputMode = .pencilOnly
+    static let strokeZoomBehavior: DrawingStrokeZoomBehavior = .zoomCalibrated
+    static let widthMode: DrawingStrokeWidthMode = .lightTouch
+    static let zoomScale: CGFloat = DrawingZoomPreset.fineDetail.scale
+
+    static var description: String {
+        "Hide editor chrome, keep finger touches for navigation, and use Ultra Fine Light Touch ink at 400 percent zoom."
+    }
+
+    static var accessibilityLabel: String {
+        "Enable light touch focus"
+    }
+}

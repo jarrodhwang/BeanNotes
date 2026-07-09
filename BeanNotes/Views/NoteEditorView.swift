@@ -616,6 +616,19 @@ struct NoteEditorView: View {
                 }
                 .accessibilityLabel(DrawingDetailWritingMode.accessibilityLabel)
                 .accessibilityHint(DrawingDetailWritingMode.description)
+
+                Button {
+                    applyLightTouchFocusMode()
+                } label: {
+                    Label(
+                        DrawingLightTouchFocusMode.label,
+                        systemImage: isLightTouchFocusModeActive
+                            ? "checkmark"
+                            : DrawingLightTouchFocusMode.systemImage
+                    )
+                }
+                .accessibilityLabel(DrawingLightTouchFocusMode.accessibilityLabel)
+                .accessibilityHint(DrawingLightTouchFocusMode.description)
             }
 
             Section {
@@ -725,6 +738,15 @@ struct NoteEditorView: View {
             && strokeZoomBehavior == DrawingDetailWritingMode.strokeZoomBehavior
             && toolState.widthMode == DrawingDetailWritingMode.widthMode
             && DrawingZoomLevel.isScale(currentZoomScale, closeTo: DrawingDetailWritingMode.zoomScale)
+    }
+
+    private var isLightTouchFocusModeActive: Bool {
+        isWorkspaceFocusModeEnabled
+            && drawingRenderQuality == DrawingLightTouchFocusMode.renderQuality
+            && drawingInputMode == DrawingLightTouchFocusMode.inputMode
+            && strokeZoomBehavior == DrawingLightTouchFocusMode.strokeZoomBehavior
+            && toolState.widthMode == DrawingLightTouchFocusMode.widthMode
+            && DrawingZoomLevel.isScale(currentZoomScale, closeTo: DrawingLightTouchFocusMode.zoomScale)
     }
 
     private var activeInkReadout: DrawingStrokeWidthReadout {
@@ -916,6 +938,15 @@ struct NoteEditorView: View {
         strokeZoomBehaviorRaw = DrawingDetailWritingMode.strokeZoomBehavior.rawValue
         toolState.selectWidthMode(DrawingDetailWritingMode.widthMode)
         setZoomScale(DrawingDetailWritingMode.zoomScale)
+    }
+
+    private func applyLightTouchFocusMode() {
+        drawingRenderQualityRaw = DrawingLightTouchFocusMode.renderQuality.rawValue
+        drawingInputModeRaw = DrawingLightTouchFocusMode.inputMode.rawValue
+        strokeZoomBehaviorRaw = DrawingLightTouchFocusMode.strokeZoomBehavior.rawValue
+        toolState.selectWidthMode(DrawingLightTouchFocusMode.widthMode)
+        setZoomScale(DrawingLightTouchFocusMode.zoomScale)
+        setFocusModeEnabled(true)
     }
 
     private func setDrawingRenderQuality(_ quality: DrawingRenderQuality) {

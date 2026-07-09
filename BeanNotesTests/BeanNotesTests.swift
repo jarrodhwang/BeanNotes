@@ -834,6 +834,16 @@ struct BeanNotesTests {
         #expect(DrawingDetailWritingMode.description.contains("600 percent zoom"))
     }
 
+    @Test func lightTouchFocusModeBundlesQuietIPadWritingSettings() {
+        #expect(DrawingLightTouchFocusMode.label == "Light Touch Focus")
+        #expect(DrawingLightTouchFocusMode.renderQuality == .ultraFine)
+        #expect(DrawingLightTouchFocusMode.inputMode == .pencilOnly)
+        #expect(DrawingLightTouchFocusMode.strokeZoomBehavior == .zoomCalibrated)
+        #expect(DrawingLightTouchFocusMode.widthMode == .lightTouch)
+        #expect(DrawingLightTouchFocusMode.zoomScale == DrawingZoomPreset.fineDetail.scale)
+        #expect(DrawingLightTouchFocusMode.description.contains("400 percent zoom"))
+    }
+
     @Test func welcomeModalAppearsForFirstRunAndNewContentVersions() {
         #expect(ContentView.shouldShowWelcome(hasSeenWelcome: false, seenContentVersion: 0))
         #expect(ContentView.shouldShowWelcome(
