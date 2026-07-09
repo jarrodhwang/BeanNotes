@@ -495,6 +495,7 @@ struct ImportExportService {
             return [exportURL]
         case .png, .jpeg:
             var urls: [URL] = []
+            var currentExportURL: URL?
             do {
                 for snapshot in snapshots {
                     try Task.checkCancellation()
@@ -502,6 +503,7 @@ struct ImportExportService {
                     let fileName = "\(title)-Page-\(snapshot.pageOrder + 1).\(format.fileExtension)"
                     let exportDirectory = try storage.directoryURL(for: .exports)
                     let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName(fileName))
+                    currentExportURL = exportURL
                     try await Self.exportPageSnapshot(
                         snapshot,
                         format: format,
@@ -510,8 +512,12 @@ struct ImportExportService {
                         renderScale: Self.exportRenderScale(for: snapshot)
                     )
                     urls.append(exportURL)
+                    currentExportURL = nil
                 }
             } catch {
+                if let currentExportURL {
+                    removeExportFiles([currentExportURL])
+                }
                 removeExportFiles(urls)
                 throw error
             }
@@ -589,6 +595,7 @@ struct ImportExportService {
             return [exportURL]
         case .png, .jpeg:
             var urls: [URL] = []
+            var currentExportURL: URL?
             let total = max(snapshots.count, 1)
 
             do {
@@ -602,6 +609,7 @@ struct ImportExportService {
                     let fileName = "\(note.title.sanitizedFileName)-Page-\(snapshot.pageOrder + 1).\(format.fileExtension)"
                     let exportDirectory = try storage.directoryURL(for: .exports)
                     let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName(fileName))
+                    currentExportURL = exportURL
                     try await Self.exportPageSnapshot(
                         snapshot,
                         format: format,
@@ -610,9 +618,13 @@ struct ImportExportService {
                         renderScale: Self.exportRenderScale(for: snapshot)
                     )
                     urls.append(exportURL)
+                    currentExportURL = nil
                     progress?((Double(index) + 1) / Double(total), "Exported page \(index + 1) of \(total).")
                 }
             } catch {
+                if let currentExportURL {
+                    removeExportFiles([currentExportURL])
+                }
                 removeExportFiles(urls)
                 throw error
             }
