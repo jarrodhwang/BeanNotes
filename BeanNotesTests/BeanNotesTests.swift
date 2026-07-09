@@ -1315,6 +1315,79 @@ struct BeanNotesTests {
         #expect(rendered.size.height >= 1)
     }
 
+    @Test @MainActor func thumbnailRenderingNormalizesInvalidMaxDimensions() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesThumbnailDimension-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let page = NotePage(pageOrder: 0, width: 1_024, height: 1_366)
+        let snapshot = NotePageRenderSnapshot(page: page)
+        let invalidThumbnail = ThumbnailService.renderThumbnailImage(
+            snapshot: snapshot,
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            maxDimension: .nan
+        )
+        let cappedThumbnail = ThumbnailService.renderThumbnailImage(
+            snapshot: snapshot,
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            maxDimension: 20_000
+        )
+        let invalidCGImage = try #require(invalidThumbnail.cgImage)
+        let cappedCGImage = try #require(cappedThumbnail.cgImage)
+
+        #expect(max(invalidCGImage.width, invalidCGImage.height) <= 360)
+        #expect(max(invalidCGImage.width, invalidCGImage.height) > 0)
+        #expect(max(cappedCGImage.width, cappedCGImage.height) <= 1_024)
+        #expect(max(cappedCGImage.width, cappedCGImage.height) > 0)
+    }
+
+    @Test @MainActor func pageRenderingNormalizesInvalidAndExtremeScales() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPageRenderScale-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let page = NotePage(pageOrder: 0, width: 320, height: 240)
+        let snapshot = NotePageRenderSnapshot(page: page)
+        let nanScaleImage = ThumbnailService.renderPageImage(
+            snapshot: snapshot,
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: .nan
+        )
+        let negativeScaleImage = ThumbnailService.renderPageImage(
+            snapshot: snapshot,
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: -12
+        )
+        let nanCGImage = try #require(nanScaleImage.cgImage)
+        let negativeCGImage = try #require(negativeScaleImage.cgImage)
+
+        #expect(nanCGImage.width == 320)
+        #expect(nanCGImage.height == 240)
+        #expect(negativeCGImage.width == 320)
+        #expect(negativeCGImage.height == 240)
+
+        let widePage = NotePage(pageOrder: 0, width: 4_096, height: 512)
+        let wideSnapshot = NotePageRenderSnapshot(page: widePage)
+        let extremeScaleImage = ThumbnailService.renderPageImage(
+            snapshot: wideSnapshot,
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: 100
+        )
+        let extremeCGImage = try #require(extremeScaleImage.cgImage)
+
+        #expect(max(extremeCGImage.width, extremeCGImage.height) <= 6_144)
+        #expect(min(extremeCGImage.width, extremeCGImage.height) > 0)
+    }
+
     @Test func imageMemoryCacheReusesStandardizedURLVariants() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesStandardizedImageCache-\(UUID().uuidString)", isDirectory: true)

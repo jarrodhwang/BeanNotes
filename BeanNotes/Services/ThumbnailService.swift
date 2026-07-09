@@ -65,6 +65,11 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
+    nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
+    nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
+    nonisolated private static let defaultPageRenderScale: CGFloat = 1
+    nonisolated private static let minimumPageRenderScale: CGFloat = 0.25
+    nonisolated private static let maximumPageRenderPixelSize: CGFloat = 6_144
     nonisolated private static let maximumAttachmentThumbnailPixelSize = 16_384
 
     var storage = LocalStorageService()
@@ -131,7 +136,8 @@ struct ThumbnailService {
     ) -> UIImage {
         let pageSize = snapshot.pageSize
         let longestSide = max(pageSize.width, pageSize.height)
-        let scale = min(maxDimension / max(longestSide, 1), 1)
+        let targetMaxDimension = normalizedThumbnailMaxDimension(maxDimension)
+        let scale = min(targetMaxDimension / max(longestSide, 1), 1)
         let thumbnailSize = CGSize(width: pageSize.width * scale, height: pageSize.height * scale)
 
         let format = UIGraphicsImageRendererFormat()
@@ -160,6 +166,7 @@ struct ThumbnailService {
         scale: CGFloat
     ) -> UIImage {
         let size = snapshot.pageSize
+        let scale = normalizedPageRenderScale(scale, pageSize: size)
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = true
@@ -297,6 +304,23 @@ struct ThumbnailService {
     nonisolated private static func normalizedThumbnailPixelSize(_ value: CGFloat) -> Int {
         guard value.isFinite, value > 0 else { return 1 }
         return max(1, Int(min(value.rounded(), CGFloat(maximumAttachmentThumbnailPixelSize))))
+    }
+
+    nonisolated private static func normalizedThumbnailMaxDimension(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite, value > 0 else { return defaultThumbnailMaxDimension }
+        return min(max(value, 1), maximumThumbnailMaxDimension)
+    }
+
+    nonisolated private static func normalizedPageRenderScale(_ value: CGFloat, pageSize: CGSize) -> CGFloat {
+        guard value.isFinite, value > 0 else { return defaultPageRenderScale }
+
+        let longestSide = max(pageSize.width, pageSize.height)
+        guard longestSide.isFinite, longestSide > 0 else {
+            return min(max(value, minimumPageRenderScale), defaultPageRenderScale)
+        }
+
+        let maximumScale = max(minimumPageRenderScale, maximumPageRenderPixelSize / longestSide)
+        return min(max(value, minimumPageRenderScale), maximumScale)
     }
 
 }
