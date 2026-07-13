@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct FolderListView: View {
     @Environment(\.beanNotesTheme) private var beanNotesTheme
@@ -58,7 +59,10 @@ struct FolderListView: View {
         .padding(.horizontal, 18)
         .padding(.top, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(beanNotesTheme.sidebarBackground)
+        .background {
+            BeanNotesPaperBackground(theme: beanNotesTheme, baseColor: beanNotesTheme.sidebarBackground)
+                .ignoresSafeArea()
+        }
         .navigationTitle("BeanNotes")
         .tint(beanNotesTheme.accentColor)
     }
@@ -90,9 +94,11 @@ struct FolderListView: View {
             selectedFolderID = folder.id
         } label: {
             HStack(spacing: 12) {
-                Circle()
-                    .fill(folderColor)
-                    .frame(width: 16, height: 16)
+                FolderProjectMarker(
+                    colorHex: folder.colorHex,
+                    theme: beanNotesTheme,
+                    size: 20
+                )
 
                 Text(folder.name)
                     .font(.headline)
@@ -144,6 +150,7 @@ struct FolderListView: View {
 
 struct FolderEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.beanNotesTheme) private var beanNotesTheme
 
     var title: String
     var initialName: String
@@ -198,13 +205,11 @@ struct FolderEditorView: View {
 
                 Section("Color") {
                     HStack(spacing: 12) {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color(hex: colorHex))
-                            .frame(width: 46, height: 46)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                            }
+                        FolderProjectMarker(
+                            colorHex: colorHex,
+                            theme: beanNotesTheme,
+                            size: 46
+                        )
                             .accessibilityHidden(true)
 
                         ColorPicker(
@@ -274,5 +279,42 @@ struct FolderEditorView: View {
 
         let luminance = (0.299 * red) + (0.587 * green) + (0.114 * blue)
         return luminance > 0.68 ? .black : .white
+    }
+}
+
+private struct FolderProjectMarker: View {
+    var colorHex: String
+    var theme: BeanNotesTheme
+    var size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(hex: colorHex))
+
+            if theme == .bean {
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: size * 0.46, weight: .bold))
+                    .foregroundStyle(readableForegroundColor)
+            }
+        }
+        .frame(width: size, height: size)
+        .overlay {
+            Circle()
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(size > 24 ? 0.1 : 0), radius: 3, y: 1)
+        .accessibilityHidden(true)
+    }
+
+    private var readableForegroundColor: Color {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        UIColor(hex: colorHex).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+
+        let luminance = (0.299 * red) + (0.587 * green) + (0.114 * blue)
+        return luminance > 0.64 ? .black.opacity(0.74) : .white
     }
 }

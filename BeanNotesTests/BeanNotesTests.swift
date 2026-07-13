@@ -1121,6 +1121,41 @@ struct BeanNotesTests {
         ))
     }
 
+    @Test func beanThemeIsTheFreshInstallFallback() throws {
+        let suiteName = "BeanNotesThemeTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(BeanNotesTheme.currentFromDefaults(defaults) == .bean)
+
+        defaults.set(BeanNotesTheme.blueberry.rawValue, forKey: BeanNotesTheme.storageKey)
+        #expect(BeanNotesTheme.currentFromDefaults(defaults) == .blueberry)
+
+        defaults.set("unknown-theme", forKey: BeanNotesTheme.storageKey)
+        #expect(BeanNotesTheme.currentFromDefaults(defaults) == .bean)
+    }
+
+    @Test func beanThemeMapsToMascotPaperAndNotificationAssets() {
+        #expect(BeanNotesTheme.bean.brandImageName == "BeanBadge")
+        #expect(BeanNotesTheme.bean.paperTextureImageName == "BeanPaperTexture")
+        #expect(BeanNotesTheme.bean.notificationAttachmentName == "BeanNotesNotificationIcon")
+        #expect(BeanNotesTheme.bean.defaultNoteBackgroundHex == "#FFF9EC")
+        #expect(BeanNotesTheme.bean.folderCreatedBody(folderName: "Projects").contains("Bean"))
+
+        #expect(BeanNotesTheme.standard.brandImageName == nil)
+        #expect(BeanNotesTheme.standard.paperTextureImageName == nil)
+        #expect(BeanNotesTheme.blueberry.brandImageName == nil)
+    }
+
+    @Test func folderWelcomeUsesOnlyInAppFeedbackWhileForegrounded() {
+        #expect(!LocalNotificationService.shouldPresentSystemNotificationInForeground(
+            identifier: "folder-welcome-test"
+        ))
+        #expect(LocalNotificationService.shouldPresentSystemNotificationInForeground(
+            identifier: "unrelated-notification"
+        ))
+    }
+
     @Test func penPaletteUsesCompactDockingOnNarrowIPadWidths() {
         let narrowSize = CGSize(width: 1_024, height: 1_366)
         let wideSize = CGSize(width: 1_366, height: 1_024)

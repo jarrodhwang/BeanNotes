@@ -21,7 +21,7 @@ struct LibraryView: View {
     ]) private var recentNotes: [NoteDocument]
 
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
-    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
+    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = BeanNotesTheme.defaultTheme.defaultNoteBackgroundHex
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
 
     @State private var selectedFolderID: UUID?
@@ -291,6 +291,7 @@ struct LibraryView: View {
         folderBeingEdited = nil
         if let createdToast {
             showFolderCreatedToast(createdToast)
+            LocalNotificationService.shared.notifyFolderCreated(named: createdToast.folderName)
         }
         return true
     }
@@ -701,7 +702,7 @@ private struct NoteTabbedEditorWorkspace: View {
 
                 }
             }
-            .background(beanNotesTheme.appBackground)
+            .background(beanNotesTheme.appBackground.ignoresSafeArea())
             .tint(beanNotesTheme.accentColor)
             .animation(.snappy(duration: 0.18), value: isFocusModeEnabled)
             .onChange(of: selectedNote.id) { _, _ in
@@ -825,19 +826,38 @@ private struct FolderCreatedToastView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(hex: toast.colorHex))
+            if let brandImageName = beanNotesTheme.brandImageName {
+                Image(brandImageName)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 38, height: 38)
+                    .clipShape(Circle())
+                    .overlay(alignment: .bottomTrailing) {
+                        Circle()
+                            .fill(Color(hex: toast.colorHex))
+                            .frame(width: 13, height: 13)
+                            .overlay {
+                                Circle()
+                                    .stroke(beanNotesTheme.cardBackground, lineWidth: 2)
+                            }
+                    }
+                    .accessibilityHidden(true)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(hex: toast.colorHex))
 
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                }
+                .frame(width: 36, height: 30)
+                .accessibilityHidden(true)
             }
-            .frame(width: 36, height: 30)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Folder created")
+                Text(beanNotesTheme == .bean ? "Folder ready" : "Folder created")
                     .font(.subheadline.weight(.semibold))
 
                 Text(toast.message)
@@ -930,7 +950,10 @@ private struct NotesCardGridView: View {
             .padding(.vertical, 38)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(beanNotesTheme.appBackground)
+        .background {
+            BeanNotesPaperBackground(theme: beanNotesTheme, baseColor: beanNotesTheme.appBackground)
+                .ignoresSafeArea()
+        }
         .tint(beanNotesTheme.accentColor)
         .overlay {
             if isImportingDocument {
@@ -1031,15 +1054,50 @@ private struct NotesCardGridView: View {
         }
     }
 
+    @ViewBuilder
     private var emptyState: some View {
         let hasSearch = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        return ContentUnavailableView(
-            hasSearch ? "No Matching Notes" : "No Notes",
-            systemImage: hasSearch ? "magnifyingglass" : "note.text",
-            description: Text(hasSearch ? "Try a different search." : "Create a note in this folder.")
-        )
-        .frame(maxWidth: .infinity, minHeight: 360)
+        if hasSearch {
+            ContentUnavailableView(
+                "No Matching Notes",
+                systemImage: "magnifyingglass",
+                description: Text("Try a different search.")
+            )
+            .frame(maxWidth: .infinity, minHeight: 360)
+        } else if beanNotesTheme == .bean {
+            VStack(spacing: 14) {
+                Image("BeanWelcomeImage")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 152)
+                    .accessibilityHidden(true)
+
+                Text("Ready for a new note?")
+                    .font(.title3.weight(.semibold))
+
+                Text("Bean will keep this folder cozy until your first idea arrives.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Button(action: createNote) {
+                    Label("Create Note", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, minHeight: 390)
+            .padding(.horizontal, 24)
+        } else {
+            ContentUnavailableView(
+                "No Notes",
+                systemImage: "note.text",
+                description: Text("Create a note in this folder.")
+            )
+            .frame(maxWidth: .infinity, minHeight: 360)
+        }
     }
 }
 

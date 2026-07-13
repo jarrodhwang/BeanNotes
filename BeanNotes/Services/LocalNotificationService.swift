@@ -8,6 +8,8 @@ import UserNotifications
 
 final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = LocalNotificationService()
+    static let folderNotificationsEnabledKey = "folderWelcomeNotificationsEnabled"
+    private static let folderWelcomeIdentifierPrefix = "folder-welcome-"
 
     private let center = UNUserNotificationCenter.current()
 
@@ -24,6 +26,7 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
         let displayName = name.isEmpty ? "New Folder" : name
 
         Task {
+            guard UserDefaults.standard.bool(forKey: Self.folderNotificationsEnabledKey) else { return }
             guard await notificationsAreEnabled() else { return }
 
             let theme = BeanNotesTheme.currentFromDefaults()
@@ -34,13 +37,29 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
             content.attachments = notificationIconAttachment(for: theme).map { [$0] } ?? []
 
             let request = UNNotificationRequest(
-                identifier: "folder-welcome-\(UUID().uuidString)",
+                identifier: "\(Self.folderWelcomeIdentifierPrefix)\(UUID().uuidString)",
                 content: content,
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
             )
 
-            try? await center.add(request)
+            do {
+                try await center.add(request)
+            } catch {
+                NSLog("BeanNotes could not schedule a folder notification: \(error)")
+            }
         }
+    }
+
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        await center.notificationSettings().authorizationStatus
+    }
+
+    func requestAuthorization() async throws -> Bool {
+        try await center.requestAuthorization(options: [.alert, .sound])
+    }
+
+    static func shouldPresentSystemNotificationInForeground(identifier: String) -> Bool {
+        !identifier.hasPrefix(folderWelcomeIdentifierPrefix)
     }
 
     private func notificationIconAttachment(for theme: BeanNotesTheme) -> UNNotificationAttachment? {
@@ -75,6 +94,11 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        // Folder creation already gets immediate in-app feedback while BeanNotes is active.
+        guard Self.shouldPresentSystemNotificationInForeground(
+            identifier: notification.request.identifier
+        ) else { return [] }
+
+        return [.banner, .list, .sound]
     }
 }

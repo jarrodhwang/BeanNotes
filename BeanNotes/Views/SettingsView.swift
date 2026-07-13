@@ -6,19 +6,22 @@
 import SwiftData
 import SwiftUI
 import UIKit
+import UserNotifications
 
 struct SettingsView: View {
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
+    @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
-    @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
+    @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.defaultTheme.rawValue
+    @AppStorage(LocalNotificationService.folderNotificationsEnabledKey) private var folderNotificationsEnabled = false
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
-    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
+    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = BeanNotesTheme.defaultTheme.defaultNoteBackgroundHex
 
     @State private var storageUsage: LocalStorageUsageSnapshot?
     @State private var isLoadingStorageUsage = false
@@ -33,11 +36,14 @@ struct SettingsView: View {
     @State private var backupStatusMessage: String?
     @State private var backupErrorMessage: String?
     @State private var backupTask: Task<Void, Never>?
+    @State private var notificationAuthorizationStatus = UNAuthorizationStatus.notDetermined
+    @State private var isRequestingNotificationAuthorization = false
+    @State private var notificationErrorMessage: String?
 
     private let oldExportAgeDays = 7
 
     private var selectedMoodTheme: BeanNotesTheme {
-        BeanNotesTheme(rawValue: beanNotesThemeRaw) ?? .standard
+        BeanNotesTheme(rawValue: beanNotesThemeRaw) ?? .defaultTheme
     }
 
     private var selectedAppTheme: AppTheme {
@@ -81,6 +87,25 @@ struct SettingsView: View {
 
                     Button("Apply Theme Icon") {
                         AppIconService.applyIcon(for: selectedMoodTheme)
+                    }
+                }
+
+                Section("Notifications") {
+                    Toggle("Folder Welcomes", isOn: $folderNotificationsEnabled)
+                        .disabled(isRequestingNotificationAuthorization)
+
+                    Text(notificationDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if notificationAuthorizationStatus == .denied {
+                        Button("Open System Settings", action: openSystemSettings)
+                    }
+
+                    if let notificationErrorMessage {
+                        Label(notificationErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(.primary)
                     }
                 }
 
@@ -229,16 +254,34 @@ struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(selectedMoodTheme.appBackground)
+            .background {
+                BeanNotesPaperBackground(theme: selectedMoodTheme, baseColor: selectedMoodTheme.appBackground)
+                    .ignoresSafeArea()
+            }
             .navigationTitle("Settings")
             .tint(selectedMoodTheme.accentColor)
             .onAppear(perform: migrateLegacyPaginationSettingIfNeeded)
             .task {
                 await refreshStorageUsage()
+                await refreshNotificationAuthorizationStatus()
             }
             .onChange(of: beanNotesThemeRaw) { _, rawValue in
-                let theme = BeanNotesTheme(rawValue: rawValue) ?? .standard
+                let theme = BeanNotesTheme(rawValue: rawValue) ?? .defaultTheme
                 defaultBackgroundColorHex = theme.defaultNoteBackgroundHex
+            }
+            .onChange(of: folderNotificationsEnabled) { _, isEnabled in
+                guard isEnabled else { return }
+
+                Task {
+                    await enableFolderNotifications()
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+
+                Task {
+                    await refreshNotificationAuthorizationStatus()
+                }
             }
             .confirmationDialog(
                 "Clean up exports older than \(oldExportAgeDays) days?",
@@ -285,6 +328,73 @@ struct SettingsView: View {
 
         pageLayoutModeRaw = legacyMode.layoutMode.rawValue
         pageCreationModeRaw = legacyMode.creationMode.rawValue
+    }
+
+    private var notificationDescription: String {
+        switch notificationAuthorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            folderNotificationsEnabled
+                ? "BeanNotes will welcome newly created folders with a local notification."
+                : "Turn this on if you want a local notification when a folder is created."
+        case .denied:
+            "Notifications are disabled for BeanNotes in System Settings."
+        case .notDetermined:
+            "This optional alert is requested only when you turn it on."
+        @unknown default:
+            "Notification availability could not be determined."
+        }
+    }
+
+    @MainActor
+    private func enableFolderNotifications() async {
+        guard !isRequestingNotificationAuthorization else { return }
+
+        isRequestingNotificationAuthorization = true
+        notificationErrorMessage = nil
+        defer { isRequestingNotificationAuthorization = false }
+
+        do {
+            let status = await LocalNotificationService.shared.authorizationStatus()
+            let isAuthorized: Bool
+
+            switch status {
+            case .authorized, .provisional, .ephemeral:
+                isAuthorized = true
+            case .notDetermined:
+                isAuthorized = try await LocalNotificationService.shared.requestAuthorization()
+            case .denied:
+                isAuthorized = false
+            @unknown default:
+                isAuthorized = false
+            }
+
+            notificationAuthorizationStatus = await LocalNotificationService.shared.authorizationStatus()
+            guard folderNotificationsEnabled else { return }
+            folderNotificationsEnabled = isAuthorized
+        } catch {
+            folderNotificationsEnabled = false
+            notificationErrorMessage = error.localizedDescription
+            await refreshNotificationAuthorizationStatus()
+        }
+    }
+
+    @MainActor
+    private func refreshNotificationAuthorizationStatus() async {
+        notificationAuthorizationStatus = await LocalNotificationService.shared.authorizationStatus()
+
+        switch notificationAuthorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            break
+        case .denied, .notDetermined:
+            folderNotificationsEnabled = false
+        @unknown default:
+            folderNotificationsEnabled = false
+        }
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 
     @MainActor
@@ -426,19 +536,29 @@ private struct ThemePreviewCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.accentColor)
+            Group {
+                if let brandImageName = theme.brandImageName {
+                    Image(brandImageName)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(theme.accentColor)
 
-                Image(systemName: theme.symbolName)
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(.white)
+                        Image(systemName: theme.symbolName)
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                }
             }
             .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(theme.secondaryAccentColor.opacity(0.55), lineWidth: 2)
             }
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(theme.label)
@@ -460,7 +580,10 @@ private struct ThemePreviewCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.cardBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background {
+            BeanNotesPaperBackground(theme: theme, baseColor: theme.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(theme.accentColor.opacity(0.16), lineWidth: 1)

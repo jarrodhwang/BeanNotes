@@ -11,17 +11,17 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 26
+    static let currentWelcomeContentVersion = 27
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
-    @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
+    @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.defaultTheme.rawValue
     @AppStorage(Self.welcomeSeenKey) private var hasSeenWelcome = false
     @AppStorage(Self.welcomeContentVersionKey) private var seenWelcomeContentVersion = 0
 
     @State private var isShowingWelcome = false
 
     private var beanNotesTheme: BeanNotesTheme {
-        BeanNotesTheme(rawValue: beanNotesThemeRaw) ?? .standard
+        BeanNotesTheme(rawValue: beanNotesThemeRaw) ?? .defaultTheme
     }
 
     var body: some View {
@@ -121,9 +121,15 @@ private struct WelcomeToBeanNotesView: View {
     }
 
     private func welcomeImage(size: CGFloat) -> some View {
-        Image("BeanWelcomeImage")
-            .resizable()
-            .scaledToFill()
+        ZStack {
+            BeanNotesPaperBackground(theme: theme, baseColor: theme.previewBackground)
+
+            Image("BeanWelcomeImage")
+                .resizable()
+                .scaledToFit()
+                .padding(8)
+                .accessibilityHidden(true)
+        }
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: min(size * 0.24, 36), style: .continuous))
             .overlay {
@@ -131,7 +137,7 @@ private struct WelcomeToBeanNotesView: View {
                     .stroke(.white.opacity(0.72), lineWidth: 2)
             }
             .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
-            .accessibilityLabel("Bean")
+            .accessibilityLabel("Bean, the BeanNotes mascot")
     }
 
     private var featureHighlights: some View {
@@ -161,15 +167,15 @@ private struct WelcomeToBeanNotesView: View {
     private var featureBadges: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
-                featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Resolution", systemImage: "ruler")
-                featureBadge("Vector Ink", systemImage: "scope")
+                featureBadge("Private", systemImage: "lock.shield")
+                featureBadge("Bean Theme", systemImage: "pawprint.fill")
+                featureBadge("Paper", systemImage: "doc.text")
             }
 
             VStack(spacing: 10) {
-                featureBadge("Local", systemImage: "lock.shield")
-                featureBadge("Resolution", systemImage: "ruler")
-                featureBadge("Vector Ink", systemImage: "scope")
+                featureBadge("Private", systemImage: "lock.shield")
+                featureBadge("Bean Theme", systemImage: "pawprint.fill")
+                featureBadge("Paper", systemImage: "doc.text")
             }
         }
         .font(.callout.weight(.semibold))
@@ -183,7 +189,7 @@ private struct WelcomeToBeanNotesView: View {
     }
 
     private func imageSize(for size: CGSize) -> CGFloat {
-        min(154, max(96, min(size.width, size.height) * 0.28))
+        min(190, max(124, min(size.width, size.height) * 0.32))
     }
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
@@ -210,9 +216,9 @@ private extension WelcomeToBeanNotesView.Mode {
     var subtitle: String {
         switch self {
         case .firstRun:
-            "A private note space for handwritten ideas, PDFs, images, and study notes."
+            "A private, paper-inspired space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Detail writing now reports its active resolution budget while keeping PencilKit strokes as vector data."
+            "Bean now brings a warmer paper theme, friendly project markers, and an all-new app icon."
         }
     }
 
@@ -228,19 +234,19 @@ private extension WelcomeToBeanNotesView.Mode {
     var highlights: [Highlight] {
         [
             Highlight(
-                title: "Resolution status",
-                detail: "See active drawing backing scale in the zoom menu, calibration strip, and Apple Pencil settings.",
-                systemImage: "ruler"
+                title: "A familiar face",
+                detail: "Bean now appears throughout the app, from the welcome screen to folder confirmations.",
+                systemImage: "pawprint.fill"
             ),
             Highlight(
-                title: "Lock Page Ink",
-                detail: "Save the current effective page width from the zoom strip or menu, then keep that ink size across zoom levels.",
-                systemImage: "lock"
+                title: "Cozy paper surfaces",
+                detail: "Warm, low-contrast texture adds character while keeping notes and controls easy to read.",
+                systemImage: "doc.text"
             ),
             Highlight(
-                title: "Light Touch Focus",
-                detail: "Use the zoom menu to start a Pencil Only, Ultra Fine, zoom-calibrated writing surface in one step.",
-                systemImage: "hand.raised"
+                title: "Optional folder welcomes",
+                detail: "Turn on folder notifications in Settings when you want Bean to celebrate a new project.",
+                systemImage: "bell.badge"
             )
         ]
     }

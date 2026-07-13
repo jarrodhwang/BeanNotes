@@ -39,6 +39,7 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
 enum BeanNotesTheme: String, CaseIterable, Identifiable {
     static let storageKey = "beanNotesTheme"
+    static let defaultTheme = BeanNotesTheme.bean
 
     case standard = "default"
     case bean
@@ -84,7 +85,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#0A84FF"
         case .bean:
-            "#D97706"
+            "#A64B2A"
         case .blueberry:
             "#2563EB"
         }
@@ -95,7 +96,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#34C759"
         case .bean:
-            "#FBBF24"
+            "#9F1239"
         case .blueberry:
             "#38BDF8"
         }
@@ -106,7 +107,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#F6F7FB"
         case .bean:
-            "#FFF7ED"
+            "#FFF8EA"
         case .blueberry:
             "#EFF6FF"
         }
@@ -117,7 +118,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#ECEFF5"
         case .bean:
-            "#FEF3C7"
+            "#F3E6D3"
         case .blueberry:
             "#DBEAFE"
         }
@@ -128,7 +129,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#FFFFFF"
         case .bean:
-            "#FFFBEB"
+            "#FFFCF6"
         case .blueberry:
             "#F8FBFF"
         }
@@ -139,7 +140,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#EEF1F6"
         case .bean:
-            "#FDECC8"
+            "#EEDDC7"
         case .blueberry:
             "#DCEBFF"
         }
@@ -150,7 +151,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#0A84FF"
         case .bean:
-            "#F59E0B"
+            "#A64B2A"
         case .blueberry:
             "#3B82F6"
         }
@@ -161,9 +162,27 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#FFFFFF"
         case .bean:
-            "#FFF7D6"
+            "#FFF9EC"
         case .blueberry:
             "#EAF3FF"
+        }
+    }
+
+    var brandImageName: String? {
+        switch self {
+        case .bean:
+            "BeanBadge"
+        case .standard, .blueberry:
+            nil
+        }
+    }
+
+    var paperTextureImageName: String? {
+        switch self {
+        case .bean:
+            "BeanPaperTexture"
+        case .standard, .blueberry:
+            nil
         }
     }
 
@@ -201,18 +220,18 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "\"\(folderName)\" is ready."
         case .bean:
-            "Welcome to \"\(folderName)\"!"
+            "Bean set up “\(folderName)” for you."
         case .blueberry:
             "\"\(folderName)\" is ready for fresh notes."
         }
     }
 
     var accentColor: Color {
-        Color(hex: accentHex)
+        adaptiveColor(light: accentHex, dark: accentDarkHex)
     }
 
     var secondaryAccentColor: Color {
-        Color(hex: secondaryAccentHex)
+        adaptiveColor(light: secondaryAccentHex, dark: secondaryAccentDarkHex)
     }
 
     var appBackground: Color {
@@ -232,8 +251,30 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
     }
 
     static func currentFromDefaults(_ defaults: UserDefaults = .standard) -> BeanNotesTheme {
-        let rawValue = defaults.string(forKey: storageKey) ?? BeanNotesTheme.standard.rawValue
-        return BeanNotesTheme(rawValue: rawValue) ?? .standard
+        let rawValue = defaults.string(forKey: storageKey) ?? defaultTheme.rawValue
+        return BeanNotesTheme(rawValue: rawValue) ?? defaultTheme
+    }
+
+    private var accentDarkHex: String {
+        switch self {
+        case .standard:
+            "#409CFF"
+        case .bean:
+            "#F3B26A"
+        case .blueberry:
+            "#60A5FA"
+        }
+    }
+
+    private var secondaryAccentDarkHex: String {
+        switch self {
+        case .standard:
+            "#30D158"
+        case .bean:
+            "#FB7185"
+        case .blueberry:
+            "#38BDF8"
+        }
     }
 
     private var appBackgroundDarkHex: String {
@@ -241,7 +282,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#111318"
         case .bean:
-            "#1F1710"
+            "#1B1511"
         case .blueberry:
             "#0B1424"
         }
@@ -252,7 +293,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#171A21"
         case .bean:
-            "#2A1E12"
+            "#261B14"
         case .blueberry:
             "#111C30"
         }
@@ -263,7 +304,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#1F232B"
         case .bean:
-            "#2E2115"
+            "#302219"
         case .blueberry:
             "#18263D"
         }
@@ -274,7 +315,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .standard:
             "#2B313B"
         case .bean:
-            "#3A2A18"
+            "#423023"
         case .blueberry:
             "#1E3354"
         }
@@ -290,7 +331,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
 }
 
 private struct BeanNotesThemeKey: EnvironmentKey {
-    static let defaultValue: BeanNotesTheme = .standard
+    static let defaultValue: BeanNotesTheme = .defaultTheme
 }
 
 extension EnvironmentValues {
