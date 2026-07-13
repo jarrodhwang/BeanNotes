@@ -13,6 +13,7 @@ struct LibraryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.beanNotesTheme) private var beanNotesTheme
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
     @Query(sort: [
@@ -23,6 +24,7 @@ struct LibraryView: View {
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = BeanNotesTheme.defaultTheme.defaultNoteBackgroundHex
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
+    @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
 
     @State private var selectedFolderID: UUID?
     @State private var searchText = ""
@@ -42,6 +44,7 @@ struct LibraryView: View {
     @State private var searchIndexRefreshTask: Task<Void, Never>?
     @State private var folderCreatedToast: FolderCreatedToast?
     @State private var folderCreatedToastDismissTask: Task<Void, Never>?
+    @State private var isShowingBeanVisit = false
 
     private var sortedFolders: [NotebookFolder] {
         folders.sorted { lhs, rhs in
@@ -83,6 +86,38 @@ struct LibraryView: View {
             get: { selectedOpenNoteID != nil },
             set: { if !$0 { selectedOpenNoteID = nil } }
         )
+    }
+
+    private var isSafeForAutomaticBeanVisit: Bool {
+        selectedOpenNoteID == nil
+            && !isShowingFolderEditor
+            && !isShowingSettings
+            && !isShowingDocumentImporter
+            && !isImportingDocument
+            && folderCreatedToast == nil
+            && folderPendingDeletion == nil
+            && notePendingDeletion == nil
+            && errorMessage == nil
+            && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var canScheduleAutomaticBeanVisit: Bool {
+        let processInfo = ProcessInfo.processInfo
+        return BeanVisitPolicy.canSchedule(
+            theme: beanNotesTheme,
+            isEnabled: beanVisitsEnabled,
+            sceneIsActive: scenePhase == .active,
+            isSafeSurface: isSafeForAutomaticBeanVisit,
+            isLowPowerModeEnabled: processInfo.isLowPowerModeEnabled,
+            thermalState: processInfo.thermalState,
+            launchArguments: processInfo.arguments
+        )
+    }
+
+    private var beanVisitTransition: AnyTransition {
+        accessibilityReduceMotion
+            ? .opacity
+            : .move(edge: .trailing).combined(with: .opacity)
     }
 
     var body: some View {
@@ -129,6 +164,15 @@ struct LibraryView: View {
             )
         }
         .navigationSplitViewStyle(.balanced)
+        .overlay(alignment: .bottomTrailing) {
+            if isShowingBeanVisit {
+                BeanPetVisitView()
+                    .padding(.trailing, 22)
+                    .padding(.bottom, 18)
+                    .transition(beanVisitTransition)
+                    .zIndex(4)
+            }
+        }
         .overlay(alignment: .bottom) {
             if let folderCreatedToast {
                 FolderCreatedToastView(toast: folderCreatedToast)
@@ -140,6 +184,9 @@ struct LibraryView: View {
         }
         .onAppear {
             bootstrapLibrary()
+        }
+        .task(id: canScheduleAutomaticBeanVisit) {
+            await runAutomaticBeanVisitIfEligible()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
@@ -313,6 +360,58 @@ struct LibraryView: View {
                 }
             }
         }
+    }
+
+    @MainActor
+    private func runAutomaticBeanVisitIfEligible() async {
+        guard canScheduleAutomaticBeanVisit,
+              BeanVisitPolicy.cooldownHasElapsed(
+                now: Date(),
+                lastShownDate: BeanVisitPolicy.lastShownDate()
+              ) else {
+            hideBeanVisit(animated: false)
+            return
+        }
+
+        do {
+            try await Task.sleep(nanoseconds: BeanVisitPolicy.initialDelayNanoseconds)
+            guard !Task.isCancelled,
+                  canScheduleAutomaticBeanVisit,
+                  BeanVisitPolicy.cooldownHasElapsed(
+                    now: Date(),
+                    lastShownDate: BeanVisitPolicy.lastShownDate()
+                  ) else { return }
+
+            BeanVisitPolicy.recordVisit()
+            withAnimation(beanVisitAnimation) {
+                isShowingBeanVisit = true
+            }
+
+            try await Task.sleep(nanoseconds: BeanVisitPolicy.displayDurationNanoseconds)
+            guard !Task.isCancelled else { return }
+            hideBeanVisit(animated: true)
+        } catch {
+            hideBeanVisit(animated: true)
+        }
+    }
+
+    @MainActor
+    private func hideBeanVisit(animated: Bool) {
+        guard isShowingBeanVisit else { return }
+
+        if animated {
+            withAnimation(beanVisitAnimation) {
+                isShowingBeanVisit = false
+            }
+        } else {
+            isShowingBeanVisit = false
+        }
+    }
+
+    private var beanVisitAnimation: Animation {
+        accessibilityReduceMotion
+            ? .easeInOut(duration: 0.18)
+            : .spring(response: 0.42, dampingFraction: 0.86)
     }
 
     private func createNote() {
@@ -604,7 +703,20 @@ struct LibraryView: View {
         guard let page = note.sortedPages.first else { return }
 
         do {
-            _ = try await ThumbnailService().generateThumbnailInBackground(for: page, maxDimension: 420)
+            _ = try await ThumbnailService().generateThumbnailInBackground(
+                for: page,
+                theme: .currentFromDefaults(),
+                maxDimension: 420
+            )
+            try modelContext.save()
+        } catch is CancellationError {
+            // A concurrent theme change will let the newly visible note card
+            // regenerate the appearance-specific thumbnail.
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        do {
             try await NoteSearchIndexService().indexIfNeeded(note: note, modelContext: modelContext)
             try modelContext.save()
         } catch {
@@ -750,9 +862,15 @@ private struct NoteEditorTabBar: View {
     var body: some View {
         HStack(spacing: 12) {
             Button(action: backToLibrary) {
-                Image(systemName: "chevron.left")
-                    .font(.headline.weight(.semibold))
-                    .frame(width: 36, height: 36)
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.left")
+                        .font(.headline.weight(.semibold))
+
+                    if beanNotesTheme == .bean {
+                        BeanAvatarView(size: 30)
+                    }
+                }
+                .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back to library")
@@ -951,7 +1069,11 @@ private struct NotesCardGridView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background {
-            BeanNotesPaperBackground(theme: beanNotesTheme, baseColor: beanNotesTheme.appBackground)
+            BeanNotesPaperBackground(
+                theme: beanNotesTheme,
+                baseColor: beanNotesTheme.appBackground,
+                showsMascotWatermark: true
+            )
                 .ignoresSafeArea()
         }
         .tint(beanNotesTheme.accentColor)
@@ -988,8 +1110,12 @@ private struct NotesCardGridView: View {
             Spacer()
 
             HStack(spacing: 7) {
-                Image(systemName: beanNotesTheme.symbolName)
-                    .font(.subheadline.weight(.semibold))
+                if beanNotesTheme == .bean {
+                    BeanAvatarView(size: 26)
+                } else {
+                    Image(systemName: beanNotesTheme.symbolName)
+                        .font(.subheadline.weight(.semibold))
+                }
 
                 Text(beanNotesTheme.label)
                     .font(.subheadline.weight(.semibold))
@@ -1218,6 +1344,8 @@ private struct NoteCardView: View {
     @State private var thumbnailImage: UIImage?
     @State private var isLoadingThumbnail = false
     @State private var errorMessage: String?
+    @State private var thumbnailLoadTask: Task<Void, Never>?
+    @State private var thumbnailLoadRequestID: UUID?
 
     private let storage = LocalStorageService()
     private let thumbnailService = ThumbnailService()
@@ -1270,6 +1398,13 @@ private struct NoteCardView: View {
         .onAppear {
             loadThumbnail()
         }
+        .onChange(of: beanNotesTheme) { _, _ in
+            thumbnailImage = nil
+            loadThumbnail(forceRefresh: true)
+        }
+        .onDisappear {
+            cancelThumbnailLoad()
+        }
         .alert("BeanNotes", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -1317,13 +1452,22 @@ private struct NoteCardView: View {
     }
 
     private func loadThumbnail(forceRefresh: Bool = false) {
+        cancelThumbnailLoad()
+
         guard let page = note.sortedPages.first else {
             thumbnailImage = nil
             return
         }
 
+        let requestedTheme = beanNotesTheme
+
         if !forceRefresh,
            let relativePath = page.thumbnailFileName,
+           ThumbnailService.isCurrentThumbnailPath(
+               relativePath,
+               pageID: page.id,
+               theme: requestedTheme
+           ),
            let thumbnailURL = try? storage.validatedURL(forRelativePath: relativePath),
            let image = ImageMemoryCache.shared.image(
                 at: thumbnailURL,
@@ -1339,21 +1483,44 @@ private struct NoteCardView: View {
             return
         }
 
-        guard !isLoadingThumbnail else { return }
+        let requestID = UUID()
+        thumbnailLoadRequestID = requestID
         isLoadingThumbnail = true
 
-        Task { @MainActor in
-            defer { isLoadingThumbnail = false }
+        thumbnailLoadTask = Task { @MainActor in
+            defer {
+                if thumbnailLoadRequestID == requestID {
+                    thumbnailLoadRequestID = nil
+                    thumbnailLoadTask = nil
+                    isLoadingThumbnail = false
+                }
+            }
 
             do {
-                let url = try await thumbnailService.generateThumbnailInBackground(for: page, maxDimension: 360)
+                let url = try await thumbnailService.generateThumbnailInBackground(
+                    for: page,
+                    theme: requestedTheme,
+                    maxDimension: 360
+                )
+                try Task.checkCancellation()
+                guard thumbnailLoadRequestID == requestID else { return }
                 thumbnailImage = ImageMemoryCache.shared.image(at: url, maxPixelSize: 620)
                 try modelContext.save()
+            } catch is CancellationError {
+                return
             } catch {
+                guard thumbnailLoadRequestID == requestID else { return }
                 thumbnailImage = nil
                 errorMessage = "BeanNotes could not save the note preview. \(error.localizedDescription)"
             }
         }
+    }
+
+    private func cancelThumbnailLoad() {
+        thumbnailLoadTask?.cancel()
+        thumbnailLoadTask = nil
+        thumbnailLoadRequestID = nil
+        isLoadingThumbnail = false
     }
 
     private func fallbackFirstPageImage(for page: NotePage) -> UIImage? {

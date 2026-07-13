@@ -19,14 +19,7 @@ struct FolderListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Button(action: openSettings) {
-                Image(systemName: "gearshape")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
+            topControls
 
             searchField
 
@@ -60,11 +53,51 @@ struct FolderListView: View {
         .padding(.top, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
-            BeanNotesPaperBackground(theme: beanNotesTheme, baseColor: beanNotesTheme.sidebarBackground)
+            BeanNotesPaperBackground(
+                theme: beanNotesTheme,
+                baseColor: beanNotesTheme.sidebarBackground,
+                showsMascotWatermark: true
+            )
                 .ignoresSafeArea()
         }
         .navigationTitle("BeanNotes")
         .tint(beanNotesTheme.accentColor)
+    }
+
+    @ViewBuilder
+    private var topControls: some View {
+        if beanNotesTheme == .bean {
+            HStack(spacing: 12) {
+                BeanAvatarView(size: 48)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bean's corner")
+                        .font(.headline.weight(.bold))
+
+                    Text("Ready for your next idea")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                settingsButton
+            }
+        } else {
+            settingsButton
+        }
+    }
+
+    private var settingsButton: some View {
+        Button(action: openSettings) {
+            Image(systemName: "gearshape")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
     }
 
     private var searchField: some View {

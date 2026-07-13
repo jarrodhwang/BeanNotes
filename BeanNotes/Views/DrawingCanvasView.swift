@@ -134,6 +134,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var zoomScaleChanged: (CGFloat) -> Void = { _ in }
     var addPageAtBottom: () -> Void
     var topContent: AnyView?
+    var theme: BeanNotesTheme = .defaultTheme
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -195,7 +196,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             inputMode: inputMode,
             renderQuality: renderQuality,
             drawingStorage: drawingStorage,
-            coordinator: context.coordinator
+            coordinator: context.coordinator,
+            theme: theme
         )
         context.coordinator.configureToolPicker(mode: paletteMode)
 
@@ -220,7 +222,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             inputMode: inputMode,
             renderQuality: renderQuality,
             drawingStorage: drawingStorage,
-            coordinator: context.coordinator
+            coordinator: context.coordinator,
+            theme: theme
         )
 
         if context.coordinator.selectedPageID != selectedPageID,
@@ -309,6 +312,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var drawingStorage: DrawingStorageService?
         private weak var coordinator: Coordinator?
         private var inputMode: DrawingInputMode = DrawingInputMode.defaultMode
+        private var theme: BeanNotesTheme = .defaultTheme
         private var lastFitScale: CGFloat = 1
         private var lastBackgroundRenderScale: CGFloat = 0
         private var lastImageRenderScale: CGFloat = 0
@@ -414,14 +418,18 @@ struct DrawingCanvasView: UIViewRepresentable {
             inputMode: DrawingInputMode,
             renderQuality: DrawingRenderQuality,
             drawingStorage: DrawingStorageService,
-            coordinator: Coordinator
+            coordinator: Coordinator,
+            theme: BeanNotesTheme = .defaultTheme
         ) {
+            applyWorkspaceTheme(theme)
+
             let qualityChanged = self.renderQuality != renderQuality
             let inputModeChanged = self.inputMode != inputMode
             let selectionChanged = self.selectedPageID != (selectedPageID ?? pages.first?.id)
             self.pageFlowMode = pageFlowMode
             self.inputMode = inputMode
             self.renderQuality = renderQuality
+            self.theme = theme
             self.selectedPageID = selectedPageID ?? pages.first?.id
             self.drawingStorage = drawingStorage
             self.coordinator = coordinator
@@ -737,6 +745,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             autoAddFooterButton.layer.shadowOffset = CGSize(width: 0, height: 8)
             autoAddFooterButton.addTarget(self, action: #selector(handleAutoAddFooterTapped), for: .touchUpInside)
             contentView.addSubview(autoAddFooterButton)
+        }
+
+        private func applyWorkspaceTheme(_ theme: BeanNotesTheme) {
+            let shouldRevealPaperBackdrop = theme == .bean
+            backgroundColor = shouldRevealPaperBackdrop ? .clear : .systemGroupedBackground
+            isOpaque = !shouldRevealPaperBackdrop
         }
 
         private func beginProgrammaticZoom() {
@@ -1059,6 +1073,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 storage: drawingStorage.storage,
                 drawingStorage: drawingStorage,
                 inputMode: inputMode,
+                theme: theme,
                 coordinator: coordinator,
                 attachmentChanged: { [weak coordinator] in
                     coordinator?.notifyAttachmentChanged()
@@ -1418,11 +1433,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             storage: LocalStorageService,
             drawingStorage: DrawingStorageService,
             inputMode: DrawingInputMode,
+            theme: BeanNotesTheme = .defaultTheme,
             coordinator: Coordinator,
             attachmentChanged: @escaping () -> Void
         ) {
             let isNewPage = self.page?.id != page.id
-            let signature = staticContentSignature(for: page)
+            let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)"
             let needsStaticRefresh = isNewPage || signature != configurationSignature
             let pageSizeChanged = laidOutPageBounds.size != page.pageSize
             self.page = page
@@ -1434,6 +1450,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if needsStaticRefresh {
                 backgroundView.background = page.background
+                backgroundView.theme = theme
                 backgroundView.setNeedsDisplay()
                 configureImages(page.imageAttachments, storage: storage, attachmentChanged: attachmentChanged)
                 configurationSignature = signature
@@ -1802,6 +1819,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
     final class PageBackgroundUIView: UIView {
         var background: NoteBackground = .plain()
+        var theme: BeanNotesTheme = .defaultTheme
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -1835,7 +1853,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         override func draw(_ rect: CGRect) {
             guard let context = UIGraphicsGetCurrentContext() else { return }
-            NoteBackgroundRenderer.draw(background: background, in: bounds, context: context)
+            NoteBackgroundRenderer.draw(background: background, theme: theme, in: bounds, context: context)
         }
     }
 

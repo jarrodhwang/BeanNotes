@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 27
+    static let currentWelcomeContentVersion = 28
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.defaultTheme.rawValue
@@ -218,7 +218,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private, paper-inspired space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Bean now brings a warmer paper theme, friendly project markers, and an all-new app icon."
+            "Bean now peeks into your paper, tabs, and library—with optional surprise visits."
         }
     }
 
@@ -235,7 +235,7 @@ private extension WelcomeToBeanNotesView.Mode {
         [
             Highlight(
                 title: "A familiar face",
-                detail: "Bean now appears throughout the app, from the welcome screen to folder confirmations.",
+                detail: "A real-photo Bean avatar now appears in the library and note tabs, with optional quiet visits.",
                 systemImage: "pawprint.fill"
             ),
             Highlight(

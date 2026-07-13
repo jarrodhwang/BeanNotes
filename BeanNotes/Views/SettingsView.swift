@@ -11,10 +11,12 @@ import UserNotifications
 struct SettingsView: View {
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.defaultTheme.rawValue
     @AppStorage(LocalNotificationService.folderNotificationsEnabledKey) private var folderNotificationsEnabled = false
+    @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
@@ -39,6 +41,8 @@ struct SettingsView: View {
     @State private var notificationAuthorizationStatus = UNAuthorizationStatus.notDetermined
     @State private var isRequestingNotificationAuthorization = false
     @State private var notificationErrorMessage: String?
+    @State private var isPreviewingBeanVisit = false
+    @State private var beanVisitPreviewTask: Task<Void, Never>?
 
     private let oldExportAgeDays = 7
 
@@ -106,6 +110,21 @@ struct SettingsView: View {
                         Label(notificationErrorMessage, systemImage: "exclamationmark.triangle.fill")
                             .font(.footnote.weight(.medium))
                             .foregroundStyle(.primary)
+                    }
+                }
+
+                if selectedMoodTheme == .bean {
+                    Section("Bean Theme") {
+                        Toggle("Occasional Bean Visits", isOn: $beanVisitsEnabled)
+
+                        Text("When this is on, Bean may quietly peek into the main library after you have been there for a while. Visits never interrupt the note editor.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Button(action: previewBeanVisit) {
+                            Label("Invite Bean Now", systemImage: "pawprint.fill")
+                        }
+                        .disabled(isPreviewingBeanVisit)
                     }
                 }
 
@@ -268,6 +287,9 @@ struct SettingsView: View {
             .onChange(of: beanNotesThemeRaw) { _, rawValue in
                 let theme = BeanNotesTheme(rawValue: rawValue) ?? .defaultTheme
                 defaultBackgroundColorHex = theme.defaultNoteBackgroundHex
+                if theme != .bean {
+                    hideBeanVisitPreview(animated: false)
+                }
             }
             .onChange(of: folderNotificationsEnabled) { _, isEnabled in
                 guard isEnabled else { return }
@@ -309,13 +331,72 @@ struct SettingsView: View {
                     )
                 }
             }
+            .overlay(alignment: .bottomTrailing) {
+                if isPreviewingBeanVisit {
+                    BeanPetVisitView()
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 14)
+                        .transition(beanVisitPreviewTransition)
+                        .zIndex(4)
+                }
+            }
             .onDisappear {
                 backupTask?.cancel()
+                beanVisitPreviewTask?.cancel()
+                isPreviewingBeanVisit = false
             }
         }
         .environment(\.beanNotesTheme, selectedMoodTheme)
         .preferredColorScheme(selectedAppTheme.colorScheme)
         .presentationBackground(selectedMoodTheme.appBackground)
+    }
+
+    private var beanVisitPreviewTransition: AnyTransition {
+        accessibilityReduceMotion
+            ? .opacity
+            : .move(edge: .trailing).combined(with: .opacity)
+    }
+
+    private var beanVisitPreviewAnimation: Animation {
+        accessibilityReduceMotion
+            ? .easeInOut(duration: 0.18)
+            : .spring(response: 0.42, dampingFraction: 0.86)
+    }
+
+    @MainActor
+    private func previewBeanVisit() {
+        beanVisitPreviewTask?.cancel()
+        BeanVisitPolicy.recordVisit()
+
+        withAnimation(beanVisitPreviewAnimation) {
+            isPreviewingBeanVisit = true
+        }
+
+        beanVisitPreviewTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: BeanVisitPolicy.displayDurationNanoseconds)
+                guard !Task.isCancelled else { return }
+                hideBeanVisitPreview(animated: true)
+            } catch {
+                guard !Task.isCancelled else { return }
+                hideBeanVisitPreview(animated: false)
+            }
+        }
+    }
+
+    @MainActor
+    private func hideBeanVisitPreview(animated: Bool) {
+        beanVisitPreviewTask?.cancel()
+        beanVisitPreviewTask = nil
+        guard isPreviewingBeanVisit else { return }
+
+        if animated {
+            withAnimation(beanVisitPreviewAnimation) {
+                isPreviewingBeanVisit = false
+            }
+        } else {
+            isPreviewingBeanVisit = false
+        }
     }
 
     private func migrateLegacyPaginationSettingIfNeeded() {

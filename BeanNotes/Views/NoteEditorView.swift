@@ -305,7 +305,8 @@ struct NoteEditorView: View {
                         undoRedoAvailabilityChanged: updateUndoRedoAvailability(canUndo:canRedo:),
                         zoomScaleChanged: updateZoomScale(_:),
                         addPageAtBottom: addPageAtBottom,
-                        topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page))
+                        topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page)),
+                        theme: beanNotesTheme
                     )
                     .ignoresSafeArea(.container, edges: .bottom)
 
@@ -356,7 +357,11 @@ struct NoteEditorView: View {
             }
         }
         .background {
-            BeanNotesPaperBackground(theme: beanNotesTheme, baseColor: beanNotesTheme.appBackground)
+            BeanNotesPaperBackground(
+                theme: beanNotesTheme,
+                baseColor: beanNotesTheme.appBackground,
+                showsMascotWatermark: true
+            )
                 .ignoresSafeArea()
         }
         .tint(beanNotesTheme.accentColor)

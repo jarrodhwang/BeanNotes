@@ -474,7 +474,7 @@ struct ImportExportService {
     func exportNote(_ note: NoteDocument, format: ExportFormat) async throws -> [URL] {
         let pages = note.sortedPages
         guard !pages.isEmpty else { throw ImportExportError.exportFailed }
-        let snapshots = pages.map(NotePageRenderSnapshot.init)
+        let snapshots = pages.map { NotePageRenderSnapshot(page: $0) }
 
         switch format {
         case .pdf:
@@ -572,7 +572,7 @@ struct ImportExportService {
     ) async throws -> [URL] {
         let pages = note.sortedPages
         guard !pages.isEmpty else { throw ImportExportError.exportFailed }
-        let snapshots = pages.map(NotePageRenderSnapshot.init)
+        let snapshots = pages.map { NotePageRenderSnapshot(page: $0) }
 
         switch format {
         case .pdf:

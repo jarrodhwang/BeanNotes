@@ -8,8 +8,14 @@ import UIKit
 
 enum NoteBackgroundRenderer {
     @MainActor
-    static func draw(background: NoteBackground, in rect: CGRect, context: inout GraphicsContext) {
+    static func draw(
+        background: NoteBackground,
+        theme: BeanNotesTheme = .standard,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
         context.fill(Path(rect), with: .color(Color(hex: background.colorHex)))
+        drawBeanPaperIfNeeded(theme: theme, in: rect, context: &context)
 
         switch background.style {
         case .plain:
@@ -30,7 +36,12 @@ enum NoteBackgroundRenderer {
         }
     }
 
-    nonisolated static func draw(background: NoteBackground, in rect: CGRect, context: CGContext) {
+    nonisolated static func draw(
+        background: NoteBackground,
+        theme: BeanNotesTheme = .standard,
+        in rect: CGRect,
+        context: CGContext
+    ) {
         context.saveGState()
         defer {
             context.restoreGState()
@@ -38,6 +49,7 @@ enum NoteBackgroundRenderer {
 
         UIColor(hex: background.colorHex).setFill()
         context.fill(rect)
+        drawBeanPaperIfNeeded(theme: theme, in: rect, context: context)
 
         switch background.style {
         case .plain:
@@ -60,6 +72,12 @@ enum NoteBackgroundRenderer {
 }
 
 private extension NoteBackgroundRenderer {
+    nonisolated static let beanPaperTextureImageName = "BeanPaperTexture"
+    nonisolated static let beanMascotImageName = "BeanWelcomeImage"
+    nonisolated static let beanTextureTileSide: CGFloat = 256
+    nonisolated static let beanTextureOpacity: CGFloat = 0.11
+    nonisolated static let beanMascotOpacity: CGFloat = 0.09
+
     static var lineColor: Color { Color.secondary.opacity(0.24) }
     static var strongLineColor: Color { Color.secondary.opacity(0.34) }
     static var dotColor: Color { Color.secondary.opacity(0.36) }
@@ -67,6 +85,77 @@ private extension NoteBackgroundRenderer {
     nonisolated static var uiLineColor: UIColor { UIColor.secondaryLabel.withAlphaComponent(0.24) }
     nonisolated static var uiStrongLineColor: UIColor { UIColor.secondaryLabel.withAlphaComponent(0.34) }
     nonisolated static var uiDotColor: UIColor { UIColor.secondaryLabel.withAlphaComponent(0.34) }
+
+    @MainActor
+    static func drawBeanPaperIfNeeded(
+        theme: BeanNotesTheme,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
+        guard theme == .bean else { return }
+
+        var textureContext = context
+        textureContext.opacity = beanTextureOpacity
+        textureContext.blendMode = .multiply
+        let texture = textureContext.resolve(Image(beanPaperTextureImageName))
+
+        stride(from: rect.minY, to: rect.maxY, by: beanTextureTileSide).forEach { y in
+            stride(from: rect.minX, to: rect.maxX, by: beanTextureTileSide).forEach { x in
+                textureContext.draw(
+                    texture,
+                    in: CGRect(x: x, y: y, width: beanTextureTileSide, height: beanTextureTileSide)
+                )
+            }
+        }
+
+        var mascotContext = context
+        mascotContext.opacity = beanMascotOpacity
+        let mascot = mascotContext.resolve(Image(beanMascotImageName))
+        mascotContext.draw(mascot, in: beanMascotRect(in: rect))
+    }
+
+    nonisolated static func drawBeanPaperIfNeeded(
+        theme: BeanNotesTheme,
+        in rect: CGRect,
+        context: CGContext
+    ) {
+        guard theme == .bean else { return }
+
+        if let texture = UIImage(named: beanPaperTextureImageName) {
+            context.saveGState()
+            context.setAlpha(beanTextureOpacity)
+            context.setBlendMode(.multiply)
+            stride(from: rect.minY, to: rect.maxY, by: beanTextureTileSide).forEach { y in
+                stride(from: rect.minX, to: rect.maxX, by: beanTextureTileSide).forEach { x in
+                    texture.draw(
+                        in: CGRect(
+                            x: x,
+                            y: y,
+                            width: beanTextureTileSide,
+                            height: beanTextureTileSide
+                        )
+                    )
+                }
+            }
+            context.restoreGState()
+        }
+
+        if let mascot = UIImage(named: beanMascotImageName) {
+            mascot.draw(in: beanMascotRect(in: rect), blendMode: .normal, alpha: beanMascotOpacity)
+        }
+    }
+
+    nonisolated static func beanMascotRect(in rect: CGRect) -> CGRect {
+        let width = min(178, max(0, rect.width * 0.23))
+        let aspectRatio: CGFloat = 560 / 418
+        let height = width * aspectRatio
+        return CGRect(
+            x: rect.maxX - width - 18,
+            y: rect.maxY - height - 14,
+            width: width,
+            height: height
+        )
+    }
 
     static func drawGrid(background: NoteBackground, in rect: CGRect, context: inout GraphicsContext) {
         let spacing = CGFloat(background.resolvedSpacing)

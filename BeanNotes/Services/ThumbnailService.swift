@@ -42,10 +42,16 @@ struct NotePageRenderSnapshot: Sendable {
     var backgroundColorHex: String
     var width: Double
     var height: Double
+    var themeRaw: String
     var imageAttachments: [NoteImageAttachmentRenderSnapshot]
 
     @MainActor
     init(page: NotePage) {
+        self.init(page: page, theme: .currentFromDefaults())
+    }
+
+    @MainActor
+    init(page: NotePage, theme: BeanNotesTheme) {
         let pageSize = page.pageSize
         self.id = page.id
         self.pageOrder = page.pageOrder
@@ -54,6 +60,7 @@ struct NotePageRenderSnapshot: Sendable {
         self.backgroundColorHex = page.backgroundColorHex
         self.width = Double(pageSize.width)
         self.height = Double(pageSize.height)
+        self.themeRaw = theme.rawValue
         self.imageAttachments = page.imageAttachments.map {
             NoteImageAttachmentRenderSnapshot(attachment: $0, pageSize: pageSize)
         }
@@ -62,9 +69,14 @@ struct NotePageRenderSnapshot: Sendable {
     nonisolated var pageSize: CGSize {
         CGSize(width: width, height: height)
     }
+
+    nonisolated var theme: BeanNotesTheme {
+        BeanNotesTheme(rawValue: themeRaw) ?? .standard
+    }
 }
 
 struct ThumbnailService {
+    nonisolated private static let thumbnailRenderVersion = 2
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
@@ -75,11 +87,34 @@ struct ThumbnailService {
     var storage = LocalStorageService()
     var drawingStorage = DrawingStorageService()
 
-    func generateThumbnail(for page: NotePage, maxDimension: CGFloat = 360) throws -> URL {
+    nonisolated static func thumbnailFileName(pageID: UUID, theme: BeanNotesTheme) -> String {
+        "\(pageID.uuidString)-\(theme.rawValue)-v\(thumbnailRenderVersion).jpg"
+    }
+
+    nonisolated static func isCurrentThumbnailPath(
+        _ relativePath: String,
+        pageID: UUID,
+        theme: BeanNotesTheme
+    ) -> Bool {
+        URL(fileURLWithPath: relativePath).lastPathComponent == thumbnailFileName(pageID: pageID, theme: theme)
+    }
+
+    func generateThumbnail(
+        for page: NotePage,
+        theme: BeanNotesTheme? = nil,
+        maxDimension: CGFloat = 360
+    ) throws -> URL {
+        let resolvedTheme = theme ?? .currentFromDefaults()
+        let snapshot = NotePageRenderSnapshot(page: page, theme: resolvedTheme)
         let drawing = drawingStorage.loadDrawing(for: page)
-        let thumbnail = renderThumbnailImage(page: page, drawing: drawing, maxDimension: maxDimension)
+        let thumbnail = Self.renderThumbnailImage(
+            snapshot: snapshot,
+            drawing: drawing,
+            rootURL: storage.rootURL,
+            maxDimension: maxDimension
+        )
         let data = thumbnail.jpegData(compressionQuality: 0.82) ?? Data()
-        let fileName = "\(page.id.uuidString).jpg"
+        let fileName = Self.thumbnailFileName(pageID: page.id, theme: resolvedTheme)
         let stored = try storage.saveData(
             data,
             fileName: fileName,
@@ -87,22 +122,46 @@ struct ThumbnailService {
             to: .thumbnails,
             replacingExisting: true
         )
-        page.thumbnailFileName = stored.relativePath
+        replaceThumbnailReference(for: page, with: stored.relativePath)
         return storage.url(forRelativePath: stored.relativePath)
     }
 
-    func generateThumbnailInBackground(for page: NotePage, maxDimension: CGFloat = 360) async throws -> URL {
-        let snapshot = NotePageRenderSnapshot(page: page)
+    func generateThumbnailInBackground(
+        for page: NotePage,
+        theme: BeanNotesTheme? = nil,
+        maxDimension: CGFloat = 360
+    ) async throws -> URL {
+        let resolvedTheme = theme ?? .currentFromDefaults()
+        let snapshot = NotePageRenderSnapshot(page: page, theme: resolvedTheme)
         let rootURL = storage.rootURL
-        let fileName = "\(page.id.uuidString).jpg"
-        let stored = try await Self.writeThumbnail(
+        let fileName = Self.thumbnailFileName(pageID: page.id, theme: resolvedTheme)
+        let data = try await Self.renderThumbnailData(
             snapshot: snapshot,
             rootURL: rootURL,
-            fileName: fileName,
             maxDimension: maxDimension
         )
+        try Task.checkCancellation()
+        guard resolvedTheme == .currentFromDefaults() else {
+            throw CancellationError()
+        }
 
-        page.thumbnailFileName = stored.relativePath
+        let stored = try storage.saveData(
+            data,
+            fileName: fileName,
+            contentType: .jpeg,
+            to: .thumbnails,
+            replacingExisting: true
+        )
+
+        guard !Task.isCancelled,
+              resolvedTheme == .currentFromDefaults() else {
+            if page.thumbnailFileName != stored.relativePath {
+                try? storage.removeFile(relativePath: stored.relativePath)
+            }
+            throw CancellationError()
+        }
+
+        replaceThumbnailReference(for: page, with: stored.relativePath)
         return storage.url(forRelativePath: stored.relativePath)
     }
 
@@ -124,8 +183,21 @@ struct ThumbnailService {
         )
     }
 
-    func drawBackground(_ background: NoteBackground, in rect: CGRect, context: CGContext) {
-        NoteBackgroundRenderer.draw(background: background, in: rect, context: context)
+    func drawBackground(
+        _ background: NoteBackground,
+        theme: BeanNotesTheme = .standard,
+        in rect: CGRect,
+        context: CGContext
+    ) {
+        NoteBackgroundRenderer.draw(background: background, theme: theme, in: rect, context: context)
+    }
+
+    private func replaceThumbnailReference(for page: NotePage, with relativePath: String) {
+        let previousPath = page.thumbnailFileName
+        page.thumbnailFileName = relativePath
+
+        guard let previousPath, previousPath != relativePath else { return }
+        try? storage.removeFile(relativePath: previousPath)
     }
 
     nonisolated static func renderThumbnailImage(
@@ -199,35 +271,36 @@ struct ThumbnailService {
         }
     }
 
-    nonisolated private static func writeThumbnail(
+    nonisolated private static func renderThumbnailData(
         snapshot: NotePageRenderSnapshot,
         rootURL: URL,
-        fileName: String,
         maxDimension: CGFloat
-    ) async throws -> StoredFile {
-        try await Task.detached(priority: .utility) {
+    ) async throws -> Data {
+        let renderTask = Task.detached(priority: .utility) {
             try autoreleasepool {
+                try Task.checkCancellation()
                 let drawing = loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
+                try Task.checkCancellation()
                 let thumbnail = renderThumbnailImage(
                     snapshot: snapshot,
                     drawing: drawing,
                     rootURL: rootURL,
                     maxDimension: maxDimension
                 )
+                try Task.checkCancellation()
                 guard let data = thumbnail.jpegData(compressionQuality: 0.82) else {
                     throw ImportExportError.exportFailed
                 }
-
-                let storage = LocalStorageService(rootURL: rootURL)
-                return try storage.saveData(
-                    data,
-                    fileName: fileName,
-                    contentType: .jpeg,
-                    to: .thumbnails,
-                    replacingExisting: true
-                )
+                try Task.checkCancellation()
+                return data
             }
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await renderTask.value
+        } onCancel: {
+            renderTask.cancel()
+        }
     }
 
     nonisolated private static func drawPageContent(
@@ -243,7 +316,12 @@ struct ThumbnailService {
             styleRaw: snapshot.backgroundStyleRaw,
             colorHex: snapshot.backgroundColorHex
         )
-        NoteBackgroundRenderer.draw(background: background, in: rect, context: context)
+        NoteBackgroundRenderer.draw(
+            background: background,
+            theme: snapshot.theme,
+            in: rect,
+            context: context
+        )
 
         drawImageAttachments(
             snapshot.imageAttachments.filter(\.rendersBehindDrawing),

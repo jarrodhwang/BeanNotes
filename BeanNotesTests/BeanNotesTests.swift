@@ -1147,6 +1147,91 @@ struct BeanNotesTests {
         #expect(BeanNotesTheme.blueberry.brandImageName == nil)
     }
 
+    @Test func beanVisitPolicyRequiresAnIdleHealthyBeanLibrary() {
+        let eligible = BeanVisitPolicy.canSchedule(
+            theme: .bean,
+            isEnabled: true,
+            sceneIsActive: true,
+            isSafeSurface: true,
+            isLowPowerModeEnabled: false,
+            thermalState: .nominal,
+            launchArguments: []
+        )
+        #expect(eligible)
+
+        #expect(!BeanVisitPolicy.canSchedule(
+            theme: .standard,
+            isEnabled: true,
+            sceneIsActive: true,
+            isSafeSurface: true,
+            isLowPowerModeEnabled: false,
+            thermalState: .nominal,
+            launchArguments: []
+        ))
+        #expect(!BeanVisitPolicy.canSchedule(
+            theme: .bean,
+            isEnabled: false,
+            sceneIsActive: true,
+            isSafeSurface: true,
+            isLowPowerModeEnabled: false,
+            thermalState: .nominal,
+            launchArguments: []
+        ))
+        #expect(!BeanVisitPolicy.canSchedule(
+            theme: .bean,
+            isEnabled: true,
+            sceneIsActive: true,
+            isSafeSurface: false,
+            isLowPowerModeEnabled: false,
+            thermalState: .nominal,
+            launchArguments: []
+        ))
+        #expect(!BeanVisitPolicy.canSchedule(
+            theme: .bean,
+            isEnabled: true,
+            sceneIsActive: true,
+            isSafeSurface: true,
+            isLowPowerModeEnabled: true,
+            thermalState: .nominal,
+            launchArguments: []
+        ))
+        #expect(!BeanVisitPolicy.canSchedule(
+            theme: .bean,
+            isEnabled: true,
+            sceneIsActive: true,
+            isSafeSurface: true,
+            isLowPowerModeEnabled: false,
+            thermalState: .serious,
+            launchArguments: []
+        ))
+        #expect(!BeanVisitPolicy.canSchedule(
+            theme: .bean,
+            isEnabled: true,
+            sceneIsActive: true,
+            isSafeSurface: true,
+            isLowPowerModeEnabled: false,
+            thermalState: .nominal,
+            launchArguments: [BeanNotesLaunchConfiguration.uiTestingArgument]
+        ))
+    }
+
+    @Test func beanVisitPolicyPersistsAndEnforcesItsCooldown() throws {
+        let suiteName = "BeanVisitPolicyTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(BeanVisitPolicy.cooldownHasElapsed(now: now, lastShownDate: nil))
+
+        BeanVisitPolicy.recordVisit(at: now, in: defaults)
+        #expect(BeanVisitPolicy.lastShownDate(in: defaults) == now)
+        #expect(!BeanVisitPolicy.cooldownHasElapsed(now: now.addingTimeInterval(60), lastShownDate: now))
+        #expect(BeanVisitPolicy.cooldownHasElapsed(
+            now: now.addingTimeInterval(BeanVisitPolicy.minimumCooldown),
+            lastShownDate: now
+        ))
+    }
+
     @Test func folderWelcomeUsesOnlyInAppFeedbackWhileForegrounded() {
         #expect(!LocalNotificationService.shouldPresentSystemNotificationInForeground(
             identifier: "folder-welcome-test"
@@ -1584,6 +1669,36 @@ struct BeanNotesTests {
 
         #expect(max(extremeCGImage.width, extremeCGImage.height) <= 6_144)
         #expect(min(extremeCGImage.width, extremeCGImage.height) > 0)
+    }
+
+    @Test @MainActor func beanThemeRendersIntoNotePagesAndExportImages() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesBeanPaper-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let page = NotePage(
+            pageOrder: 0,
+            background: NoteBackground(style: .plain, colorHex: "#FFF9EC"),
+            width: 320,
+            height: 420
+        )
+        let standardImage = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: page, theme: .standard),
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: 1
+        )
+        let beanImage = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: page, theme: .bean),
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: 1
+        )
+
+        #expect(standardImage.size == beanImage.size)
+        #expect(standardImage.pngData() != beanImage.pngData())
     }
 
     @Test func imageMemoryCacheReusesStandardizedURLVariants() throws {
@@ -2805,19 +2920,45 @@ struct BeanNotesTests {
         page.attachments.append(attachment)
         context.insert(page)
         try context.save()
-        let thumbnailURL = try service.generateThumbnail(for: page, maxDimension: 120)
+        let thumbnailURL = try service.generateThumbnail(for: page, theme: .bean, maxDimension: 120)
         let thumbnail = try #require(UIImage(contentsOfFile: thumbnailURL.path))
-        let refreshedThumbnailURL = try service.generateThumbnail(for: page, maxDimension: 120)
+        let refreshedThumbnailURL = try service.generateThumbnail(for: page, theme: .bean, maxDimension: 120)
 
         #expect(page.thumbnailFileName?.hasPrefix("Thumbnails/") == true)
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
         #expect(FileManager.default.fileExists(atPath: refreshedThumbnailURL.path))
         #expect(thumbnailURL.lastPathComponent == refreshedThumbnailURL.lastPathComponent)
-        #expect(refreshedThumbnailURL.lastPathComponent == "\(page.id.uuidString).jpg")
+        #expect(
+            refreshedThumbnailURL.lastPathComponent
+                == ThumbnailService.thumbnailFileName(pageID: page.id, theme: .bean)
+        )
         #expect(refreshedThumbnailURL.lastPathComponent.hasPrefix("Thumbnails-") == false)
         #expect(page.thumbnailFileName?.components(separatedBy: "/").count == 2)
         #expect(max(thumbnail.size.width, thumbnail.size.height) <= 120.5)
         #expect(thumbnail.size.height > thumbnail.size.width)
+    }
+
+    @Test func thumbnailCacheIdentityIncludesThemeAndRendererVersion() {
+        let pageID = UUID()
+        let beanFileName = ThumbnailService.thumbnailFileName(pageID: pageID, theme: .bean)
+        let standardFileName = ThumbnailService.thumbnailFileName(pageID: pageID, theme: .standard)
+
+        #expect(beanFileName != standardFileName)
+        #expect(ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(beanFileName)",
+            pageID: pageID,
+            theme: .bean
+        ))
+        #expect(!ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(pageID.uuidString).jpg",
+            pageID: pageID,
+            theme: .bean
+        ))
+        #expect(!ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(beanFileName)",
+            pageID: pageID,
+            theme: .standard
+        ))
     }
 
     @Test @MainActor func pdfImportCreatesAnnotatablePages() async throws {
