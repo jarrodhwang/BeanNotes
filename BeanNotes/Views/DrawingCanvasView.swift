@@ -116,6 +116,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var pageFlowMode: NoteEditorPageFlowMode
     var doubleTapAction: PencilDoubleTapAction
     var saveNowSignal: Int
+    var exportPreparationSignal: Int = 0
     var fitToPageSignal: Int
     var zoomInSignal: Int
     var zoomOutSignal: Int
@@ -130,6 +131,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var saveStarted: () -> Void = {}
     var saveSucceeded: () -> Void = {}
     var saveFailed: (Error) -> Void = { _ in }
+    var exportPreparationCompleted: (Int, Result<Void, Error>) -> Void = { _, _ in }
     var undoRedoAvailabilityChanged: (Bool, Bool) -> Void = { _, _ in }
     var zoomScaleChanged: (CGFloat) -> Void = { _ in }
     var addPageAtBottom: () -> Void
@@ -235,6 +237,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         if context.coordinator.saveNowSignal != saveNowSignal {
             context.coordinator.saveAllCanvases()
             context.coordinator.saveNowSignal = saveNowSignal
+        }
+
+        if context.coordinator.exportPreparationSignal != exportPreparationSignal {
+            context.coordinator.prepareForExport(requestID: exportPreparationSignal)
+            context.coordinator.exportPreparationSignal = exportPreparationSignal
         }
 
         if context.coordinator.fitToPageSignal != fitToPageSignal {
@@ -1451,6 +1458,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             if needsStaticRefresh {
                 backgroundView.background = page.background
                 backgroundView.theme = theme
+                backgroundView.pageID = page.id
                 backgroundView.setNeedsDisplay()
                 configureImages(page.imageAttachments, storage: storage, attachmentChanged: attachmentChanged)
                 configurationSignature = signature
@@ -1820,6 +1828,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     final class PageBackgroundUIView: UIView {
         var background: NoteBackground = .plain()
         var theme: BeanNotesTheme = .defaultTheme
+        var pageID: UUID?
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -1853,7 +1862,13 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         override func draw(_ rect: CGRect) {
             guard let context = UIGraphicsGetCurrentContext() else { return }
-            NoteBackgroundRenderer.draw(background: background, theme: theme, in: bounds, context: context)
+            NoteBackgroundRenderer.draw(
+                background: background,
+                theme: theme,
+                pageID: pageID,
+                in: bounds,
+                context: context
+            )
         }
     }
 
@@ -2334,6 +2349,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         var parent: DrawingCanvasView
         var selectedPageID: UUID?
         var saveNowSignal: Int
+        var exportPreparationSignal: Int
         var fitToPageSignal: Int
         var zoomInSignal: Int
         var zoomOutSignal: Int
@@ -2350,6 +2366,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var toolPickerObservedCanvasIDs: Set<ObjectIdentifier> = []
         var dirtyPageIDs: Set<UUID> = []
         private var activeToolCanvasIDs: Set<ObjectIdentifier> = []
+        private var deferredExportPreparationRequestID: Int?
         private var deferredDrawingChangeNotifications: Set<UUID> = []
         var toolStateCancellable: AnyCancellable?
         weak var observedToolState: DrawingToolState?
@@ -2472,6 +2489,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.parent = parent
             self.selectedPageID = parent.selectedPageID
             self.saveNowSignal = parent.saveNowSignal
+            self.exportPreparationSignal = parent.exportPreparationSignal
             self.fitToPageSignal = parent.fitToPageSignal
             self.zoomInSignal = parent.zoomInSignal
             self.zoomOutSignal = parent.zoomOutSignal
@@ -2943,6 +2961,12 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
             }
 
+            if activeToolCanvasIDs.isEmpty,
+               let requestID = deferredExportPreparationRequestID {
+                deferredExportPreparationRequestID = nil
+                prepareForExport(requestID: requestID)
+            }
+
             guard parent.toolState.temporaryEraserActive else { return }
             parent.toolState.restoreAfterTemporaryEraser()
         }
@@ -3080,6 +3104,55 @@ struct DrawingCanvasView: UIViewRepresentable {
                pendingSaves.isEmpty,
                !hasAnyInFlightSaves {
                 notifySaveSucceededIfClean()
+            }
+        }
+
+        func prepareForExport(requestID: Int) {
+            guard activeToolCanvasIDs.isEmpty else {
+                deferredExportPreparationRequestID = requestID
+                return
+            }
+            deferredExportPreparationRequestID = nil
+
+            let requests = canvasSaveRequests(
+                force: false,
+                trackInFlight: false,
+                invalidateInFlight: true
+            )
+            var firstError: Error?
+
+            for request in requests {
+                do {
+                    try Self.writeDrawingSynchronously(
+                        request.drawing,
+                        rootURL: request.rootURL,
+                        drawingFileName: request.drawingFileName
+                    )
+                    request.page.touch()
+                    dirtyPageIDs.remove(request.page.id)
+                } catch {
+                    dirtyPageIDs.insert(request.page.id)
+                    if firstError == nil {
+                        firstError = error
+                    }
+                }
+            }
+
+            if firstError == nil,
+               (!dirtyPageIDs.isEmpty || !pendingSaves.isEmpty || hasAnyInFlightSaves) {
+                firstError = ImportExportError.exportFailed
+            }
+
+            if let firstError {
+                notifySaveFailed(firstError)
+            } else {
+                notifySaveSucceededIfClean()
+            }
+
+            let result: Result<Void, Error> = firstError.map(Result.failure) ?? .success(())
+            let exportPreparationCompleted = parent.exportPreparationCompleted
+            dispatchToSwiftUI {
+                exportPreparationCompleted(requestID, result)
             }
         }
 

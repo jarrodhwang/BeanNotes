@@ -31,11 +31,16 @@ struct ContentView: View {
             .background(beanNotesTheme.appBackground.ignoresSafeArea())
             .preferredColorScheme((AppTheme(rawValue: appThemeRaw) ?? .system).colorScheme)
             .onAppear {
+                AppIconService.applyIcon(for: beanNotesTheme)
+
                 guard Self.shouldShowWelcome(
                     hasSeenWelcome: hasSeenWelcome,
                     seenContentVersion: seenWelcomeContentVersion
                 ) else { return }
                 isShowingWelcome = true
+            }
+            .onChange(of: beanNotesTheme) { _, theme in
+                AppIconService.applyIcon(for: theme)
             }
             .sheet(
                 isPresented: $isShowingWelcome,

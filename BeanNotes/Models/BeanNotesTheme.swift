@@ -168,6 +168,10 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    var defaultNoteBackground: NoteBackground {
+        .plain(colorHex: defaultNoteBackgroundHex)
+    }
+
     var brandImageName: String? {
         switch self {
         case .bean:

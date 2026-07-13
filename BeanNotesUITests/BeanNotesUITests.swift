@@ -46,6 +46,13 @@ final class BeanNotesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Zoom out"].exists)
         XCTAssertFalse(app.buttons["Zoom resolution status"].exists)
         XCTAssertTrue(app.buttons["Focus drawing mode"].waitForExistence(timeout: 8))
+
+        let exportButton = app.buttons["Export"]
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 8))
+        exportButton.tap()
+
+        XCTAssertTrue(app.navigationBars["Export"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 8))
     }
 
     @MainActor
@@ -110,6 +117,28 @@ final class BeanNotesUITests: XCTestCase {
         startWritingButton.tap()
 
         XCTAssertTrue(app.buttons["Create note"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor
+    func testThemePaperUsesSingleBeanConfirmation() throws {
+        app.launch()
+
+        let settingsButton = app.buttons["Settings"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 8))
+        settingsButton.tap()
+
+        let themePaperButton = app.buttons["settings.themePaperBackgroundButton"]
+        XCTAssertTrue(themePaperButton.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Use Theme Paper for New Notes"].exists)
+        XCTAssertFalse(app.buttons["Apply Theme Icon"].exists)
+        themePaperButton.tap()
+
+        XCTAssertTrue(app.staticTexts["Use Bean paper background?"].waitForExistence(timeout: 4))
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Bean says")).firstMatch.exists
+        )
+        XCTAssertTrue(app.buttons["Use Bean Paper"].exists)
+        XCTAssertTrue(app.buttons["Cancel"].exists)
     }
 
     private func makeCleanApp(skipWelcome: Bool = true) -> XCUIApplication {

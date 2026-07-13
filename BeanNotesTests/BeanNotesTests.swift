@@ -59,6 +59,33 @@ struct BeanNotesTests {
         return PKDrawing(strokes: [stroke])
     }
 
+    private func imageContainsDominantRedInk(_ image: UIImage) -> Bool {
+        guard let source = image.cgImage else { return false }
+
+        let width = min(source.width, 384)
+        let height = min(source.height, 512)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+
+        context.interpolationQuality = .low
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        return stride(from: 0, to: pixels.count, by: 4).contains { offset in
+            let red = Int(pixels[offset])
+            let green = Int(pixels[offset + 1])
+            let blue = Int(pixels[offset + 2])
+            return red > 145 && red > green + 45 && red > blue + 45
+        }
+    }
+
     @Test func modelGraphCreatesFolderNotePageAndAttachment() throws {
         let context = try makeInMemoryModelContext()
 
@@ -1140,11 +1167,16 @@ struct BeanNotesTests {
         #expect(BeanNotesTheme.bean.paperTextureImageName == "BeanPaperTexture")
         #expect(BeanNotesTheme.bean.notificationAttachmentName == "BeanNotesNotificationIcon")
         #expect(BeanNotesTheme.bean.defaultNoteBackgroundHex == "#FFF9EC")
+        #expect(BeanNotesTheme.bean.defaultNoteBackground == .plain(colorHex: "#FFF9EC"))
         #expect(BeanNotesTheme.bean.folderCreatedBody(folderName: "Projects").contains("Bean"))
 
         #expect(BeanNotesTheme.standard.brandImageName == nil)
         #expect(BeanNotesTheme.standard.paperTextureImageName == nil)
+        #expect(BeanNotesTheme.standard.defaultNoteBackground == .plain(colorHex: "#FFFFFF"))
         #expect(BeanNotesTheme.blueberry.brandImageName == nil)
+        #expect(BeanNotesTheme.blueberry.defaultNoteBackground == .plain(colorHex: "#EAF3FF"))
+        #expect(BeanNotesTheme.bean.alternateAppIconName == nil)
+        #expect(BeanNotesTheme.blueberry.alternateAppIconName == "BlueberryAppIcon")
     }
 
     @Test func beanVisitPolicyRequiresAnIdleHealthyBeanLibrary() {
@@ -1701,6 +1733,78 @@ struct BeanNotesTests {
         #expect(standardImage.pngData() != beanImage.pngData())
     }
 
+    @Test func beanPaperArtworkSelectionIsDeterministicPerPage() throws {
+        let firstPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000"))
+        let secondPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+
+        let firstSelection = NoteBackgroundRenderer.beanPaperArtwork(for: firstPageID)
+        let repeatedSelection = NoteBackgroundRenderer.beanPaperArtwork(for: firstPageID)
+        let secondSelection = NoteBackgroundRenderer.beanPaperArtwork(for: secondPageID)
+
+        #expect(firstSelection == repeatedSelection)
+        #expect(
+            Set([firstSelection.imageName, secondSelection.imageName])
+                == Set(["BeanWelcomeImage", "BeanTabAvatar"])
+        )
+    }
+
+    @Test func beanPaperArtworkIsCenteredAndLarge() throws {
+        let pageRect = CGRect(x: 24, y: 40, width: 1_024, height: 1_366)
+        let pageIDs = [
+            try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000")),
+            try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        ]
+
+        for pageID in pageIDs {
+            let artwork = NoteBackgroundRenderer.beanPaperArtwork(for: pageID)
+            let artworkRect = NoteBackgroundRenderer.beanPaperArtworkRect(for: artwork, in: pageRect)
+
+            #expect(abs(artworkRect.midX - pageRect.midX) < 0.001)
+            #expect(abs(artworkRect.midY - pageRect.midY) < 0.001)
+            #expect(artworkRect.width >= pageRect.width * 0.55)
+            #expect(artworkRect.height <= pageRect.height * artwork.maximumHeightRatio + 0.001)
+        }
+    }
+
+    @Test @MainActor func beanPaperArtworkSelectionFlowsIntoExportRendering() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesRandomBeanPaper-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let firstPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000"))
+        let secondPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let background = NoteBackground(style: .plain, colorHex: "#FFF9EC")
+        let firstPage = NotePage(
+            id: firstPageID,
+            pageOrder: 0,
+            background: background,
+            width: 320,
+            height: 420
+        )
+        let secondPage = NotePage(
+            id: secondPageID,
+            pageOrder: 0,
+            background: background,
+            width: 320,
+            height: 420
+        )
+
+        let firstImage = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: firstPage, theme: .bean),
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: 1
+        )
+        let secondImage = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: secondPage, theme: .bean),
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: 1
+        )
+
+        #expect(firstImage.pngData() != secondImage.pngData())
+    }
+
     @Test func imageMemoryCacheReusesStandardizedURLVariants() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesStandardizedImageCache-\(UUID().uuidString)", isDirectory: true)
@@ -2021,6 +2125,131 @@ struct BeanNotesTests {
         #expect(!coordinator.dirtyPageIDs.contains(page.id))
     }
 
+    @Test func exportPreparationFlushesLiveCanvasBeforeCompleting() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesExportPreparation-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "live-export.drawing")
+        let drawing = makeTestDrawing(color: .systemRed, xOffset: 36)
+        var completionContinuation: CheckedContinuation<Int, Never>?
+        var completionResult: Result<Void, Error>?
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            exportPreparationCompleted: { requestID, result in
+                completionResult = result
+                completionContinuation?.resume(returning: requestID)
+                completionContinuation = nil
+            }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        canvasView.drawing = drawing
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        let completedRequestID: Int = await withCheckedContinuation { continuation in
+            completionContinuation = continuation
+            coordinator.prepareForExport(requestID: 42)
+        }
+
+        let savedData = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        let savedDrawing = try PKDrawing(data: savedData)
+        #expect(savedDrawing.strokes.count == drawing.strokes.count)
+        #expect(abs(savedDrawing.bounds.midX - drawing.bounds.midX) < 0.5)
+        #expect(completedRequestID == 42)
+        let completedResult = try #require(completionResult)
+        try completedResult.get()
+        #expect(coordinator.pendingSaves[page.id] == nil)
+        #expect(!coordinator.dirtyPageIDs.contains(page.id))
+    }
+
+    @Test func exportPreparationWaitsForLivePencilStrokeToEnd() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesActiveStrokeExport-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "active-stroke-export.drawing")
+        let drawing = makeTestDrawing(color: .systemBlue, xOffset: 52)
+        var didComplete = false
+        var completionContinuation: CheckedContinuation<Int, Never>?
+        var completionResult: Result<Void, Error>?
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            exportPreparationCompleted: { requestID, result in
+                didComplete = true
+                completionResult = result
+                completionContinuation?.resume(returning: requestID)
+                completionContinuation = nil
+            }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        canvasView.drawing = drawing
+        coordinator.canvasViewDidBeginUsingTool(canvasView)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        coordinator.prepareForExport(requestID: 77)
+
+        #expect(!didComplete)
+        let drawingURL = try drawingStorage.drawingURL(for: page)
+        #expect(!FileManager.default.fileExists(atPath: drawingURL.path))
+
+        let completedRequestID: Int = await withCheckedContinuation { continuation in
+            completionContinuation = continuation
+            coordinator.canvasViewDidEndUsingTool(canvasView)
+        }
+
+        #expect(completedRequestID == 77)
+        let completedResult = try #require(completionResult)
+        try completedResult.get()
+        let savedData = try Data(contentsOf: drawingURL)
+        let savedDrawing = try PKDrawing(data: savedData)
+        #expect(savedDrawing.strokes.count == drawing.strokes.count)
+        #expect(abs(savedDrawing.bounds.midX - drawing.bounds.midX) < 0.5)
+        #expect(coordinator.pendingSaves[page.id] == nil)
+        #expect(!coordinator.dirtyPageIDs.contains(page.id))
+    }
+
     @Test func livePencilStrokeDefersAutosaveWorkUntilPencilLifts() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesLiveStroke-\(UUID().uuidString)", isDirectory: true)
@@ -2210,7 +2439,8 @@ struct BeanNotesTests {
 
     private func makeDrawingCanvasView(
         page: NotePage,
-        drawingStorage: DrawingStorageService
+        drawingStorage: DrawingStorageService,
+        exportPreparationCompleted: @escaping (Int, Result<Void, Error>) -> Void = { _, _ in }
     ) -> DrawingCanvasView {
         let defaults = UserDefaults(suiteName: "BeanNotesCanvasTest-\(UUID().uuidString)")!
         return DrawingCanvasView(
@@ -2238,6 +2468,7 @@ struct BeanNotesTests {
             saveStarted: {},
             saveSucceeded: {},
             saveFailed: { _ in },
+            exportPreparationCompleted: exportPreparationCompleted,
             undoRedoAvailabilityChanged: { _, _ in },
             zoomScaleChanged: { _ in },
             addPageAtBottom: {},
@@ -2944,6 +3175,7 @@ struct BeanNotesTests {
         let standardFileName = ThumbnailService.thumbnailFileName(pageID: pageID, theme: .standard)
 
         #expect(beanFileName != standardFileName)
+        #expect(beanFileName.hasSuffix("-bean-v3.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,
@@ -3289,7 +3521,15 @@ struct BeanNotesTests {
         let context = try makeInMemoryModelContext()
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesExport-\(UUID().uuidString)", isDirectory: true)
+        let defaults = UserDefaults.standard
+        let previousTheme = defaults.object(forKey: BeanNotesTheme.storageKey)
+        defaults.set(BeanNotesTheme.standard.rawValue, forKey: BeanNotesTheme.storageKey)
         defer {
+            if let previousTheme {
+                defaults.set(previousTheme, forKey: BeanNotesTheme.storageKey)
+            } else {
+                defaults.removeObject(forKey: BeanNotesTheme.storageKey)
+            }
             try? FileManager.default.removeItem(at: rootURL)
         }
 
@@ -3307,13 +3547,13 @@ struct BeanNotesTests {
         let pages = [
             NotePage(
                 pageOrder: 0,
-                background: NoteBackground(style: .grid, colorHex: "#FFF7BF"),
+                background: .plain(),
                 width: 320,
                 height: 420
             ),
             NotePage(
                 pageOrder: 1,
-                background: NoteBackground(style: .lined, colorHex: "#FFFFFF"),
+                background: .plain(),
                 width: 320,
                 height: 420
             )
@@ -3322,18 +3562,173 @@ struct BeanNotesTests {
         context.insert(note)
         try context.save()
         #expect(pages.count == 2)
+        try drawingStorage.save(makeTestDrawing(color: .systemRed, xOffset: 96), for: pages[0])
 
         let pdfURLs = try await service.exportNote(note, format: .pdf)
-        let imageURLs = try await service.exportNote(note, format: .png)
+        let pngURLs = try await service.exportNote(note, format: .png)
+        let jpegURLs = try await service.exportNote(note, format: .jpeg)
 
         #expect(pdfURLs.count == 1)
         #expect(pdfURLs.first?.pathExtension == "pdf")
-        #expect(FileManager.default.fileExists(atPath: try #require(pdfURLs.first).path))
-        #expect(PDFDocument(url: try #require(pdfURLs.first))?.pageCount == 2)
+        let pdfURL = try #require(pdfURLs.first)
+        #expect(FileManager.default.fileExists(atPath: pdfURL.path))
+        let pdfDocument = try #require(PDFDocument(url: pdfURL))
+        #expect(pdfDocument.pageCount == 2)
+        let firstPDFPage = try #require(pdfDocument.page(at: 0))
+        let pdfPageImage = firstPDFPage.thumbnail(
+            of: CGSize(width: 320, height: 420),
+            for: .mediaBox
+        )
+        #expect(imageContainsDominantRedInk(pdfPageImage))
 
-        #expect(imageURLs.count == 2)
-        #expect(imageURLs.allSatisfy { $0.pathExtension == "png" })
-        #expect(imageURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        #expect(pngURLs.count == 2)
+        #expect(pngURLs.allSatisfy { $0.pathExtension == "png" })
+        #expect(pngURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        let pngURL = try #require(pngURLs.first)
+        let pngImage = try #require(UIImage(contentsOfFile: pngURL.path))
+        #expect(imageContainsDominantRedInk(pngImage))
+
+        #expect(jpegURLs.count == 2)
+        #expect(jpegURLs.allSatisfy { $0.pathExtension == "jpg" })
+        #expect(jpegURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        let jpegURL = try #require(jpegURLs.first)
+        let jpegImage = try #require(UIImage(contentsOfFile: jpegURL.path))
+        #expect(imageContainsDominantRedInk(jpegImage))
+    }
+
+    @Test @MainActor func pageExportRejectsCorruptDrawingDataWhilePreviewStaysBestEffort() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCorruptDrawingExport-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        )
+        try storage.prepareDirectories()
+
+        let page = NotePage(
+            pageOrder: 0,
+            drawingFileName: "corrupt-export.drawing",
+            background: .plain(),
+            width: 320,
+            height: 420
+        )
+        try Data("not-a-pencilkit-drawing".utf8).write(
+            to: drawingStorage.drawingURL(for: page),
+            options: [.atomic]
+        )
+
+        let previewDrawing = ThumbnailService.loadDrawing(
+            fileName: page.drawingFileName,
+            rootURL: rootURL
+        )
+        let preview = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: page, theme: .standard),
+            drawing: previewDrawing,
+            rootURL: rootURL,
+            scale: 1
+        )
+        #expect(previewDrawing.strokes.isEmpty)
+        #expect(preview.size == page.pageSize)
+
+        var didRejectExport = false
+        do {
+            _ = try await service.exportPage(page, format: .png)
+        } catch {
+            didRejectExport = true
+        }
+        #expect(didRejectExport)
+
+        let exportDirectory = try storage.directoryURL(for: .exports)
+        let exports = try FileManager.default.contentsOfDirectory(
+            at: exportDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(exports.isEmpty)
+    }
+
+    @Test @MainActor func pdfExportRejectsUnavailablePageImagesWhilePreviewStaysBestEffort() async throws {
+        let context = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesLockedImageExport-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        )
+        try storage.prepareDirectories()
+        let corruptImage = try storage.saveData(
+            Data("not-an-image".utf8),
+            preferredName: "corrupt-page.png",
+            contentType: .png,
+            to: .imports
+        )
+        let unavailableImages = [
+            (storedFileName: "Imports/missing-page.png", isLocked: true),
+            (storedFileName: corruptImage.relativePath, isLocked: false)
+        ]
+
+        for (index, unavailableImage) in unavailableImages.enumerated() {
+            let note = NoteDocument(title: "Unavailable Page \(index)")
+            let page = NotePage(
+                pageOrder: 0,
+                background: .plain(),
+                width: 320,
+                height: 420
+            )
+            let attachment = Attachment(
+                kind: .image,
+                displayName: "Page image",
+                originalFileName: "page.png",
+                storedFileName: unavailableImage.storedFileName,
+                contentTypeIdentifier: UTType.png.identifier,
+                fileExtension: "png",
+                x: 0,
+                y: 0,
+                width: 320,
+                height: 420,
+                isLocked: unavailableImage.isLocked,
+                rendersBehindDrawing: unavailableImage.isLocked
+            )
+            page.attachments.append(attachment)
+            note.pages.append(page)
+            context.insert(note)
+            try context.save()
+
+            let preview = ThumbnailService.renderPageImage(
+                snapshot: NotePageRenderSnapshot(page: page, theme: .standard),
+                drawing: PKDrawing(),
+                rootURL: rootURL,
+                scale: 1
+            )
+            #expect(preview.size == page.pageSize)
+
+            var didRejectExport = false
+            do {
+                _ = try await service.exportNote(note, format: .pdf)
+            } catch {
+                didRejectExport = true
+            }
+            #expect(didRejectExport)
+        }
+
+        let exportDirectory = try storage.directoryURL(for: .exports)
+        let exports = try FileManager.default.contentsOfDirectory(
+            at: exportDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(exports.isEmpty)
     }
 
     @Test @MainActor func cancelingNoteExportRemovesPartialFiles() async throws {

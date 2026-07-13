@@ -76,7 +76,7 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
-    nonisolated private static let thumbnailRenderVersion = 2
+    nonisolated private static let thumbnailRenderVersion = 3
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
@@ -186,10 +186,17 @@ struct ThumbnailService {
     func drawBackground(
         _ background: NoteBackground,
         theme: BeanNotesTheme = .standard,
+        pageID: UUID? = nil,
         in rect: CGRect,
         context: CGContext
     ) {
-        NoteBackgroundRenderer.draw(background: background, theme: theme, in: rect, context: context)
+        NoteBackgroundRenderer.draw(
+            background: background,
+            theme: theme,
+            pageID: pageID,
+            in: rect,
+            context: context
+        )
     }
 
     private func replaceThumbnailReference(for page: NotePage, with relativePath: String) {
@@ -237,6 +244,41 @@ struct ThumbnailService {
         rootURL: URL,
         scale: CGFloat
     ) -> UIImage {
+        renderPageImageResult(
+            snapshot: snapshot,
+            drawing: drawing,
+            rootURL: rootURL,
+            scale: scale,
+            requiresImageAttachments: false
+        ).image
+    }
+
+    nonisolated static func renderPageImageForExport(
+        snapshot: NotePageRenderSnapshot,
+        drawing: PKDrawing,
+        rootURL: URL,
+        scale: CGFloat
+    ) throws -> UIImage {
+        let result = renderPageImageResult(
+            snapshot: snapshot,
+            drawing: drawing,
+            rootURL: rootURL,
+            scale: scale,
+            requiresImageAttachments: true
+        )
+        guard result.didRenderRequiredContent else {
+            throw ImportExportError.exportFailed
+        }
+        return result.image
+    }
+
+    nonisolated private static func renderPageImageResult(
+        snapshot: NotePageRenderSnapshot,
+        drawing: PKDrawing,
+        rootURL: URL,
+        scale: CGFloat,
+        requiresImageAttachments: Bool
+    ) -> (image: UIImage, didRenderRequiredContent: Bool) {
         let size = snapshot.pageSize
         let scale = normalizedPageRenderScale(scale, pageSize: size)
         let format = UIGraphicsImageRendererFormat()
@@ -244,15 +286,18 @@ struct ThumbnailService {
         format.opaque = true
 
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        return renderer.image { context in
-            drawPageContent(
+        var didRenderRequiredContent = false
+        let image = renderer.image { context in
+            didRenderRequiredContent = drawPageContent(
                 snapshot: snapshot,
                 drawing: drawing,
                 rootURL: rootURL,
                 in: CGRect(origin: .zero, size: size),
-                renderScale: scale
+                renderScale: scale,
+                requiresImageAttachments: requiresImageAttachments
             )
         }
+        return (image, didRenderRequiredContent)
     }
 
     nonisolated static func loadDrawing(fileName: String, rootURL: URL) -> PKDrawing {
@@ -269,6 +314,18 @@ struct ThumbnailService {
         } catch {
             return PKDrawing()
         }
+    }
+
+    nonisolated static func loadDrawingForExport(fileName: String, rootURL: URL) throws -> PKDrawing {
+        let drawingURL = rootURL
+            .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
+            .appendingPathComponent(fileName)
+
+        guard FileManager.default.fileExists(atPath: drawingURL.path) else {
+            return PKDrawing()
+        }
+
+        return try PKDrawing(data: Data(contentsOf: drawingURL))
     }
 
     nonisolated private static func renderThumbnailData(
@@ -303,14 +360,16 @@ struct ThumbnailService {
         }
     }
 
+    @discardableResult
     nonisolated private static func drawPageContent(
         snapshot: NotePageRenderSnapshot,
         drawing: PKDrawing,
         rootURL: URL,
         in rect: CGRect,
-        renderScale: CGFloat
-    ) {
-        guard let context = UIGraphicsGetCurrentContext() else { return }
+        renderScale: CGFloat,
+        requiresImageAttachments: Bool = false
+    ) -> Bool {
+        guard let context = UIGraphicsGetCurrentContext() else { return false }
 
         let background = NoteBackground.fromDefaults(
             styleRaw: snapshot.backgroundStyleRaw,
@@ -319,41 +378,59 @@ struct ThumbnailService {
         NoteBackgroundRenderer.draw(
             background: background,
             theme: snapshot.theme,
+            pageID: snapshot.id,
             in: rect,
             context: context
         )
 
-        drawImageAttachments(
+        let didRenderRequiredBackgroundImages = drawImageAttachments(
             snapshot.imageAttachments.filter(\.rendersBehindDrawing),
             rootURL: rootURL,
-            renderScale: renderScale
+            renderScale: renderScale,
+            requiresImageAttachments: requiresImageAttachments
         )
 
         let drawingImage = drawing.image(from: rect, scale: renderScale)
         drawingImage.draw(in: rect)
 
-        drawImageAttachments(
+        let didRenderRequiredForegroundImages = drawImageAttachments(
             snapshot.imageAttachments.filter { !$0.rendersBehindDrawing },
             rootURL: rootURL,
-            renderScale: renderScale
+            renderScale: renderScale,
+            requiresImageAttachments: requiresImageAttachments
         )
+
+        return didRenderRequiredBackgroundImages && didRenderRequiredForegroundImages
     }
 
+    @discardableResult
     nonisolated private static func drawImageAttachments(
         _ attachments: [NoteImageAttachmentRenderSnapshot],
         rootURL: URL,
-        renderScale: CGFloat
-    ) {
+        renderScale: CGFloat,
+        requiresImageAttachments: Bool
+    ) -> Bool {
         let storage = LocalStorageService(rootURL: rootURL)
+        var didRenderRequiredImages = true
 
         for attachment in attachments.sorted(by: { $0.createdAt < $1.createdAt }) {
             guard let imageURL = try? storage.validatedURL(forRelativePath: attachment.storedFileName) else {
+                if requiresImageAttachments {
+                    didRenderRequiredImages = false
+                }
                 continue
             }
             let maxPixelSize = max(attachment.width, attachment.height) * max(renderScale, 0.25)
-            guard let image = renderAttachmentImage(at: imageURL, maxPixelSize: maxPixelSize) else { continue }
+            guard let image = renderAttachmentImage(at: imageURL, maxPixelSize: maxPixelSize) else {
+                if requiresImageAttachments {
+                    didRenderRequiredImages = false
+                }
+                continue
+            }
             image.draw(in: attachment.frame)
         }
+
+        return didRenderRequiredImages
     }
 
     nonisolated static func renderAttachmentImage(at url: URL, maxPixelSize: CGFloat) -> UIImage? {

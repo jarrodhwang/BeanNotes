@@ -1425,7 +1425,7 @@ private struct NoteCardView: View {
                     .scaledToFit()
                     .padding(12)
             } else if let page = note.sortedPages.first {
-                NoteBackgroundSurface(background: page.background)
+                NoteBackgroundSurface(background: page.background, pageID: page.id)
                     .aspectRatio(pagePreviewAspectRatio(page), contentMode: .fit)
                     .padding(12)
             } else {

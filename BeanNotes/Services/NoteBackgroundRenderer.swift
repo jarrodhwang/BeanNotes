@@ -6,16 +6,26 @@
 import SwiftUI
 import UIKit
 
+struct BeanPaperArtwork: Equatable, Sendable {
+    let imageName: String
+    let aspectRatio: CGFloat
+    let widthRatio: CGFloat
+    let maximumHeightRatio: CGFloat
+    let opacity: CGFloat
+    let clipsToEllipse: Bool
+}
+
 enum NoteBackgroundRenderer {
     @MainActor
     static func draw(
         background: NoteBackground,
         theme: BeanNotesTheme = .standard,
+        pageID: UUID? = nil,
         in rect: CGRect,
         context: inout GraphicsContext
     ) {
         context.fill(Path(rect), with: .color(Color(hex: background.colorHex)))
-        drawBeanPaperIfNeeded(theme: theme, in: rect, context: &context)
+        drawBeanPaperIfNeeded(theme: theme, pageID: pageID, in: rect, context: &context)
 
         switch background.style {
         case .plain:
@@ -39,6 +49,7 @@ enum NoteBackgroundRenderer {
     nonisolated static func draw(
         background: NoteBackground,
         theme: BeanNotesTheme = .standard,
+        pageID: UUID? = nil,
         in rect: CGRect,
         context: CGContext
     ) {
@@ -49,7 +60,7 @@ enum NoteBackgroundRenderer {
 
         UIColor(hex: background.colorHex).setFill()
         context.fill(rect)
-        drawBeanPaperIfNeeded(theme: theme, in: rect, context: context)
+        drawBeanPaperIfNeeded(theme: theme, pageID: pageID, in: rect, context: context)
 
         switch background.style {
         case .plain:
@@ -69,14 +80,60 @@ enum NoteBackgroundRenderer {
             drawPlanner(background: background, in: rect, context: context)
         }
     }
+
+    nonisolated static func beanPaperArtwork(for pageID: UUID?) -> BeanPaperArtwork {
+        guard let pageID else { return beanPaperArtworks[0] }
+
+        let index = pageID.uuidString.utf8.reduce(0) { partialResult, byte in
+            (partialResult + Int(byte)) % beanPaperArtworks.count
+        }
+        return beanPaperArtworks[index]
+    }
+
+    nonisolated static func beanPaperArtworkRect(
+        for artwork: BeanPaperArtwork,
+        in rect: CGRect
+    ) -> CGRect {
+        let pageWidth = max(0, rect.width)
+        let pageHeight = max(0, rect.height)
+        let aspectRatio = max(artwork.aspectRatio, 0.01)
+        let width = min(
+            pageWidth * artwork.widthRatio,
+            pageHeight * artwork.maximumHeightRatio * aspectRatio
+        )
+        let height = width / aspectRatio
+
+        return CGRect(
+            x: rect.midX - width / 2,
+            y: rect.midY - height / 2,
+            width: width,
+            height: height
+        )
+    }
 }
 
 private extension NoteBackgroundRenderer {
     nonisolated static let beanPaperTextureImageName = "BeanPaperTexture"
-    nonisolated static let beanMascotImageName = "BeanWelcomeImage"
     nonisolated static let beanTextureTileSide: CGFloat = 256
     nonisolated static let beanTextureOpacity: CGFloat = 0.11
-    nonisolated static let beanMascotOpacity: CGFloat = 0.09
+    nonisolated static let beanPaperArtworks = [
+        BeanPaperArtwork(
+            imageName: "BeanWelcomeImage",
+            aspectRatio: CGFloat(418) / 560,
+            widthRatio: 0.56,
+            maximumHeightRatio: 0.60,
+            opacity: 0.08,
+            clipsToEllipse: false
+        ),
+        BeanPaperArtwork(
+            imageName: "BeanTabAvatar",
+            aspectRatio: 1,
+            widthRatio: 0.60,
+            maximumHeightRatio: 0.50,
+            opacity: 0.075,
+            clipsToEllipse: true
+        )
+    ]
 
     static var lineColor: Color { Color.secondary.opacity(0.24) }
     static var strongLineColor: Color { Color.secondary.opacity(0.34) }
@@ -89,6 +146,7 @@ private extension NoteBackgroundRenderer {
     @MainActor
     static func drawBeanPaperIfNeeded(
         theme: BeanNotesTheme,
+        pageID: UUID?,
         in rect: CGRect,
         context: inout GraphicsContext
     ) {
@@ -108,14 +166,20 @@ private extension NoteBackgroundRenderer {
             }
         }
 
-        var mascotContext = context
-        mascotContext.opacity = beanMascotOpacity
-        let mascot = mascotContext.resolve(Image(beanMascotImageName))
-        mascotContext.draw(mascot, in: beanMascotRect(in: rect))
+        let artwork = beanPaperArtwork(for: pageID)
+        let artworkRect = beanPaperArtworkRect(for: artwork, in: rect)
+        var artworkContext = context
+        artworkContext.opacity = artwork.opacity
+        if artwork.clipsToEllipse {
+            artworkContext.clip(to: Path(ellipseIn: artworkRect))
+        }
+        let image = artworkContext.resolve(Image(artwork.imageName))
+        artworkContext.draw(image, in: artworkRect)
     }
 
     nonisolated static func drawBeanPaperIfNeeded(
         theme: BeanNotesTheme,
+        pageID: UUID?,
         in rect: CGRect,
         context: CGContext
     ) {
@@ -140,21 +204,17 @@ private extension NoteBackgroundRenderer {
             context.restoreGState()
         }
 
-        if let mascot = UIImage(named: beanMascotImageName) {
-            mascot.draw(in: beanMascotRect(in: rect), blendMode: .normal, alpha: beanMascotOpacity)
+        let artwork = beanPaperArtwork(for: pageID)
+        if let image = UIImage(named: artwork.imageName) {
+            let artworkRect = beanPaperArtworkRect(for: artwork, in: rect)
+            context.saveGState()
+            if artwork.clipsToEllipse {
+                context.addEllipse(in: artworkRect)
+                context.clip()
+            }
+            image.draw(in: artworkRect, blendMode: .normal, alpha: artwork.opacity)
+            context.restoreGState()
         }
-    }
-
-    nonisolated static func beanMascotRect(in rect: CGRect) -> CGRect {
-        let width = min(178, max(0, rect.width * 0.23))
-        let aspectRatio: CGFloat = 560 / 418
-        let height = width * aspectRatio
-        return CGRect(
-            x: rect.maxX - width - 18,
-            y: rect.maxY - height - 14,
-            width: width,
-            height: height
-        )
     }
 
     static func drawGrid(background: NoteBackground, in rect: CGRect, context: inout GraphicsContext) {

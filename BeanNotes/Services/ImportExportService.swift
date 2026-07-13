@@ -1477,9 +1477,12 @@ struct ImportExportService {
         try await Task.detached(priority: .userInitiated) { () throws -> Void in
             try autoreleasepool {
                 try Task.checkCancellation()
-                let drawing = ThumbnailService.loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
+                let drawing = try ThumbnailService.loadDrawingForExport(
+                    fileName: snapshot.drawingFileName,
+                    rootURL: rootURL
+                )
                 try Task.checkCancellation()
-                let image = ThumbnailService.renderPageImage(
+                let image = try ThumbnailService.renderPageImageForExport(
                     snapshot: snapshot,
                     drawing: drawing,
                     rootURL: rootURL,
@@ -1532,24 +1535,35 @@ struct ImportExportService {
                 progress?(0, "Exporting \(total == 1 ? "page" : "pages")...")
             }
 
+            var renderError: Error?
             try renderer.writePDF(to: exportURL) { context in
                 for snapshot in snapshots {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled || renderError != nil { return }
 
                     autoreleasepool {
                         let pageBounds = CGRect(origin: .zero, size: snapshot.pageSize)
                         context.beginPage(withBounds: pageBounds, pageInfo: [:])
-                        let drawing = ThumbnailService.loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
-                        let renderScale: CGFloat = total > 12 ? 1.05 : exportRenderScale(for: snapshot)
-                        let image = ThumbnailService.renderPageImage(
-                            snapshot: snapshot,
-                            drawing: drawing,
-                            rootURL: rootURL,
-                            scale: renderScale
-                        )
-                        image.draw(in: pageBounds)
+                        do {
+                            let drawing = try ThumbnailService.loadDrawingForExport(
+                                fileName: snapshot.drawingFileName,
+                                rootURL: rootURL
+                            )
+                            let renderScale: CGFloat = total > 12 ? 1.05 : exportRenderScale(for: snapshot)
+                            let image = try ThumbnailService.renderPageImageForExport(
+                                snapshot: snapshot,
+                                drawing: drawing,
+                                rootURL: rootURL,
+                                scale: renderScale
+                            )
+                            image.draw(in: pageBounds)
+                        } catch {
+                            renderError = error
+                        }
                     }
                 }
+            }
+            if let renderError {
+                throw renderError
             }
             try Task.checkCancellation()
 

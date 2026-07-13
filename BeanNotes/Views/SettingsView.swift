@@ -29,6 +29,7 @@ struct SettingsView: View {
     @State private var isLoadingStorageUsage = false
     @State private var isCleaningOldExports = false
     @State private var isConfirmingExportCleanup = false
+    @State private var isConfirmingThemePaperBackground = false
     @State private var storageMessage: String?
     @State private var storageErrorMessage: String?
     @State private var backupSharePayload: SettingsSharePayload?
@@ -85,13 +86,10 @@ struct SettingsView: View {
                     ThemePreviewCard(theme: selectedMoodTheme)
                         .padding(.vertical, 4)
 
-                    Button("Use Theme Paper for New Notes") {
-                        defaultBackgroundColorHex = selectedMoodTheme.defaultNoteBackgroundHex
+                    Button("Use Theme Paper Background") {
+                        isConfirmingThemePaperBackground = true
                     }
-
-                    Button("Apply Theme Icon") {
-                        AppIconService.applyIcon(for: selectedMoodTheme)
-                    }
+                    .accessibilityIdentifier("settings.themePaperBackgroundButton")
                 }
 
                 Section("Notifications") {
@@ -286,7 +284,7 @@ struct SettingsView: View {
             }
             .onChange(of: beanNotesThemeRaw) { _, rawValue in
                 let theme = BeanNotesTheme(rawValue: rawValue) ?? .defaultTheme
-                defaultBackgroundColorHex = theme.defaultNoteBackgroundHex
+                applyThemePaperBackground(for: theme)
                 if theme != .bean {
                     hideBeanVisitPreview(animated: false)
                 }
@@ -304,6 +302,18 @@ struct SettingsView: View {
                 Task {
                     await refreshNotificationAuthorizationStatus()
                 }
+            }
+            .alert(
+                "Use \(selectedMoodTheme.label) paper background?",
+                isPresented: $isConfirmingThemePaperBackground
+            ) {
+                Button("Cancel", role: .cancel) {}
+
+                Button("Use \(selectedMoodTheme.label) Paper") {
+                    applyThemePaperBackground(for: selectedMoodTheme)
+                }
+            } message: {
+                Text(themePaperConfirmationMessage)
             }
             .confirmationDialog(
                 "Clean up exports older than \(oldExportAgeDays) days?",
@@ -361,6 +371,16 @@ struct SettingsView: View {
         accessibilityReduceMotion
             ? .easeInOut(duration: 0.18)
             : .spring(response: 0.42, dampingFraction: 0.86)
+    }
+
+    private var themePaperConfirmationMessage: String {
+        "Bean says, “Fresh paper coming right up!” New notes will use \(selectedMoodTheme.label)’s plain paper background. Existing notes will stay as they are."
+    }
+
+    private func applyThemePaperBackground(for theme: BeanNotesTheme) {
+        let background = theme.defaultNoteBackground
+        defaultBackgroundStyleRaw = background.storageStyleRaw
+        defaultBackgroundColorHex = background.colorHex
     }
 
     @MainActor

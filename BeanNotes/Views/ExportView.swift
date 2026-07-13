@@ -156,7 +156,6 @@ struct ExportView: View {
             }
 
             do {
-                try await Task.sleep(nanoseconds: 80_000_000)
                 try Task.checkCancellation()
                 let urls = try await makeURLs { fraction, message in
                     exportProgress = fraction

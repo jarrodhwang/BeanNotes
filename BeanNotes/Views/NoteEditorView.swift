@@ -38,6 +38,8 @@ struct NoteEditorView: View {
     @State private var importTask: Task<Void, Never>?
     @State private var previewAttachment: Attachment?
     @State private var saveNowSignal = 0
+    @State private var exportPreparationSignal = 0
+    @State private var pendingExportPreparationID: Int?
     @State private var fitToPageSignal = 0
     @State private var zoomInSignal = 0
     @State private var zoomOutSignal = 0
@@ -283,6 +285,7 @@ struct NoteEditorView: View {
                         pageFlowMode: pageFlowMode,
                         doubleTapAction: doubleTapAction,
                         saveNowSignal: saveNowSignal,
+                        exportPreparationSignal: exportPreparationSignal,
                         fitToPageSignal: fitToPageSignal,
                         zoomInSignal: zoomInSignal,
                         zoomOutSignal: zoomOutSignal,
@@ -302,6 +305,7 @@ struct NoteEditorView: View {
                             markDrawingSaveFailed()
                             errorMessage = "BeanNotes could not save the drawing. \(error.localizedDescription)"
                         },
+                        exportPreparationCompleted: handleExportPreparationCompleted(id:result:),
                         undoRedoAvailabilityChanged: updateUndoRedoAvailability(canUndo:canRedo:),
                         zoomScaleChanged: updateZoomScale(_:),
                         addPageAtBottom: addPageAtBottom,
@@ -538,15 +542,20 @@ struct NoteEditorView: View {
             }
             .accessibilityLabel("Attachments")
 
-            Button {
-                saveNow()
-                isShowingExport = true
-            } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .frame(width: 34, height: 34)
+            Button(action: prepareExport) {
+                Group {
+                    if pendingExportPreparationID == nil {
+                        Image(systemName: "square.and.arrow.up")
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .frame(width: 34, height: 34)
             }
+            .disabled(pendingExportPreparationID != nil)
             .keyboardShortcut("e", modifiers: [.command])
-            .accessibilityLabel("Export")
+            .accessibilityLabel(pendingExportPreparationID == nil ? "Export" : "Preparing export")
         }
         .buttonStyle(.borderless)
         .controlSize(.large)
@@ -1652,6 +1661,34 @@ struct NoteEditorView: View {
         saveNowSignal += 1
         note.touch()
         saveEditorChanges("save the note")
+    }
+
+    private func prepareExport() {
+        guard pendingExportPreparationID == nil else { return }
+
+        drawingMetadataSaveTask?.cancel()
+        drawingMetadataSaveTask = nil
+        note.touch()
+        guard saveEditorChanges("prepare the export") else { return }
+
+        exportPreparationSignal &+= 1
+        pendingExportPreparationID = exportPreparationSignal
+    }
+
+    private func handleExportPreparationCompleted(
+        id: Int,
+        result: Result<Void, Error>
+    ) {
+        guard pendingExportPreparationID == id else { return }
+        pendingExportPreparationID = nil
+
+        switch result {
+        case .success:
+            isShowingExport = true
+        case .failure(let error):
+            markDrawingSaveFailed()
+            errorMessage = "BeanNotes could not prepare the drawing for export. \(error.localizedDescription)"
+        }
     }
 
     private func scheduleDrawingMetadataSave() {
