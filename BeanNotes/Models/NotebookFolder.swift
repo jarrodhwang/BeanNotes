@@ -34,11 +34,6 @@ final class NotebookFolder {
     }
 
     var sortedNotes: [NoteDocument] {
-        notes.sorted { lhs, rhs in
-            if lhs.updatedAt == rhs.updatedAt {
-                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
-            return lhs.updatedAt > rhs.updatedAt
-        }
+        notes.sorted(by: NoteDocument.libraryOrder)
     }
 }

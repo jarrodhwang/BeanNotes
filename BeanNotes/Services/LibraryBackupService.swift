@@ -160,6 +160,8 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
         var height: Double
         var isLocked: Bool
         var rendersBehindDrawing: Bool
+        var vectorSourceStoredFileName: String?
+        var vectorSourcePageIndex: Int?
         var createdAt: Date
         var updatedAt: Date
 
@@ -177,6 +179,8 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
             self.height = attachment.height
             self.isLocked = attachment.isLocked
             self.rendersBehindDrawing = attachment.rendersBehindDrawing
+            self.vectorSourceStoredFileName = attachment.vectorSourceStoredFileName
+            self.vectorSourcePageIndex = attachment.vectorSourcePageIndex
             self.createdAt = attachment.createdAt
             self.updatedAt = attachment.updatedAt
         }

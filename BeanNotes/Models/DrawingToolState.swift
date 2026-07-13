@@ -397,7 +397,7 @@ enum DrawingInputMode: String, CaseIterable, Identifiable {
 
 enum DrawingRenderQuality: String, CaseIterable, Identifiable {
     static let storageKey = "drawingRenderQuality"
-    static let defaultQuality: DrawingRenderQuality = .highResolution
+    static let defaultQuality: DrawingRenderQuality = .ultraFine
 
     case balanced
     case highResolution
@@ -529,7 +529,7 @@ struct DrawingRenderResolutionStatus: Equatable {
         maximumDrawingScaleText = Self.scaleText(for: maximumDrawingBackingScale)
         menuSummary = "\(quality.label) detail, \(drawingScaleText) drawing backing"
         stripText = "\(drawingScaleText) backing"
-        settingsSummary = "Detail presets up to \(maximumZoomText); drawing backing caps at \(maximumDrawingScaleText) on this device. PencilKit strokes stay vector data."
+        settingsSummary = "Native PencilKit detail tracks zoom up to \(maximumZoomText), reaching \(maximumDrawingScaleText) on this device. Live and saved strokes stay screen-sharp."
         accessibilityLabel = "\(quality.label) detail, \(zoomText) zoom, drawing backing \(Self.accessibilityScaleText(for: drawingBackingScale))"
     }
 
@@ -540,15 +540,14 @@ struct DrawingRenderResolutionStatus: Equatable {
     ) -> CGFloat {
         let normalizedZoomScale = Self.normalizedPositive(zoomScale, fallback: 1)
         let normalizedScreenScale = Self.normalizedPositive(screenScale, fallback: 1)
-        let requestedScale = max(normalizedZoomScale, 1) * normalizedScreenScale
-        return min(requestedScale, maximumDrawingBackingScale(quality: quality, screenScale: normalizedScreenScale))
+        return max(normalizedZoomScale, 1) * normalizedScreenScale
     }
 
     static func maximumDrawingBackingScale(
         quality: DrawingRenderQuality,
         screenScale: CGFloat
     ) -> CGFloat {
-        normalizedPositive(screenScale, fallback: 1) * quality.drawingScaleMultiplier
+        normalizedPositive(screenScale, fallback: 1) * quality.maximumZoomScale
     }
 
     private static func normalizedPositive(_ value: CGFloat, fallback: CGFloat) -> CGFloat {

@@ -55,6 +55,8 @@ final class Attachment {
     var height: Double
     var isLocked: Bool = false
     var rendersBehindDrawing: Bool = false
+    var vectorSourceStoredFileName: String?
+    var vectorSourcePageIndex: Int?
     var createdAt: Date
     var updatedAt: Date
     var page: NotePage?
@@ -73,6 +75,8 @@ final class Attachment {
         height: Double = 220,
         isLocked: Bool = false,
         rendersBehindDrawing: Bool? = nil,
+        vectorSourceStoredFileName: String? = nil,
+        vectorSourcePageIndex: Int? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         page: NotePage? = nil
@@ -97,6 +101,8 @@ final class Attachment {
         self.height = Double(frame.height)
         self.isLocked = isLocked
         self.rendersBehindDrawing = rendersBehindDrawing ?? isLocked
+        self.vectorSourceStoredFileName = vectorSourceStoredFileName
+        self.vectorSourcePageIndex = vectorSourcePageIndex
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.page = page

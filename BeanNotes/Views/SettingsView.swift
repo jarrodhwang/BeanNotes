@@ -14,8 +14,6 @@ struct SettingsView: View {
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.standard.rawValue
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
-    @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.defaultQuality.rawValue
-    @AppStorage(DrawingStrokeZoomBehavior.storageKey) private var strokeZoomBehaviorRaw = DrawingStrokeZoomBehavior.defaultBehavior.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
@@ -54,24 +52,8 @@ struct SettingsView: View {
         NoteEditorPageCreationMode(rawValue: pageCreationModeRaw) ?? .manual
     }
 
-    private var selectedDrawingRenderQuality: DrawingRenderQuality {
-        DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? DrawingRenderQuality.defaultQuality
-    }
-
     private var selectedDrawingInputMode: DrawingInputMode {
         DrawingInputMode(rawValue: drawingInputModeRaw) ?? DrawingInputMode.defaultMode
-    }
-
-    private var selectedStrokeZoomBehavior: DrawingStrokeZoomBehavior {
-        DrawingStrokeZoomBehavior(rawValue: strokeZoomBehaviorRaw) ?? DrawingStrokeZoomBehavior.defaultBehavior
-    }
-
-    private var selectedDrawingResolutionStatus: DrawingRenderResolutionStatus {
-        DrawingRenderResolutionStatus(
-            quality: selectedDrawingRenderQuality,
-            zoomScale: selectedDrawingRenderQuality.maximumZoomScale,
-            screenScale: UIScreen.main.scale
-        )
     }
 
     var body: some View {
@@ -235,27 +217,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Picker("Drawing Detail", selection: $drawingRenderQualityRaw) {
-                        ForEach(DrawingRenderQuality.allCases) { quality in
-                            Text(quality.label).tag(quality.rawValue)
-                        }
-                    }
-
-                    Text(selectedDrawingRenderQuality.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text(selectedDrawingResolutionStatus.settingsSummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Picker("Ink Width", selection: $strokeZoomBehaviorRaw) {
-                        ForEach(DrawingStrokeZoomBehavior.allCases) { behavior in
-                            Text(behavior.label).tag(behavior.rawValue)
-                        }
-                    }
-
-                    Text(selectedStrokeZoomBehavior.description)
+                    Text("Drawing uses one native PencilKit high-detail canvas at every zoom level.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

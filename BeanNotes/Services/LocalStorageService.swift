@@ -260,6 +260,9 @@ struct LocalStorageCleanupTarget: Equatable {
 
     private mutating func insert(_ attachment: Attachment) {
         relativePaths.insert(attachment.storedFileName)
+        if let vectorSourceStoredFileName = attachment.vectorSourceStoredFileName {
+            relativePaths.insert(vectorSourceStoredFileName)
+        }
     }
 }
 

@@ -112,6 +112,28 @@ struct BeanNotesTests {
         #expect(!attachment.rendersBehindDrawing)
     }
 
+    @Test func libraryNoteOrderDoesNotChangeWhenContentIsSaved() {
+        let olderCreation = Date(timeIntervalSince1970: 1_700_000_000)
+        let newerCreation = Date(timeIntervalSince1970: 1_800_000_000)
+        let olderNote = NoteDocument(
+            title: "Older",
+            createdAt: olderCreation,
+            updatedAt: Date(timeIntervalSince1970: 1_900_000_000)
+        )
+        let newerNote = NoteDocument(
+            title: "Newer",
+            createdAt: newerCreation,
+            updatedAt: newerCreation
+        )
+        let notes = [olderNote, newerNote]
+
+        #expect(notes.sorted(by: NoteDocument.libraryOrder).map(\.id) == [newerNote.id, olderNote.id])
+
+        olderNote.touch(at: Date(timeIntervalSince1970: 2_000_000_000))
+
+        #expect(notes.sorted(by: NoteDocument.libraryOrder).map(\.id) == [newerNote.id, olderNote.id])
+    }
+
     @Test func noteSearchMatchesIndexedPageTextAndAttachmentMetadata() throws {
         let context = try makeInMemoryModelContext()
         let note = NoteDocument(title: "CMPT 310")
@@ -778,7 +800,7 @@ struct BeanNotesTests {
     }
 
     @Test func drawingRenderQualityExposesSharperZoomBudget() {
-        #expect(DrawingRenderQuality.defaultQuality == .highResolution)
+        #expect(DrawingRenderQuality.defaultQuality == .ultraFine)
         #expect(DrawingRenderQuality.allCases.map(\.label) == ["Balanced", "High Resolution", "Ultra Fine"])
         #expect(DrawingRenderQuality.highResolution.maximumZoomScale > DrawingRenderQuality.balanced.maximumZoomScale)
         #expect(DrawingRenderQuality.ultraFine.maximumZoomScale > DrawingRenderQuality.highResolution.maximumZoomScale)
@@ -801,19 +823,19 @@ struct BeanNotesTests {
 
         #expect(ultraFineStatus.qualityLabel == "Ultra Fine")
         #expect(ultraFineStatus.zoomText == "600%")
-        #expect(ultraFineStatus.drawingScaleText == "6.5x")
+        #expect(ultraFineStatus.drawingScaleText == "12x")
         #expect(ultraFineStatus.maximumZoomText == "600%")
-        #expect(ultraFineStatus.maximumDrawingScaleText == "6.5x")
-        #expect(ultraFineStatus.menuSummary == "Ultra Fine detail, 6.5x drawing backing")
-        #expect(ultraFineStatus.stripText == "6.5x backing")
-        #expect(ultraFineStatus.settingsSummary.contains("PencilKit strokes stay vector data"))
-        #expect(ultraFineStatus.accessibilityLabel == "Ultra Fine detail, 600% zoom, drawing backing 6.5 times")
+        #expect(ultraFineStatus.maximumDrawingScaleText == "12x")
+        #expect(ultraFineStatus.menuSummary == "Ultra Fine detail, 12x drawing backing")
+        #expect(ultraFineStatus.stripText == "12x backing")
+        #expect(ultraFineStatus.settingsSummary.contains("Live and saved strokes stay screen-sharp"))
+        #expect(ultraFineStatus.accessibilityLabel == "Ultra Fine detail, 600% zoom, drawing backing 12 times")
 
         #expect(DrawingRenderResolutionStatus.drawingBackingScale(
             quality: .balanced,
             zoomScale: 10,
             screenScale: 2
-        ) == 4)
+        ) == 20)
         #expect(DrawingRenderResolutionStatus.drawingBackingScale(
             quality: .highResolution,
             zoomScale: 0.75,
@@ -832,6 +854,14 @@ struct BeanNotesTests {
         #expect(DrawingInputMode.allCases.map(\.systemImage) == ["hand.raised", "scribble"])
         #expect(DrawingInputMode.pencilOnly.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
         #expect(DrawingInputMode.anyInput.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.anyInput.rawValue)
+    }
+
+    @Test func nativeDrawingScaleUsesCurrentResolutionWithoutOversizedHeadroom() {
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 0.75) == 1)
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 1) == 1)
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 2) == 2)
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 4) == 4)
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 6) == 6)
     }
 
     @Test func pageCanvasAppliesSelectedDrawingInputMode() {
@@ -887,6 +917,139 @@ struct BeanNotesTests {
 
         #expect(pageView.canvasView.contentSize == page.pageSize)
         #expect(pageView.canvasView.contentOffset == .zero)
+    }
+
+    @Test @MainActor func nativeDrawingViewportUsesPencilKitZoomAndPreservesPageCoordinates() throws {
+        let fixture = try makePageCanvasFixture(name: "NativeViewport")
+        defer { fixture.cleanup() }
+
+        let visibleRect = CGRect(x: 100, y: 180, width: 140, height: 160)
+        fixture.pageView.updateNativeDrawingViewport(
+            visiblePageRect: visibleRect,
+            overscan: 0,
+            nativeZoomScale: 4,
+            force: true
+        )
+
+        #expect(abs(fixture.pageView.canvasView.zoomScale - 4) < 0.01)
+        #expect(fixture.pageView.drawingViewportView.frame == visibleRect)
+        #expect(fixture.pageView.canvasView.bounds.size == CGSize(width: 560, height: 640))
+        #expect(fixture.pageView.canvasView.contentOffset == CGPoint(x: 400, y: 720))
+        #expect(abs(fixture.pageView.canvasView.frame.width - visibleRect.width) < 0.01)
+        #expect(abs(fixture.pageView.canvasView.frame.height - visibleRect.height) < 0.01)
+
+        let viewportPoint = CGPoint(x: 25, y: 40)
+        let pagePoint = CGPoint(
+            x: (fixture.pageView.canvasView.contentOffset.x + viewportPoint.x * 4) / 4,
+            y: (fixture.pageView.canvasView.contentOffset.y + viewportPoint.y * 4) / 4
+        )
+        #expect(pagePoint == CGPoint(x: 125, y: 220))
+    }
+
+    @Test @MainActor func nativeDrawingViewportStaysStableDuringLiveInk() throws {
+        let fixture = try makePageCanvasFixture(name: "StableLiveInk")
+        defer { fixture.cleanup() }
+
+        fixture.pageView.updateNativeDrawingViewport(
+            visiblePageRect: CGRect(x: 0, y: 0, width: 180, height: 220),
+            overscan: 0,
+            nativeZoomScale: 2,
+            force: true
+        )
+        fixture.pageView.setLiveDrawingActive(true)
+        fixture.pageView.updateNativeDrawingViewport(
+            visiblePageRect: CGRect(x: 200, y: 260, width: 120, height: 150),
+            overscan: 0,
+            nativeZoomScale: 5,
+            force: true
+        )
+
+        #expect(abs(fixture.pageView.canvasView.zoomScale - 2) < 0.01)
+        #expect(fixture.pageView.drawingViewportView.frame == CGRect(x: 0, y: 0, width: 180, height: 220))
+
+        fixture.pageView.setLiveDrawingActive(false)
+        #expect(abs(fixture.pageView.canvasView.zoomScale - 5) < 0.01)
+        #expect(fixture.pageView.drawingViewportView.frame == CGRect(x: 200, y: 260, width: 120, height: 150))
+    }
+
+    @Test @MainActor func documentBackgroundDoesNotBlockDrawingInput() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPDFDrawing-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "PDF Page 1",
+            originalFileName: "PDF-page-1.jpg",
+            storedFileName: "Imports/PDF-page-1.jpg",
+            contentTypeIdentifier: "public.jpeg",
+            fileExtension: "jpg",
+            x: 0,
+            y: 0,
+            width: 612,
+            height: 792,
+            isLocked: true,
+            rendersBehindDrawing: true
+        )
+        let imageView = DrawingCanvasView.AttachmentImageContainerView(frame: .zero)
+        imageView.configure(
+            attachment: attachment,
+            storage: storage,
+            pageSize: CGSize(width: 612, height: 792),
+            changed: {}
+        )
+
+        #expect(!imageView.isUserInteractionEnabled)
+    }
+
+    @Test func fingerDrawingRequiresTwoFingerDocumentNavigation() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesFingerNavigation-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "finger-navigation.drawing")
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .anyInput,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        #expect(container.scrollView.panGestureRecognizer.minimumNumberOfTouches == 2)
+        #expect(container.activeCanvasView?.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.anyInput.rawValue)
+        #expect(container.activeCanvasView?.panGestureRecognizer.isEnabled == false)
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        #expect(container.scrollView.panGestureRecognizer.minimumNumberOfTouches == 1)
+        #expect(container.activeCanvasView?.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
     }
 
     @Test func drawingZoomPresetsFormatAndClampDetailTargets() {
@@ -1041,7 +1204,7 @@ struct BeanNotesTests {
 
         #expect(baseBudget.maxPixelSize == 1_024)
         #expect(zoomedBudget.maxPixelSize == 2_560)
-        #expect(cappedBudget.maxPixelSize == 3_072)
+        #expect(cappedBudget.maxPixelSize == 6_144)
         #expect(zoomedBudget.shouldReplaceLoadedBudget(baseBudget))
         #expect(baseBudget.shouldReplaceLoadedBudget(zoomedBudget))
         #expect(!moderateZoomBudget.shouldReplaceLoadedBudget(baseBudget))
@@ -1063,7 +1226,7 @@ struct BeanNotesTests {
 
         #expect(corruptBudget.maxPixelSize == 1_024)
         #expect(partiallyValidBudget.maxPixelSize == 1_800)
-        #expect(extremeZoomBudget.maxPixelSize == 3_072)
+        #expect(extremeZoomBudget.maxPixelSize == 6_144)
     }
 
     @Test func drawingCanvasLayoutSignatureTracksOnlyDocumentLayoutInputs() {
@@ -1708,6 +1871,33 @@ struct BeanNotesTests {
         #expect(!coordinator.dirtyPageIDs.contains(page.id))
     }
 
+    @Test func livePencilStrokeDefersAutosaveWorkUntilPencilLifts() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesLiveStroke-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "live-stroke.drawing")
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let canvasView = PKCanvasView()
+        canvasView.drawing = makeTestDrawing(color: .systemBlue, xOffset: 0)
+
+        coordinator.register(canvasView: canvasView, page: page)
+        coordinator.canvasViewDidBeginUsingTool(canvasView)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+
+        #expect(coordinator.dirtyPageIDs.contains(page.id))
+        #expect(coordinator.pendingSaves[page.id] == nil)
+
+        coordinator.canvasViewDidEndUsingTool(canvasView)
+
+        #expect(coordinator.pendingSaves[page.id] != nil)
+        coordinator.unregister(canvasView: canvasView, page: page)
+    }
+
     @Test func canvasUnloadFlushesCurrentDrawingWhileAsyncSaveIsInFlight() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesCanvasInFlightUnload-\(UUID().uuidString)", isDirectory: true)
@@ -1827,14 +2017,56 @@ struct BeanNotesTests {
         #expect(abs(finalDrawing.bounds.midY - drawing.bounds.midY) < 0.5)
     }
 
+    private struct PageCanvasFixture {
+        let rootURL: URL
+        let storage: LocalStorageService
+        let drawingStorage: DrawingStorageService
+        let coordinator: DrawingCanvasView.Coordinator
+        let pageView: DrawingCanvasView.PageCanvasView
+
+        @MainActor func cleanup() {
+            pageView.releaseHeavyResources()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+    }
+
+    private func makePageCanvasFixture(name: String) throws -> PageCanvasFixture {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotes\(name)-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "\(name).drawing", width: 612, height: 792)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView()
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {}
+        )
+        return PageCanvasFixture(
+            rootURL: rootURL,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator,
+            pageView: pageView
+        )
+    }
+
     private func makeDrawingCanvasView(
         page: NotePage,
         drawingStorage: DrawingStorageService
     ) -> DrawingCanvasView {
-        DrawingCanvasView(
+        let defaults = UserDefaults(suiteName: "BeanNotesCanvasTest-\(UUID().uuidString)")!
+        return DrawingCanvasView(
             pages: [page],
             selectedPageID: .constant(page.id),
-            toolState: DrawingToolState(),
+            toolState: DrawingToolState(defaults: defaults),
             paletteMode: .custom,
             inputMode: .pencilOnly,
             renderQuality: .balanced,
@@ -2591,9 +2823,20 @@ struct BeanNotesTests {
         #expect(imported.pages.allSatisfy { $0.lockedImageAttachments.count == 1 })
         #expect(imported.attachments.contains { $0.kind == .pdf && !$0.isLocked })
         #expect(imported.pages.allSatisfy { $0.lockedImageAttachments.allSatisfy(\.rendersBehindDrawing) })
+        #expect(imported.pages.compactMap { $0.lockedImageAttachments.first?.vectorSourcePageIndex }.sorted() == [0, 1])
 
         let lockedImage = try #require(imported.pages.first?.lockedImageAttachments.first)
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: lockedImage.storedFileName).path))
+        let vectorSource = try #require(lockedImage.vectorSourceStoredFileName)
+        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: vectorSource).path))
+
+        let tiledPage = DrawingCanvasView.PDFPageTiledView(frame: CGRect(x: 0, y: 0, width: 612, height: 792))
+        tiledPage.configure(url: storage.url(forRelativePath: vectorSource), pageIndex: 0)
+        #expect(tiledPage.layer is CATiledLayer)
+        let stableContentsScale = tiledPage.layer.contentsScale
+        tiledPage.updateRenderScale(12)
+        #expect(tiledPage.layer.contentsScale == stableContentsScale)
+        #expect(DrawingCanvasView.ImmediatePDFTiledLayer.fadeDuration() == 0)
     }
 
     @Test @MainActor func rotatedPDFImportUsesDisplayedPageAspect() async throws {

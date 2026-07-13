@@ -20,7 +20,6 @@ struct NoteEditorView: View {
     @StateObject private var toolState = DrawingToolState()
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
-    @AppStorage(DrawingRenderQuality.storageKey) private var drawingRenderQualityRaw = DrawingRenderQuality.defaultQuality.rawValue
     @AppStorage(DrawingStrokeZoomBehavior.storageKey) private var strokeZoomBehaviorRaw = DrawingStrokeZoomBehavior.defaultBehavior.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
@@ -91,10 +90,6 @@ struct NoteEditorView: View {
 
     private var drawingInputMode: DrawingInputMode {
         DrawingInputMode(rawValue: drawingInputModeRaw) ?? DrawingInputMode.defaultMode
-    }
-
-    private var drawingRenderQuality: DrawingRenderQuality {
-        DrawingRenderQuality(rawValue: drawingRenderQualityRaw) ?? DrawingRenderQuality.defaultQuality
     }
 
     private var strokeZoomBehavior: DrawingStrokeZoomBehavior {
@@ -283,7 +278,7 @@ struct NoteEditorView: View {
                         toolState: toolState,
                         paletteMode: penPaletteMode,
                         inputMode: drawingInputMode,
-                        renderQuality: drawingRenderQuality,
+                        renderQuality: .ultraFine,
                         strokeZoomBehavior: strokeZoomBehavior,
                         pageFlowMode: pageFlowMode,
                         doubleTapAction: doubleTapAction,
@@ -310,7 +305,7 @@ struct NoteEditorView: View {
                         undoRedoAvailabilityChanged: updateUndoRedoAvailability(canUndo:canRedo:),
                         zoomScaleChanged: updateZoomScale(_:),
                         addPageAtBottom: addPageAtBottom,
-                        topContent: editorTopContent(page: page)
+                        topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page))
                     )
                     .ignoresSafeArea(.container, edges: .bottom)
 
@@ -338,7 +333,6 @@ struct NoteEditorView: View {
                             zoomScale: currentZoomScale,
                             strokeZoomBehavior: strokeZoomBehavior
                         )
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
                     .zIndex(2)
                 }
@@ -359,14 +353,6 @@ struct NoteEditorView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                if shouldShowInkCalibrationStrip {
-                    inkCalibrationStrip
-                        .padding(.horizontal, 18)
-                        .padding(.bottom, 18)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                        .zIndex(4)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
             }
         }
         .background(beanNotesTheme.appBackground)
@@ -385,11 +371,6 @@ struct NoteEditorView: View {
             editorKeyboardShortcuts
         }
         .animation(.snappy(duration: 0.18), value: isWorkspaceFocusModeEnabled)
-    }
-
-    private func editorTopContent(page: NotePage) -> AnyView? {
-        guard !isWorkspaceFocusModeEnabled else { return nil }
-        return AnyView(editorTitleHeader(page: page))
     }
 
     private func editorTitleHeader(page: NotePage) -> some View {
@@ -514,8 +495,6 @@ struct NoteEditorView: View {
 
             pageActionsMenu(page: page)
 
-            zoomControls
-
             Button {
                 isShowingBackgroundPicker = true
             } label: {
@@ -610,19 +589,6 @@ struct NoteEditorView: View {
             .accessibilityLabel("Redo")
             .accessibilityHint("Redo the last undone drawing change on the current page")
 
-            Divider()
-                .frame(height: 24)
-
-            Button {
-                fitToPageSignal += 1
-            } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .frame(width: 34, height: 34)
-            }
-            .accessibilityLabel("Focus fit page")
-            .accessibilityHint("Reset zoom to the selected page without leaving focus mode")
-
-            zoomControls
         }
         .buttonStyle(.borderless)
         .controlSize(.large)
@@ -662,7 +628,7 @@ struct NoteEditorView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "Zoom \(currentZoomText), \(drawingRenderQuality.label) drawing detail, \(activeResolutionStatus.drawingScaleText) drawing backing, \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink"
+            "Zoom \(currentZoomText), native PencilKit detail, \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink"
         )
     }
 
@@ -670,8 +636,7 @@ struct NoteEditorView: View {
         Menu {
             Section {
                 Label("Current \(currentZoomText)", systemImage: "viewfinder")
-                Label("Detail \(drawingRenderQuality.label)", systemImage: drawingRenderQuality.systemImage)
-                Label(activeResolutionStatus.menuSummary, systemImage: "ruler")
+                Label("Native PencilKit canvas", systemImage: "pencil.tip")
                 Label("Touch \(drawingInputMode.label)", systemImage: drawingInputMode.systemImage)
                 Label("Ink \(strokeZoomBehavior.label)", systemImage: strokeZoomBehavior.systemImage)
                 if penPaletteMode == .custom, toolState.selectedToolUsesInkColor {
@@ -748,40 +713,8 @@ struct NoteEditorView: View {
                 }
             }
 
-            Section("Drawing Detail") {
-                ForEach(DrawingRenderQuality.allCases) { quality in
-                    Button {
-                        setDrawingRenderQuality(quality)
-                    } label: {
-                        Label(
-                            quality.label,
-                            systemImage: drawingRenderQuality == quality ? "checkmark" : quality.systemImage
-                        )
-                    }
-                    .accessibilityHint(quality.description)
-                }
-            }
-
-            Section("Ink Width") {
-                if penPaletteMode == .custom {
-                    ForEach(DrawingStrokeZoomBehavior.allCases) { behavior in
-                        Button {
-                            setStrokeZoomBehavior(behavior)
-                        } label: {
-                            Label(
-                                behavior.label,
-                                systemImage: strokeZoomBehavior == behavior ? "checkmark" : behavior.systemImage
-                            )
-                        }
-                        .accessibilityHint(behavior.description)
-                    }
-                } else {
-                    Label("Apple Pencil picker controls ink width", systemImage: "pencil.tip")
-                }
-            }
-
             Section("Quick Zoom") {
-                ForEach(DrawingZoomPreset.quickPresets(for: drawingRenderQuality)) { preset in
+                ForEach(DrawingZoomPreset.quickPresets(for: .ultraFine)) { preset in
                     Button {
                         setZoomScale(preset.scale)
                     } label: {
@@ -809,32 +742,22 @@ struct NoteEditorView: View {
             .padding(.horizontal, 3)
         }
         .accessibilityIdentifier("Zoom resolution status")
-        .accessibilityLabel("Zoom \(currentZoomText), \(activeResolutionStatus.menuSummary), \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink")
-        .accessibilityHint("Zoom, fit the selected page, change drawing detail, touch mode, resolution, or ink width")
+        .accessibilityLabel("Zoom \(currentZoomText), native PencilKit canvas, \(drawingInputMode.label) touch mode, \(strokeZoomBehavior.label) ink")
+        .accessibilityHint("Zoom, fit the selected page, change touch mode, or ink width")
     }
 
     private var currentZoomText: String {
         DrawingZoomLevel.percentageText(for: currentZoomScale)
     }
 
-    private var activeResolutionStatus: DrawingRenderResolutionStatus {
-        DrawingRenderResolutionStatus(
-            quality: drawingRenderQuality,
-            zoomScale: currentZoomScale,
-            screenScale: UIScreen.main.scale
-        )
-    }
-
     private var isDetailWritingModeActive: Bool {
-        drawingRenderQuality == DrawingDetailWritingMode.renderQuality
-            && strokeZoomBehavior == DrawingDetailWritingMode.strokeZoomBehavior
+        strokeZoomBehavior == DrawingDetailWritingMode.strokeZoomBehavior
             && toolState.widthMode == DrawingDetailWritingMode.widthMode
             && DrawingZoomLevel.isScale(currentZoomScale, closeTo: DrawingDetailWritingMode.zoomScale)
     }
 
     private var isLightTouchFocusModeActive: Bool {
         isWorkspaceFocusModeEnabled
-            && drawingRenderQuality == DrawingLightTouchFocusMode.renderQuality
             && drawingInputMode == DrawingLightTouchFocusMode.inputMode
             && strokeZoomBehavior == DrawingLightTouchFocusMode.strokeZoomBehavior
             && toolState.widthMode == DrawingLightTouchFocusMode.widthMode
@@ -901,19 +824,9 @@ struct NoteEditorView: View {
                     .font(.caption2.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
 
-                Divider()
-                    .frame(height: 18)
-
-                Label {
-                    Text(activeResolutionStatus.stripText)
-                        .monospacedDigit()
-                } icon: {
-                    Image(systemName: "ruler")
-                        .foregroundStyle(beanNotesTheme.accentColor)
-                }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(status.accessibilityLabel), \(activeResolutionStatus.accessibilityLabel)")
+            .accessibilityLabel(status.accessibilityLabel)
 
             Button {
                 lockCurrentPageInk()
@@ -1053,14 +966,12 @@ struct NoteEditorView: View {
     }
 
     private func applyDetailWritingMode() {
-        drawingRenderQualityRaw = DrawingDetailWritingMode.renderQuality.rawValue
         strokeZoomBehaviorRaw = DrawingDetailWritingMode.strokeZoomBehavior.rawValue
         toolState.selectWidthMode(DrawingDetailWritingMode.widthMode)
         setZoomScale(DrawingDetailWritingMode.zoomScale)
     }
 
     private func applyLightTouchFocusMode() {
-        drawingRenderQualityRaw = DrawingLightTouchFocusMode.renderQuality.rawValue
         drawingInputModeRaw = DrawingLightTouchFocusMode.inputMode.rawValue
         strokeZoomBehaviorRaw = DrawingLightTouchFocusMode.strokeZoomBehavior.rawValue
         toolState.selectWidthMode(DrawingLightTouchFocusMode.widthMode)
@@ -1077,10 +988,6 @@ struct NoteEditorView: View {
         }
 
         strokeZoomBehaviorRaw = DrawingStrokeZoomBehavior.pageWidth.rawValue
-    }
-
-    private func setDrawingRenderQuality(_ quality: DrawingRenderQuality) {
-        drawingRenderQualityRaw = quality.rawValue
     }
 
     private func setStrokeZoomBehavior(_ behavior: DrawingStrokeZoomBehavior) {
@@ -1349,7 +1256,9 @@ struct NoteEditorView: View {
                     width: sourceAttachment.width,
                     height: sourceAttachment.height,
                     isLocked: sourceAttachment.isLocked,
-                    rendersBehindDrawing: sourceAttachment.rendersBehindDrawing
+                    rendersBehindDrawing: sourceAttachment.rendersBehindDrawing,
+                    vectorSourceStoredFileName: sourceAttachment.vectorSourceStoredFileName,
+                    vectorSourcePageIndex: sourceAttachment.vectorSourcePageIndex
                 )
                 duplicatedPage.attachments.append(attachment)
             }
@@ -1641,7 +1550,6 @@ struct NoteEditorView: View {
             try modelContext.save()
             didSave = true
             try staging.commit()
-            await refreshSearchIndexAfterContentChange(progressMessage: "Indexing searchable text...")
 
             if let firstImportedPageID {
                 selectedPageID = firstImportedPageID
@@ -1681,25 +1589,12 @@ struct NoteEditorView: View {
             try modelContext.save()
             didSave = true
             try staging.commit()
-            await refreshSearchIndexAfterContentChange()
         } catch {
             if !didSave {
                 modelContext.rollback()
                 staging.rollback()
             }
             errorMessage = error.localizedDescription
-        }
-    }
-
-    private func refreshSearchIndexAfterContentChange(progressMessage: String? = nil) async {
-        if let progressMessage {
-            importProgressMessage = progressMessage
-        }
-
-        do {
-            try await NoteSearchIndexService().indexIfNeeded(note: note, modelContext: modelContext)
-        } catch {
-            errorMessage = "BeanNotes saved the note, but could not index searchable text. \(error.localizedDescription)"
         }
     }
 

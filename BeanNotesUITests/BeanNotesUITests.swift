@@ -37,13 +37,14 @@ final class BeanNotesUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["Back to library"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.otherElements["Pen palette"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Light Touch stroke width mode"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Standard stroke width mode"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Precision stroke width mode"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.otherElements["Ink preview"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Zoom out"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Zoom resolution status"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["1 point stroke"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["3 point stroke"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["5 point stroke"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["8 point stroke"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Custom pen thickness"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Zoom in"].exists)
+        XCTAssertFalse(app.buttons["Zoom out"].exists)
+        XCTAssertFalse(app.buttons["Zoom resolution status"].exists)
         XCTAssertTrue(app.buttons["Focus drawing mode"].waitForExistence(timeout: 8))
     }
 
@@ -61,15 +62,37 @@ final class BeanNotesUITests: XCTestCase {
 
         let exitFocusButton = app.buttons["Exit focus mode"]
         XCTAssertTrue(exitFocusButton.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Focus fit page"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Zoom out"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Focus fit page"].exists)
+        XCTAssertFalse(app.buttons["Zoom in"].exists)
+        XCTAssertFalse(app.buttons["Zoom out"].exists)
         XCTAssertFalse(app.buttons["Back to library"].waitForExistence(timeout: 1))
 
         exitFocusButton.tap()
 
         XCTAssertTrue(app.buttons["Focus drawing mode"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Back to library"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor
+    func testTitleRemainsScreenSpaceWhilePageZooms() throws {
+        app.launch()
+
+        let createNoteButton = app.buttons["Create note"]
+        XCTAssertTrue(createNoteButton.waitForExistence(timeout: 8))
+        createNoteButton.tap()
+
+        let titleButton = app.buttons["Edit note title"]
+        XCTAssertTrue(titleButton.waitForExistence(timeout: 8))
+        let initialFrame = titleButton.frame
+
+        app.typeKey("+", modifierFlags: .command)
+        Thread.sleep(forTimeInterval: 1)
+
+        let frameAfterZoom = titleButton.frame
+        XCTAssertEqual(frameAfterZoom.minX, initialFrame.minX, accuracy: 1)
+        XCTAssertEqual(frameAfterZoom.minY, initialFrame.minY, accuracy: 1)
+        XCTAssertEqual(frameAfterZoom.width, initialFrame.width, accuracy: 1)
+        XCTAssertEqual(frameAfterZoom.height, initialFrame.height, accuracy: 1)
     }
 
     @MainActor

@@ -1028,7 +1028,9 @@ struct ImportExportService {
                 width: Double(pageFile.pageSize.width),
                 height: Double(pageFile.pageSize.height),
                 isLocked: true,
-                rendersBehindDrawing: true
+                rendersBehindDrawing: true,
+                vectorSourceStoredFileName: result.originalStored.relativePath,
+                vectorSourcePageIndex: pageFile.pageOrder - startOrder
             )
 
             notePage.attachments.append(pageImageAttachment)
@@ -1707,8 +1709,6 @@ struct ImportExportService {
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         context.fill(renderRect)
         context.saveGState()
-        context.translateBy(x: 0, y: renderSize.height)
-        context.scaleBy(x: 1, y: -1)
         context.concatenate(
             page.getDrawingTransform(
                 .mediaBox,
@@ -1751,7 +1751,7 @@ struct ImportExportService {
             let request = QLThumbnailGenerator.Request(
                 fileAt: url,
                 size: size,
-                scale: 1,
+                scale: 2,
                 representationTypes: .all
             )
 
@@ -1805,7 +1805,7 @@ struct ImportExportService {
 
         let previewRect = CGRect(x: 92, y: 120, width: pageSize.width - 184, height: pageSize.height - 360)
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
+        format.scale = 2
         format.opaque = true
 
         let renderer = UIGraphicsImageRenderer(size: pageSize, format: format)
@@ -1868,7 +1868,7 @@ struct ImportExportService {
         pageSize: CGSize
     ) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
+        format.scale = 2
         format.opaque = true
 
         let renderer = UIGraphicsImageRenderer(size: pageSize, format: format)

@@ -24,6 +24,13 @@ struct DrawingStorageService {
         cache.totalCostLimit = 32 * 1024 * 1024
         return cache
     }()
+    private static let prefetchQueue = DispatchQueue(
+        label: "com.snowfox.BeanNotes.drawing-prefetch",
+        qos: .userInitiated
+    )
+    private static let prefetchLock = NSLock()
+    private static var prefetchedOrInFlightKeys: Set<String> = []
+    private static var prefetchGeneration: UInt = 0
 
     func drawingURL(for page: NotePage) throws -> URL {
         try storage.directoryURL(for: .drawings)
@@ -76,6 +83,49 @@ struct DrawingStorageService {
 
     static func clearCache() {
         drawingCache.removeAllObjects()
+        prefetchLock.lock()
+        prefetchGeneration &+= 1
+        prefetchedOrInFlightKeys.removeAll()
+        prefetchLock.unlock()
+    }
+
+    static func prefetchDrawing(fileName: String, rootURL: URL) {
+        ensureMemoryWarningObservation()
+        let key = cacheKey(rootURL: rootURL, fileName: fileName)
+        guard drawingCache.object(forKey: key) == nil else { return }
+
+        let stringKey = key as String
+        prefetchLock.lock()
+        let inserted = prefetchedOrInFlightKeys.insert(stringKey).inserted
+        let generation = prefetchGeneration
+        prefetchLock.unlock()
+        guard inserted else { return }
+
+        prefetchQueue.async {
+            let url = rootURL
+                .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
+                .appendingPathComponent(fileName)
+            let drawing: PKDrawing
+            let approximateBytes: Int
+
+            if let data = try? Data(contentsOf: url),
+               let storedDrawing = try? PKDrawing(data: data) {
+                drawing = storedDrawing
+                approximateBytes = data.count
+            } else {
+                drawing = PKDrawing()
+                approximateBytes = 1
+            }
+
+            prefetchLock.lock()
+            let shouldCache = generation == prefetchGeneration
+            prefetchedOrInFlightKeys.remove(stringKey)
+            prefetchLock.unlock()
+
+            if shouldCache {
+                cache(drawing, fileName: fileName, rootURL: rootURL, approximateBytes: approximateBytes)
+            }
+        }
     }
 
     private static func cacheKey(rootURL: URL, fileName: String) -> NSString {

@@ -18,6 +18,7 @@ struct PenPaletteView: View {
     @State private var committedOffset: CGSize = .zero
     @State private var dragOffset: CGSize = .zero
     @State private var selectedPaletteIndex = 0
+    @State private var isShowingCustomWidth = false
     @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
     @State private var hasLoadedCommittedOffset = false
@@ -31,12 +32,17 @@ struct PenPaletteView: View {
                         .preference(key: PenPaletteSizePreferenceKey.self, value: proxy.size)
                 }
             }
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            // A live backdrop blur is expensive while this floating control moves over
+            // PencilKit's Metal surface. An opaque system surface stays compositor-only.
+            .background(
+                Color(uiColor: .secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(.secondary.opacity(0.18), lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
+            .shadow(color: .black.opacity(0.13), radius: 8, x: 0, y: 4)
             .overlay(alignment: .topTrailing) {
                 collapseButton
                     .offset(x: 9, y: -9)
@@ -46,6 +52,9 @@ struct PenPaletteView: View {
                 y: dockOffset.height + committedOffset.height + dragOffset.height
             )
             .onAppear {
+                if toolState.widthMode != .standard {
+                    toolState.selectWidthMode(.standard)
+                }
                 selectionFeedback.prepare()
                 syncSelectedPaletteIndex()
                 clampCommittedOffset()
@@ -156,15 +165,14 @@ struct PenPaletteView: View {
 
     private var regularWidthControls: some View {
         HStack(spacing: 6) {
-            strokeWidthModeSegment
-
             widthPresetControls
 
-            widthSliderControls
+            customWidthButton
 
-            widthReadout
-
-            inkPreview
+            if isShowingCustomWidth {
+                customWidthSlider
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
         }
         .frame(height: 30)
         .accessibilityElement(children: .contain)
@@ -175,67 +183,19 @@ struct PenPaletteView: View {
     private var compactWidthControls: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                strokeWidthModeSegment
-
                 widthPresetControls
-
-                inkPreview
+                customWidthButton
             }
             .frame(height: 30)
 
-            HStack(spacing: 6) {
-                widthSliderControls
-
-                widthReadout
+            if isShowingCustomWidth {
+                customWidthSlider
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .frame(height: 30)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(toolState.activeColorTool.label) stroke width")
         .accessibilityValue(activeWidthReadout.accessibilityText)
-    }
-
-    private var strokeWidthModeSegment: some View {
-        HStack(spacing: 2) {
-            ForEach(DrawingStrokeWidthMode.allCases) { mode in
-                strokeWidthModeButton(mode)
-            }
-        }
-        .padding(2)
-        .background(Color(.secondarySystemBackground).opacity(0.7), in: Capsule())
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Stroke width mode")
-    }
-
-    private func strokeWidthModeButton(_ mode: DrawingStrokeWidthMode) -> some View {
-        let isSelected = toolState.widthMode == mode
-
-        return Button {
-            performSelectionFeedback()
-            isShowingEraserModes = false
-            toolState.selectWidthMode(mode)
-        } label: {
-            Image(systemName: mode.systemImage)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .frame(width: 24, height: 24)
-                .background {
-                    if isSelected {
-                        Capsule()
-                            .fill(.blue.opacity(0.14))
-                    }
-                }
-                .overlay {
-                    if isSelected {
-                        Capsule()
-                            .stroke(.blue, lineWidth: 1.6)
-                    }
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(mode.label) stroke width mode")
-        .accessibilityHint(mode.description)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var widthPresetControls: some View {
@@ -246,91 +206,45 @@ struct PenPaletteView: View {
         }
     }
 
-    private var widthSliderControls: some View {
-        HStack(spacing: 6) {
-            widthNudgeButton(direction: -1)
+    private var customWidthButton: some View {
+        Button {
+            performSelectionFeedback()
+            withAnimation(.snappy(duration: 0.16)) {
+                isShowingCustomWidth.toggle()
+            }
+        } label: {
+            Text("Custom")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(isShowingCustomWidth ? .primary : .secondary)
+                .frame(minWidth: 48, minHeight: 26)
+                .background(isShowingCustomWidth ? Color.blue.opacity(0.12) : Color.clear, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(isShowingCustomWidth ? Color.blue : Color.secondary.opacity(0.24), lineWidth: 1.4)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Custom pen thickness")
+        .accessibilityValue(activeWidthText)
+    }
 
+    private var customWidthSlider: some View {
+        HStack(spacing: 7) {
             Slider(value: activeWidthBinding, in: activeWidthRange, step: activeWidthStep) {
-                Text("Stroke width")
+                Text("Custom pen thickness")
             }
             .labelsHidden()
-            .frame(width: usesCompactLayout ? 124 : 108)
+            .frame(width: usesCompactLayout ? 150 : 120)
 
-            widthNudgeButton(direction: 1)
-        }
-    }
-
-    private var widthReadout: some View {
-        ZStack(alignment: .trailing) {
             Text(activeWidthText)
                 .font(.caption2.weight(.semibold).monospacedDigit())
-                .opacity(activeWidthReadout.showsEffectiveWidth ? 0 : 1)
-
-            VStack(alignment: .trailing, spacing: 0) {
-                Text(activeWidthText)
-                    .font(.caption2.weight(.semibold).monospacedDigit())
-
-                Text("page \(activeWidthReadout.effectiveWidthText)")
-                    .font(.caption2.weight(.semibold).monospacedDigit())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-            }
-            .opacity(activeWidthReadout.showsEffectiveWidth ? 1 : 0)
-            .accessibilityHidden(true)
+                .foregroundStyle(.secondary)
+                .frame(width: 38, alignment: .trailing)
         }
-        .foregroundStyle(.secondary)
-        .frame(width: 58, height: 30, alignment: .trailing)
-    }
-
-    private var inkPreview: some View {
-        let metrics = DrawingInkPreviewMetrics(readout: activeWidthReadout)
-
-        return ZStack {
-            if activeWidthReadout.showsEffectiveWidth {
-                VStack(spacing: 4) {
-                    previewStroke(thickness: metrics.storedVisualThickness, opacity: 0.36)
-                    previewStroke(thickness: metrics.effectiveVisualThickness, opacity: 1)
-                }
-            } else {
-                previewStroke(thickness: metrics.effectiveVisualThickness, opacity: 1)
-            }
-        }
-        .frame(width: usesCompactLayout ? 48 : 54, height: 30)
-        .background(Color(.secondarySystemBackground).opacity(0.48), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier("Ink preview")
-        .accessibilityLabel(metrics.accessibilityLabel)
-    }
-
-    private func previewStroke(thickness: CGFloat, opacity: Double) -> some View {
-        Capsule()
-            .fill(toolState.activeInkColor.opacity(opacity))
-            .frame(width: usesCompactLayout ? 32 : 38, height: thickness)
-            .overlay {
-                Capsule()
-                    .stroke(Color.secondary.opacity(0.12), lineWidth: 0.5)
-            }
-    }
-
-    private func widthNudgeButton(direction: CGFloat) -> some View {
-        Image(systemName: direction < 0 ? "minus" : "plus")
-            .font(.caption.weight(.bold))
-            .foregroundStyle(.secondary)
-            .frame(width: 24, height: 24)
-            .background(Color(.secondarySystemBackground).opacity(0.7), in: Circle())
-            .contentShape(Circle())
-            .gesture(widthNudgeGesture(direction: direction))
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(direction < 0 ? "Decrease stroke width" : "Increase stroke width")
-            .accessibilityValue(activeWidthReadout.accessibilityText)
-            .accessibilityHint("Press and hold for a \(fineNudgeStepText) point adjustment")
-            .accessibilityAction {
-                handleWidthNudge(direction: direction, precision: .normal)
-            }
+        .frame(height: 30)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Custom pen thickness")
+        .accessibilityValue(activeWidthText)
     }
 
     private var eraserModePicker: some View {
@@ -396,7 +310,7 @@ struct PenPaletteView: View {
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
                 .frame(width: 24, height: 24)
-                .background(.regularMaterial, in: Circle())
+                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
                 .overlay {
                     Circle()
                         .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
@@ -655,34 +569,6 @@ struct PenPaletteView: View {
 
     private var activeWidthStep: Double {
         Double(toolState.activeWidthStep)
-    }
-
-    private var fineNudgeStepText: String {
-        DrawingStrokeWidthReadout.pointsText(for: toolState.activeFineWidthStep)
-    }
-
-    private func widthNudgeGesture(direction: CGFloat) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.42)
-            .exclusively(before: TapGesture())
-            .onEnded { value in
-                switch value {
-                case .first(true):
-                    handleWidthNudge(direction: direction, precision: .fine)
-                case .second:
-                    handleWidthNudge(direction: direction, precision: .normal)
-                default:
-                    break
-                }
-            }
-    }
-
-    private func handleWidthNudge(
-        direction: CGFloat,
-        precision: DrawingStrokeWidthNudgePrecision
-    ) {
-        performSelectionFeedback()
-        isShowingEraserModes = false
-        toolState.nudgeActiveWidth(by: direction, precision: precision)
     }
 
     private var activeWidthText: String {

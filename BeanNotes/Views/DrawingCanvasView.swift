@@ -5,13 +5,14 @@
 
 import Combine
 import PencilKit
+import QuartzCore
 import SwiftUI
 import UIKit
 
 struct AttachmentImageRasterBudget: Equatable {
     private static let defaultRenderScale: CGFloat = 3
     private static let minimumPixelSize = 1_024
-    private static let maximumPixelSize = 3_072
+    private static let maximumPixelSize = 6_144
     private static let growthReloadFactor: CGFloat = 1.35
     private static let shrinkReloadFactor: CGFloat = 0.55
 
@@ -95,6 +96,8 @@ enum DrawingCanvasStaticContentSignature {
         return [
             attachment.id.uuidString,
             attachment.storedFileName,
+            attachment.vectorSourceStoredFileName ?? "",
+            attachment.vectorSourcePageIndex.map(String.init) ?? "",
             "\(attachment.isLocked)",
             "\(attachment.rendersBehindDrawing)",
             size
@@ -274,6 +277,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     static func dismantleUIView(_ containerView: CanvasContainerView, coordinator: Coordinator) {
         coordinator.performFinalDrawingFlush(reason: "Editor closed")
         coordinator.hideToolPicker()
+        containerView.cancelPendingRenderingWork()
         containerView.releaseAllMaterializedPages(flushDrawingsBeforeRelease: false)
         coordinator.containerView = nil
     }
@@ -298,43 +302,65 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var documentSize: CGSize = .zero
         private weak var topContentView: UIView?
         private var pageFlowMode: NoteEditorPageFlowMode = .continuous
-        private var renderQuality: DrawingRenderQuality = .highResolution
+        private var renderQuality: DrawingRenderQuality = .ultraFine
         private var layoutConfigurationSignature: DrawingCanvasLayoutSignature?
         private var selectedPageID: UUID?
+        private var activeDrawingPageID: UUID?
         private var drawingStorage: DrawingStorageService?
         private weak var coordinator: Coordinator?
         private var inputMode: DrawingInputMode = DrawingInputMode.defaultMode
         private var lastFitScale: CGFloat = 1
         private var lastBackgroundRenderScale: CGFloat = 0
-        private var lastDrawingRenderScale: CGFloat = 0
         private var lastImageRenderScale: CGFloat = 0
         private var didSetInitialZoom = false
         private var bottomTriggerArmed = true
         private var isPinchZooming = false
+        private var isProgrammaticZooming = false
+        private var programmaticZoomEarliestFinishTime: CFTimeInterval = 0
+        private var settledZoomWorkItem: DispatchWorkItem?
+        private var lastDrawingViewportSize: CGSize = .zero
         private var lastZoomEndTime: CFTimeInterval = 0
+        private var lastObservedContentOffsetY: CGFloat = 0
+        private var isScrollingTowardLaterPages = true
         private let pageGap: CGFloat = 28
         private let pageMargin: CGFloat = 52
         private let autoAddFooterSize: CGFloat = 56
         private let autoAddFooterTopPadding: CGFloat = 36
         private let autoAddFooterBottomPadding: CGFloat = 42
-        private let pagePreloadScreenPadding: CGFloat = 420
-        private let minimumPagePreloadPadding: CGFloat = 320
-        private let imagePreloadScreenPadding: CGFloat = 180
-        private let minimumImagePreloadPadding: CGFloat = 96
+        private let pageForwardPreloadScreenPadding: CGFloat = 1_240
+        private let pageBackwardPreloadScreenPadding: CGFloat = 420
+        private let minimumPageForwardPreloadPadding: CGFloat = 880
+        private let minimumPageBackwardPreloadPadding: CGFloat = 280
+        private let imageForwardPreloadScreenPadding: CGFloat = 760
+        private let imageBackwardPreloadScreenPadding: CGFloat = 220
+        private let minimumImageForwardPreloadPadding: CGFloat = 480
+        private let minimumImageBackwardPreloadPadding: CGFloat = 140
+        private let drawingPrefetchForwardScreenPadding: CGFloat = 2_400
+        private let drawingPrefetchBackwardScreenPadding: CGFloat = 520
+        private let drawingViewportOverscan: CGFloat = 64
         private let topContentHeight: CGFloat = 96
         private let zoomOutMultiplier: CGFloat = 0.46
         private let absoluteMinimumZoomScale: CGFloat = 0.12
         private let renderScaleChangeThreshold: CGFloat = 0.08
         private let fitSnapThreshold: CGFloat = 0.045
         private let tapAfterZoomIgnoreDuration: CFTimeInterval = 0.32
+        private let settledZoomDelay: TimeInterval = 0.12
+        private let programmaticZoomSettleDuration: CFTimeInterval = 0.4
         private let fingerTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
 
         var isZoomGestureActiveOrRecentlyEnded: Bool {
             let pinchState = scrollView.pinchGestureRecognizer?.state
             let pinchIsActive = pinchState == .began || pinchState == .changed
             return isPinchZooming
+                || isProgrammaticZooming
                 || pinchIsActive
                 || CACurrentMediaTime() - lastZoomEndTime < tapAfterZoomIgnoreDuration
+        }
+
+        // This includes SwiftUI-driven updateUIView calls that arrive while UIScrollView
+        // is still animating its native zoom transform.
+        var isZoomTransitionActive: Bool {
+            isPinchZooming || isProgrammaticZooming || scrollView.isZooming || isScrollViewAnimatingZoom
         }
 
         override init(frame: CGRect) {
@@ -363,6 +389,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        func setActiveDrawingPage(id: UUID?) {
+            activeDrawingPageID = id
+        }
+
         func setTopContentView(_ view: UIView?) {
             if topContentView !== view {
                 topContentView?.removeFromSuperview()
@@ -388,12 +418,14 @@ struct DrawingCanvasView: UIViewRepresentable {
         ) {
             let qualityChanged = self.renderQuality != renderQuality
             let inputModeChanged = self.inputMode != inputMode
+            let selectionChanged = self.selectedPageID != (selectedPageID ?? pages.first?.id)
             self.pageFlowMode = pageFlowMode
             self.inputMode = inputMode
             self.renderQuality = renderQuality
             self.selectedPageID = selectedPageID ?? pages.first?.id
             self.drawingStorage = drawingStorage
             self.coordinator = coordinator
+            scrollView.panGestureRecognizer.minimumNumberOfTouches = inputMode == .anyInput ? 2 : 1
             let nextSignature = DrawingCanvasLayoutSignature(
                 pages: pages,
                 pageFlowMode: pageFlowMode,
@@ -421,7 +453,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pagesByID = Dictionary(uniqueKeysWithValues: pages.map { ($0.id, $0) })
             }
 
-            updateZoomScalesIfNeeded(force: qualityChanged)
+            updateZoomScalesIfNeeded(force: qualityChanged || selectionChanged)
             materializePagesNearViewport(forceSelectedPage: true)
 
             if inputModeChanged {
@@ -444,8 +476,15 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func fitSelectedPageToScreen(animated: Bool) {
             updateZoomScalesIfNeeded()
+            if animated {
+                beginProgrammaticZoom()
+            }
             scrollView.setZoomScale(selectedPageOverviewScale(), animated: animated)
-            publishZoomScale(force: true)
+            if animated {
+                scheduleSettledZoomRefresh()
+            } else {
+                finishProgrammaticZoom()
+            }
 
             if let selectedPageID {
                 scrollToPage(id: selectedPageID, animated: animated)
@@ -508,7 +547,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             let zoomRect = zoomRect(centeredAt: contentPoint, scale: targetScale)
 
             if animated {
+                beginProgrammaticZoom()
                 scrollView.zoom(to: zoomRect, animated: true)
+                scheduleSettledZoomRefresh()
                 return
             }
 
@@ -529,19 +570,65 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func finishProgrammaticZoom() {
+            settledZoomWorkItem?.cancel()
+            settledZoomWorkItem = nil
+            isProgrammaticZooming = false
+            programmaticZoomEarliestFinishTime = 0
+            lastZoomEndTime = CACurrentMediaTime()
             centerDocument()
             updateRasterScale(force: true)
-            materializePagesNearViewport(forceSelectedPage: true)
+            materializePagesNearViewport(forceSelectedPage: true, updatesRenderScale: false)
+            updateNativeDrawingViewports(force: true)
             updateVisiblePage()
             publishZoomScale(force: true)
+        }
+
+        private func scheduleSettledZoomRefresh() {
+            settledZoomWorkItem?.cancel()
+
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                let isBeforeProgrammaticSettleDeadline = self.isProgrammaticZooming
+                    && CACurrentMediaTime() < self.programmaticZoomEarliestFinishTime
+                guard !self.isPinchZooming,
+                      !self.scrollView.isZooming,
+                      !self.isScrollViewAnimatingZoom,
+                      !isBeforeProgrammaticSettleDeadline else {
+                    self.scheduleSettledZoomRefresh()
+                    return
+                }
+                self.finishProgrammaticZoom()
+            }
+            settledZoomWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + settledZoomDelay, execute: workItem)
+        }
+
+        private var isScrollViewAnimatingZoom: Bool {
+            if #available(iOS 17.4, *) {
+                return scrollView.isZoomAnimating
+            }
+            return false
         }
 
         override func layoutSubviews() {
             super.layoutSubviews()
             scrollView.frame = bounds
+            let viewportSizeChanged = scrollView.bounds.size != lastDrawingViewportSize
+            lastDrawingViewportSize = scrollView.bounds.size
             updateZoomScalesIfNeeded()
-            centerDocument()
+            // UIScrollView owns the zoom transform while a pinch/programmatic zoom is
+            // active. Changing content insets from layoutSubviews during that transform
+            // makes UIKit repeatedly reposition the zoomed content, which appears as a
+            // blink. Re-center once the native zoom transaction has settled instead.
+            if !isPinchZooming && !isProgrammaticZooming {
+                centerDocument()
+            }
             materializePagesNearViewport(forceSelectedPage: true)
+            if viewportSizeChanged {
+                updateNativeDrawingViewports(force: true)
+            } else {
+                updateNativeDrawingViewports()
+            }
             updateVisiblePage()
             publishZoomScale()
         }
@@ -551,38 +638,65 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            materializePagesNearViewport()
-            if !isPinchZooming {
+            let offsetDelta = scrollView.contentOffset.y - lastObservedContentOffsetY
+            if abs(offsetDelta) > 0.5 {
+                isScrollingTowardLaterPages = offsetDelta > 0
+                lastObservedContentOffsetY = scrollView.contentOffset.y
+            }
+            materializePagesNearViewport(
+                updatesRenderScale: !isPinchZooming && !isProgrammaticZooming
+            )
+            updateNativeDrawingViewports()
+            if !isPinchZooming && !isProgrammaticZooming {
                 updateVisiblePage()
             }
             triggerBottomIfNeeded()
         }
 
         func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+            settledZoomWorkItem?.cancel()
+            settledZoomWorkItem = nil
             isPinchZooming = true
         }
 
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {}
+
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            let anchor = zoomAnchor()
-            updateRasterScale(reloadImageVariants: !isPinchZooming)
-            centerDocument()
-            restoreZoomAnchor(anchor)
-            materializePagesNearViewport()
+            // UIScrollView already preserves the pinch anchor. Avoid page-set scans and
+            // redundant offset writes on every zoom sample; preload padding keeps the
+            // active pages alive until the settled refresh materializes the final view.
+            updateNativeDrawingViewports()
+            scheduleSettledZoomRefresh()
             publishZoomScale()
         }
 
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
             isPinchZooming = false
-            lastZoomEndTime = CACurrentMediaTime()
-            updateRasterScale(force: true, reloadImageVariants: true)
-            centerDocument()
-            refreshVisibleCanvasesAfterZoom()
-            materializePagesNearViewport(forceSelectedPage: true)
-            updateVisiblePage()
-            publishZoomScale(force: true)
+            let isNearFitScale = abs(scale - lastFitScale) / max(lastFitScale, 0.01) < fitSnapThreshold
+            let needsFitSnap = isNearFitScale && abs(scale - lastFitScale) > 0.001
 
-            guard abs(scale - lastFitScale) / max(lastFitScale, 0.01) < fitSnapThreshold else { return }
-            scrollView.setZoomScale(lastFitScale, animated: true)
+            if needsFitSnap {
+                beginProgrammaticZoom()
+                scrollView.setZoomScale(lastFitScale, animated: true)
+                scheduleSettledZoomRefresh()
+                return
+            }
+
+            finishProgrammaticZoom()
+        }
+
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            guard !decelerate else { return }
+            updateNativeDrawingViewports(force: true)
+        }
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            updateNativeDrawingViewports(force: true)
+        }
+
+        func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+            guard !isProgrammaticZooming else { return }
+            updateNativeDrawingViewports(force: true)
         }
 
         private func configureView() {
@@ -623,6 +737,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             autoAddFooterButton.layer.shadowOffset = CGSize(width: 0, height: 8)
             autoAddFooterButton.addTarget(self, action: #selector(handleAutoAddFooterTapped), for: .touchUpInside)
             contentView.addSubview(autoAddFooterButton)
+        }
+
+        private func beginProgrammaticZoom() {
+            isProgrammaticZooming = true
+            programmaticZoomEarliestFinishTime = CACurrentMediaTime() + programmaticZoomSettleDuration
         }
 
         private func layoutDocument() {
@@ -708,19 +827,29 @@ struct DrawingCanvasView: UIViewRepresentable {
             let fitScale = min(max(proposedFit, 0.18), 1.35)
             let minimumZoomScale = max(fitScale * zoomOutMultiplier, absoluteMinimumZoomScale)
             let maximumZoomScale = max(renderQuality.maximumZoomScale, fitScale * renderQuality.maximumZoomFitMultiplier)
-            let wasNearFitScale = abs(scrollView.zoomScale - lastFitScale) / max(lastFitScale, 0.01) < 0.05
+            let wasNearFitScale = !isPinchZooming
+                && !isProgrammaticZooming
+                && abs(scrollView.zoomScale - lastFitScale) / max(lastFitScale, 0.01) < 0.05
 
             scrollView.minimumZoomScale = minimumZoomScale
             scrollView.maximumZoomScale = maximumZoomScale
             lastFitScale = fitScale
 
+            let adjustedZoomScale: CGFloat?
             if !didSetInitialZoom || wasNearFitScale {
-                scrollView.setZoomScale(fitScale, animated: false)
+                adjustedZoomScale = fitScale
                 didSetInitialZoom = true
             } else if scrollView.zoomScale < minimumZoomScale {
-                scrollView.setZoomScale(minimumZoomScale, animated: false)
+                adjustedZoomScale = minimumZoomScale
             } else if scrollView.zoomScale > maximumZoomScale {
-                scrollView.setZoomScale(maximumZoomScale, animated: false)
+                adjustedZoomScale = maximumZoomScale
+            } else {
+                adjustedZoomScale = nil
+            }
+
+            if let adjustedZoomScale,
+               abs(adjustedZoomScale - scrollView.zoomScale) > 0.001 {
+                scrollView.setZoomScale(adjustedZoomScale, animated: false)
             }
 
             updateRasterScale(force: force)
@@ -796,26 +925,30 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func updateRasterScale(force: Bool = false, reloadImageVariants: Bool = true) {
+            // Do not rebuild PencilKit's backing layers in the middle of a native zoom.
+            // SwiftUI republishes the zoom value for the controls, which otherwise makes
+            // updateUIView reconfigure the canvas several times per second and causes ink
+            // to disappear/reappear. finishProgrammaticZoom applies the latest scale once.
+            guard !isZoomTransitionActive else { return }
+
             let screenScale = window?.screen.scale ?? UIScreen.main.scale
             let zoomScale = max(scrollView.zoomScale, 1)
             let targetScale = zoomScale * screenScale
             let backgroundScale = min(targetScale, screenScale * renderQuality.backgroundScaleMultiplier)
-            let drawingScale = min(targetScale, screenScale * renderQuality.drawingScaleMultiplier)
             let imageScale = min(targetScale, screenScale * renderQuality.imageScaleMultiplier)
             let backgroundScaleChanged = abs(backgroundScale - lastBackgroundRenderScale) > renderScaleChangeThreshold
-            let drawingScaleChanged = abs(drawingScale - lastDrawingRenderScale) > renderScaleChangeThreshold
             let imageScaleChanged = abs(imageScale - lastImageRenderScale) > renderScaleChangeThreshold
 
-            guard force || backgroundScaleChanged || drawingScaleChanged || imageScaleChanged else { return }
+            guard force || backgroundScaleChanged || imageScaleChanged else { return }
 
             lastBackgroundRenderScale = backgroundScale
-            lastDrawingRenderScale = drawingScale
             lastImageRenderScale = imageScale
+
+            topContentView?.applyOwnedBackingScale(targetScale)
 
             for pageView in pageViews.values {
                 pageView.updateRenderScale(
                     backgroundScale: backgroundScale,
-                    drawingScale: drawingScale,
                     imageScale: imageScale,
                     reloadImageVariants: reloadImageVariants,
                     force: force
@@ -823,18 +956,34 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        private func materializePagesNearViewport(forceSelectedPage: Bool = false) {
+        private func materializePagesNearViewport(
+            forceSelectedPage: Bool = false,
+            updatesRenderScale: Bool = true
+        ) {
             guard !orderedPageIDs.isEmpty, let drawingStorage, let coordinator else { return }
 
             let visibleRect = visibleContentRect()
-            let verticalPadding = max(pagePreloadScreenPadding / max(scrollView.zoomScale, 0.01), minimumPagePreloadPadding)
-            let activeRect = visibleRect.insetBy(dx: -documentSize.width, dy: -verticalPadding)
+            prefetchDrawingFiles(around: visibleRect, drawingStorage: drawingStorage)
+            let activeRect = directionalPreloadRect(
+                around: visibleRect,
+                forwardScreenPadding: pageForwardPreloadScreenPadding,
+                backwardScreenPadding: pageBackwardPreloadScreenPadding,
+                minimumForwardPadding: minimumPageForwardPreloadPadding,
+                minimumBackwardPadding: minimumPageBackwardPreloadPadding
+            )
             let imageActiveRect = imageLoadingContentRect(visibleRect: visibleRect)
-            let defersHeavyImageWork = isPinchZooming
+            let defersHeavyImageWork = isPinchZooming || isProgrammaticZooming
             var neededIDs = Set(pageIDsIntersecting(activeRect))
 
-            if forceSelectedPage, let selectedPageID {
+            // The selected page owns the active PencilKit canvas. It must never be retired
+            // merely because UIScrollView briefly reports an offset outside the preload
+            // rectangle while a touch, pinch, or inset adjustment is in progress.
+            // Releasing it clears PKCanvasView's in-memory drawing and makes ink vanish.
+            if let selectedPageID {
                 neededIDs.insert(selectedPageID)
+            }
+            if let activeDrawingPageID {
+                neededIDs.insert(activeDrawingPageID)
             }
 
             if neededIDs.isEmpty, let firstID = selectedPageID ?? orderedPageIDs.first {
@@ -868,18 +1017,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                 updateImageLoading(in: imageActiveRect)
             }
 
-            updateRasterScale(
-                force: didChangeMaterializedPages,
-                reloadImageVariants: !defersHeavyImageWork
-            )
-        }
+            if updatesRenderScale {
+                updateRasterScale(
+                    force: didChangeMaterializedPages,
+                    reloadImageVariants: !defersHeavyImageWork
+                )
+            }
 
-        private func refreshVisibleCanvasesAfterZoom() {
-            let visibleRect = visibleContentRect()
-
-            for (id, pageView) in pageViews {
-                guard pageFrames[id]?.intersects(visibleRect) == true else { continue }
-                pageView.refreshDrawingRender()
+            if didChangeMaterializedPages {
+                updateNativeDrawingViewports(force: true)
             }
         }
 
@@ -972,7 +1118,22 @@ struct DrawingCanvasView: UIViewRepresentable {
             ImageMemoryCache.shared.removeAllImages()
             DrawingStorageService.clearCache()
             updateImageLoading(in: imageLoadingContentRect(visibleRect: visibleContentRect()))
+            for pageView in pageViews.values {
+                pageView.reduceDrawingMemoryFootprint()
+            }
             updateRasterScale(force: true)
+        }
+
+        func cancelPendingRenderingWork() {
+            settledZoomWorkItem?.cancel()
+            settledZoomWorkItem = nil
+            isPinchZooming = false
+            isProgrammaticZooming = false
+            programmaticZoomEarliestFinishTime = 0
+
+            for pageView in pageViews.values {
+                pageView.cancelPendingNativeViewportUpdate()
+            }
         }
 
         private func visibleContentRect() -> CGRect {
@@ -990,11 +1151,93 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func imageLoadingContentRect(visibleRect: CGRect) -> CGRect {
-            let verticalPadding = max(
-                imagePreloadScreenPadding / max(scrollView.zoomScale, 0.01),
-                minimumImagePreloadPadding
+            directionalPreloadRect(
+                around: visibleRect,
+                forwardScreenPadding: imageForwardPreloadScreenPadding,
+                backwardScreenPadding: imageBackwardPreloadScreenPadding,
+                minimumForwardPadding: minimumImageForwardPreloadPadding,
+                minimumBackwardPadding: minimumImageBackwardPreloadPadding
             )
-            return visibleRect.insetBy(dx: -documentSize.width, dy: -verticalPadding)
+        }
+
+        private func directionalPreloadRect(
+            around visibleRect: CGRect,
+            forwardScreenPadding: CGFloat,
+            backwardScreenPadding: CGFloat,
+            minimumForwardPadding: CGFloat,
+            minimumBackwardPadding: CGFloat
+        ) -> CGRect {
+            let scale = max(scrollView.zoomScale, 0.01)
+            let forward = max(forwardScreenPadding / scale, minimumForwardPadding)
+            let backward = max(backwardScreenPadding / scale, minimumBackwardPadding)
+            let minY = visibleRect.minY - (isScrollingTowardLaterPages ? backward : forward)
+            return CGRect(
+                x: -documentSize.width,
+                y: minY,
+                width: documentSize.width * 3,
+                height: visibleRect.height + forward + backward
+            )
+        }
+
+        private func prefetchDrawingFiles(
+            around visibleRect: CGRect,
+            drawingStorage: DrawingStorageService
+        ) {
+            let prefetchRect = directionalPreloadRect(
+                around: visibleRect,
+                forwardScreenPadding: drawingPrefetchForwardScreenPadding,
+                backwardScreenPadding: drawingPrefetchBackwardScreenPadding,
+                minimumForwardPadding: 1_600,
+                minimumBackwardPadding: 360
+            )
+            let rootURL = drawingStorage.storage.rootURL
+            for id in pageIDsIntersecting(prefetchRect) {
+                guard let page = pagesByID[id] else { continue }
+                DrawingStorageService.prefetchDrawing(
+                    fileName: page.drawingFileName,
+                    rootURL: rootURL
+                )
+            }
+        }
+
+        private func updateNativeDrawingViewports(force: Bool = false) {
+            guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
+            let zoomScale = max(scrollView.zoomScale, 0.01)
+            let settledNativeZoomScale = Self.preparedNativeDrawingScale(for: zoomScale)
+            let overscan = drawingViewportOverscan / zoomScale
+            let visibleRect = visibleContentRect()
+
+            for (id, pageView) in pageViews {
+                guard let pageFrame = pageFrames[id] else {
+                    pageView.deactivateDrawingViewport()
+                    continue
+                }
+
+                let visiblePageRect = pageFrame.intersection(visibleRect)
+                guard !visiblePageRect.isNull, !visiblePageRect.isEmpty else {
+                    pageView.deactivateDrawingViewport()
+                    continue
+                }
+
+                let localRect = visiblePageRect.offsetBy(dx: -pageFrame.minX, dy: -pageFrame.minY)
+                let nativeZoomScale = isZoomTransitionActive
+                    ? pageView.currentNativeDrawingZoomScale
+                    : settledNativeZoomScale
+                pageView.updateNativeDrawingViewport(
+                    visiblePageRect: localRect,
+                    overscan: overscan,
+                    nativeZoomScale: nativeZoomScale,
+                    force: force
+                )
+            }
+        }
+
+        static func preparedNativeDrawingScale(for documentZoomScale: CGFloat) -> CGFloat {
+            // Match the current screen requirement without preparing an oversized next
+            // tier. This keeps PencilKit's live surface smaller and lowers Pencil latency.
+            let requestedScale = max(documentZoomScale, 1)
+            let preparedScales: [CGFloat] = [1, 1.5, 2, 3, 4, 6]
+            return preparedScales.first(where: { $0 >= requestedScale }) ?? 6
         }
 
         private func pageFrame(id: UUID, intersects rect: CGRect) -> Bool {
@@ -1129,17 +1372,36 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class PageCanvasView: UIView {
+        private struct NativeViewportRequest {
+            var rect: CGRect
+            var overscan: CGFloat
+            var scale: CGFloat
+            var force: Bool
+        }
+
         let backgroundView = PageBackgroundUIView()
+        let drawingViewportView = UIView(frame: .zero)
         let canvasView = PKCanvasView(frame: .zero)
 
         private var imageViews: [UUID: AttachmentImageContainerView] = [:]
         private(set) var page: NotePage?
         private var configurationSignature: String?
         private var lastBackgroundScale: CGFloat = 0
-        private var lastDrawingScale: CGFloat = 0
         private var lastImageScale: CGFloat = 0
         private var isImageLoadingEnabled = true
+        private var isUsingDrawingTool = false
         private var laidOutPageBounds: CGRect = .null
+        private var activeDrawingViewportRect: CGRect = .null
+        private var nativeZoomScale: CGFloat = 1
+        private var pendingNativeViewport: NativeViewportRequest?
+
+        var preparedDrawingScale: CGFloat {
+            nativeZoomScale * (window?.screen.scale ?? UIScreen.main.scale)
+        }
+
+        var currentNativeDrawingZoomScale: CGFloat {
+            nativeZoomScale
+        }
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -1162,7 +1424,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             let isNewPage = self.page?.id != page.id
             let signature = staticContentSignature(for: page)
             let needsStaticRefresh = isNewPage || signature != configurationSignature
+            let pageSizeChanged = laidOutPageBounds.size != page.pageSize
             self.page = page
+
+            applyInputMode(inputMode)
+            if !isNewPage, !needsStaticRefresh, !pageSizeChanged {
+                return
+            }
 
             if needsStaticRefresh {
                 backgroundView.background = page.background
@@ -1172,19 +1440,17 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             if isNewPage {
+                resetNativeCanvas(pageSize: page.pageSize)
                 canvasView.drawing = drawingStorage.loadDrawing(for: page)
-                canvasView.contentSize = page.pageSize
-                canvasView.contentOffset = .zero
-            } else if canvasView.contentSize != page.pageSize {
-                canvasView.contentSize = page.pageSize
-                canvasView.contentOffset = .zero
+            } else if pageSizeChanged {
+                resetNativeCanvas(pageSize: page.pageSize)
             }
 
             canvasView.delegate = coordinator
-            applyInputMode(inputMode)
-            coordinator.register(canvasView: canvasView, page: page)
+            coordinator.register(canvasView: canvasView, page: page, pageView: self)
 
             layoutPage()
+            restoreDrawingLayerOrder()
         }
 
         func applyInputMode(_ inputMode: DrawingInputMode) {
@@ -1212,14 +1478,8 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if laidOutPageBounds != pageBounds {
                 backgroundView.frame = pageBounds
-                canvasView.frame = pageBounds
                 layer.shadowPath = UIBezierPath(rect: pageBounds).cgPath
                 laidOutPageBounds = pageBounds
-            }
-
-            if canvasView.contentSize != pageBounds.size {
-                canvasView.contentSize = pageBounds.size
-                canvasView.contentOffset = .zero
             }
 
             for attachment in page.imageAttachments {
@@ -1241,6 +1501,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             backgroundView.isUserInteractionEnabled = false
             addSubview(backgroundView)
 
+            drawingViewportView.backgroundColor = .clear
+            drawingViewportView.clipsToBounds = true
+            drawingViewportView.isHidden = true
+            addSubview(drawingViewportView)
+
             canvasView.backgroundColor = .clear
             canvasView.isOpaque = false
             canvasView.isScrollEnabled = false
@@ -1254,37 +1519,29 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.layer.shouldRasterize = false
             canvasView.layer.allowsEdgeAntialiasing = true
             canvasView.contentMode = .redraw
-            addSubview(canvasView)
+            drawingViewportView.addSubview(canvasView)
         }
 
         func updateRenderScale(
             backgroundScale: CGFloat,
-            drawingScale: CGFloat,
             imageScale: CGFloat,
             reloadImageVariants: Bool = true,
             force: Bool = false
         ) {
             let backgroundChanged = abs(backgroundScale - lastBackgroundScale) > 0.05
-            let drawingChanged = abs(drawingScale - lastDrawingScale) > 0.05
             let imageChanged = abs(imageScale - lastImageScale) > 0.05
-            guard force || backgroundChanged || drawingChanged || imageChanged else { return }
+            guard force || backgroundChanged || imageChanged else { return }
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
 
-            let containerScale = max(backgroundScale, drawingScale)
-            contentScaleFactor = containerScale
-            layer.contentsScale = containerScale
-            layer.rasterizationScale = containerScale
+            contentScaleFactor = backgroundScale
+            layer.contentsScale = backgroundScale
+            layer.rasterizationScale = backgroundScale
 
             if force || backgroundChanged {
                 backgroundView.updateRenderScale(backgroundScale)
                 lastBackgroundScale = backgroundScale
-            }
-
-            if force || drawingChanged {
-                canvasView.applyCanvasBackingScale(drawingScale)
-                lastDrawingScale = drawingScale
             }
 
             if force || imageChanged {
@@ -1297,14 +1554,146 @@ struct DrawingCanvasView: UIViewRepresentable {
             CATransaction.commit()
         }
 
-        func refreshDrawingRender() {
-            canvasView.setNeedsDisplay()
-            canvasView.layer.setNeedsDisplay()
-
-            for subview in canvasView.subviews {
-                subview.setNeedsDisplay()
-                subview.layer.setNeedsDisplay()
+        func updateNativeDrawingViewport(
+            visiblePageRect: CGRect,
+            overscan: CGFloat,
+            nativeZoomScale: CGFloat,
+            force: Bool = false
+        ) {
+            guard let page else { return }
+            let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+            let requiredRect = visiblePageRect.intersection(pageBounds)
+            guard !requiredRect.isNull, !requiredRect.isEmpty else {
+                deactivateDrawingViewport()
+                return
             }
+
+            let normalizedOverscan = max(overscan.isFinite ? overscan : 0, 0)
+            let scale = max(nativeZoomScale.isFinite ? nativeZoomScale : 1, 1)
+            let request = NativeViewportRequest(
+                rect: requiredRect,
+                overscan: normalizedOverscan,
+                scale: scale,
+                force: force
+            )
+
+            // Moving or resizing PencilKit's native tiled surface during an active stroke can
+            // interrupt live ink. Keep its geometry stable until PencilKit ends the stroke.
+            guard !isUsingDrawingTool else {
+                pendingNativeViewport = request
+                return
+            }
+
+            applyNativeDrawingViewport(request)
+        }
+
+        func deactivateDrawingViewport() {
+            guard !isUsingDrawingTool else { return }
+            pendingNativeViewport = nil
+            drawingViewportView.isHidden = true
+        }
+
+        func cancelPendingNativeViewportUpdate() {
+            pendingNativeViewport = nil
+        }
+
+        func reduceDrawingMemoryFootprint() {
+            guard let page, !isUsingDrawingTool else { return }
+            resetNativeCanvas(pageSize: page.pageSize)
+            drawingViewportView.isHidden = true
+        }
+
+        func setLiveDrawingActive(_ active: Bool) {
+            guard isUsingDrawingTool != active else { return }
+            isUsingDrawingTool = active
+            if !active, let pendingNativeViewport {
+                self.pendingNativeViewport = nil
+                applyNativeDrawingViewport(pendingNativeViewport)
+            }
+        }
+
+        func drawingDidChange() {
+            guard !isUsingDrawingTool, let pendingNativeViewport else { return }
+            self.pendingNativeViewport = nil
+            applyNativeDrawingViewport(pendingNativeViewport)
+        }
+
+        private func applyNativeDrawingViewport(_ request: NativeViewportRequest) {
+            guard let page else { return }
+            let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+            let targetRect = request.rect
+                .insetBy(dx: -request.overscan, dy: -request.overscan)
+                .intersection(pageBounds)
+                .integral
+            guard !targetRect.isNull, !targetRect.isEmpty else { return }
+
+            let safeInset = min(request.overscan * 0.35, 48 / request.scale)
+            let stableRect = activeDrawingViewportRect.insetBy(dx: safeInset, dy: safeInset)
+            let scaleChanged = abs(request.scale - nativeZoomScale) > 0.005
+            if !request.force, !scaleChanged, stableRect.contains(request.rect) {
+                drawingViewportView.isHidden = false
+                return
+            }
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+
+            drawingViewportView.transform = .identity
+            drawingViewportView.frame = targetRect
+            drawingViewportView.bounds = CGRect(origin: .zero, size: targetRect.size)
+
+            canvasView.transform = .identity
+            if scaleChanged {
+                let currentScale = max(canvasView.zoomScale, 0.01)
+                canvasView.minimumZoomScale = min(currentScale, request.scale)
+                canvasView.maximumZoomScale = max(currentScale, request.scale)
+                canvasView.setZoomScale(request.scale, animated: false)
+                canvasView.minimumZoomScale = request.scale
+                canvasView.maximumZoomScale = request.scale
+                nativeZoomScale = request.scale
+            }
+
+            canvasView.bounds = CGRect(
+                origin: .zero,
+                size: CGSize(width: targetRect.width * request.scale, height: targetRect.height * request.scale)
+            )
+            canvasView.center = CGPoint(x: drawingViewportView.bounds.midX, y: drawingViewportView.bounds.midY)
+            canvasView.setContentOffset(
+                CGPoint(x: targetRect.minX * request.scale, y: targetRect.minY * request.scale),
+                animated: false
+            )
+            canvasView.transform = CGAffineTransform(scaleX: 1 / request.scale, y: 1 / request.scale)
+
+            activeDrawingViewportRect = targetRect
+            drawingViewportView.isHidden = false
+            CATransaction.commit()
+            restoreDrawingLayerOrder()
+        }
+
+        private func resetNativeCanvas(pageSize: CGSize) {
+            guard pageSize.width > 0, pageSize.height > 0 else { return }
+            pendingNativeViewport = nil
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            canvasView.transform = .identity
+            let currentScale = max(canvasView.zoomScale, 0.01)
+            canvasView.minimumZoomScale = min(currentScale, 1)
+            canvasView.maximumZoomScale = max(currentScale, 1)
+            canvasView.setZoomScale(1, animated: false)
+            canvasView.minimumZoomScale = 1
+            canvasView.maximumZoomScale = 1
+            canvasView.contentSize = pageSize
+            canvasView.bounds = CGRect(origin: .zero, size: pageSize)
+            canvasView.center = CGPoint(x: pageSize.width / 2, y: pageSize.height / 2)
+            canvasView.contentOffset = .zero
+
+            drawingViewportView.frame = CGRect(origin: .zero, size: pageSize)
+            drawingViewportView.bounds = CGRect(origin: .zero, size: pageSize)
+            drawingViewportView.isHidden = false
+            nativeZoomScale = 1
+            activeDrawingViewportRect = CGRect(origin: .zero, size: pageSize)
+            CATransaction.commit()
         }
 
         private func configureImages(
@@ -1331,10 +1720,13 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }()
 
                 imageView.setImageLoadingEnabled(isImageLoadingEnabled)
+                let vectorSource = resolvedVectorSource(for: attachment, storage: storage)
                 imageView.configure(
                     attachment: attachment,
                     storage: storage,
                     pageSize: page?.pageSize ?? .zero,
+                    vectorSourceURL: vectorSource?.url,
+                    vectorPageIndex: vectorSource?.pageIndex,
                     changed: attachmentChanged
                 )
                 imageView.frame = attachment.frame
@@ -1348,7 +1740,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
             }
 
-            bringSubviewToFront(canvasView)
+            bringSubviewToFront(drawingViewportView)
 
             for attachment in attachments where !attachment.rendersBehindDrawing {
                 if let view = imageViews[attachment.id] {
@@ -1357,7 +1749,45 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        private func resolvedVectorSource(
+            for attachment: Attachment,
+            storage: LocalStorageService
+        ) -> (url: URL, pageIndex: Int)? {
+            if let storedFileName = attachment.vectorSourceStoredFileName,
+               let pageIndex = attachment.vectorSourcePageIndex,
+               let url = try? storage.validatedURL(forRelativePath: storedFileName) {
+                return (url, pageIndex)
+            }
+
+            guard attachment.rendersBehindDrawing,
+                  attachment.originalFileName.lowercased().contains("-page-"),
+                  let page,
+                  let note = page.note,
+                  let pageIndex = note.sortedPages.firstIndex(where: { $0.id == page.id }),
+                  let originalPDF = note.pages
+                    .flatMap(\.attachments)
+                    .first(where: { $0.kind == .pdf }),
+                  let url = try? storage.validatedURL(forRelativePath: originalPDF.storedFileName)
+            else {
+                return nil
+            }
+
+            return (url, pageIndex)
+        }
+
+        private func restoreDrawingLayerOrder() {
+            bringSubviewToFront(drawingViewportView)
+
+            for attachment in page?.imageAttachments ?? [] where !attachment.rendersBehindDrawing {
+                if let view = imageViews[attachment.id] {
+                    bringSubviewToFront(view)
+                }
+            }
+        }
+
         func releaseHeavyResources(evictCachedImages: Bool = false) {
+            pendingNativeViewport = nil
+            drawingViewportView.isHidden = true
             canvasView.delegate = nil
             canvasView.drawing = PKDrawing()
 
@@ -1409,6 +1839,109 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
     }
 
+    final class ImmediatePDFTiledLayer: CATiledLayer {
+        override class func fadeDuration() -> CFTimeInterval { 0 }
+    }
+
+    final class PDFPageTiledView: UIView {
+        override class var layerClass: AnyClass { ImmediatePDFTiledLayer.self }
+
+        private let drawingLock = NSLock()
+        private var document: CGPDFDocument?
+        private var sourceURL: URL?
+        private var pageNumber = 0
+        private var sourceIdentity: String?
+
+        private var tiledLayer: CATiledLayer {
+            layer as! CATiledLayer
+        }
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            configureLayer()
+        }
+
+        required init?(coder: NSCoder) {
+            super.init(coder: coder)
+            configureLayer()
+        }
+
+        func configure(url: URL, pageIndex: Int) {
+            let nextPageNumber = pageIndex + 1
+            let nextIdentity = "\(url.standardizedFileURL.path)|\(nextPageNumber)"
+            guard sourceIdentity != nextIdentity else { return }
+
+            drawingLock.lock()
+            document = nil
+            sourceURL = url
+            pageNumber = nextPageNumber
+            sourceIdentity = nextIdentity
+            drawingLock.unlock()
+            tiledLayer.setNeedsDisplay()
+        }
+
+        func updateRenderScale(_ scale: CGFloat) {
+            // CATiledLayer selects its own level of detail from the enclosing scroll-view
+            // transform. Keep the base scale fixed so settled zoom updates do not discard
+            // already visible tiles and flash the raster fallback.
+            _ = scale
+            let screenScale = window?.screen.scale ?? UIScreen.main.scale
+            guard abs(tiledLayer.contentsScale - screenScale) > 0.05 else { return }
+            tiledLayer.contentsScale = screenScale
+            contentScaleFactor = screenScale
+        }
+
+        func releaseDocument() {
+            drawingLock.lock()
+            document = nil
+            sourceURL = nil
+            pageNumber = 0
+            sourceIdentity = nil
+            drawingLock.unlock()
+            tiledLayer.setNeedsDisplay()
+        }
+
+        override func draw(_ rect: CGRect) {
+            guard let context = UIGraphicsGetCurrentContext(), !bounds.isEmpty else { return }
+
+            drawingLock.lock()
+            defer { drawingLock.unlock() }
+            if document == nil, let sourceURL {
+                document = CGPDFDocument(sourceURL as CFURL)
+            }
+            guard let page = document?.page(at: pageNumber) else { return }
+
+            context.saveGState()
+            context.setFillColor(UIColor.white.cgColor)
+            context.fill(rect)
+            context.translateBy(x: 0, y: bounds.height)
+            context.scaleBy(x: 1, y: -1)
+            context.concatenate(
+                page.getDrawingTransform(
+                    .mediaBox,
+                    rect: bounds,
+                    rotate: 0,
+                    preserveAspectRatio: true
+                )
+            )
+            context.interpolationQuality = .high
+            context.drawPDFPage(page)
+            context.restoreGState()
+        }
+
+        private func configureLayer() {
+            isOpaque = false
+            backgroundColor = .clear
+            isUserInteractionEnabled = false
+            tiledLayer.tileSize = CGSize(width: 512, height: 512)
+            tiledLayer.levelsOfDetail = 3
+            tiledLayer.levelsOfDetailBias = 3
+            tiledLayer.drawsAsynchronously = true
+            tiledLayer.contentsScale = UIScreen.main.scale
+            contentScaleFactor = UIScreen.main.scale
+        }
+    }
+
     final class AttachmentImageContainerView: UIView {
         private final class ImageLoadToken {
             private let lock = NSLock()
@@ -1437,10 +1970,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private static let imageDecodeQueue = DispatchQueue(
             label: "com.snowfox.BeanNotes.attachment-image-decode",
-            qos: .utility
+            qos: .userInitiated
         )
 
         private let imageView = UIImageView()
+        private let pdfPageView = PDFPageTiledView()
         private let resizeHandle = UIImageView(image: UIImage(systemName: "arrow.up.left.and.arrow.down.right"))
         private weak var attachment: Attachment?
         private var pageSize: CGSize = .zero
@@ -1448,6 +1982,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var resizeStart: CGRect?
         private var changed: (() -> Void)?
         private var imageURL: URL?
+        private var vectorPDFURL: URL?
+        private var vectorPDFPageIndex: Int?
         private var loadedStoredFileName: String?
         private var loadedFileIdentity: String?
         private var loadedRasterBudget: AttachmentImageRasterBudget?
@@ -1481,6 +2017,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             attachment: Attachment,
             storage: LocalStorageService,
             pageSize: CGSize,
+            vectorSourceURL: URL? = nil,
+            vectorPageIndex: Int? = nil,
             changed: @escaping () -> Void
         ) {
             self.attachment = attachment
@@ -1499,8 +2037,30 @@ struct DrawingCanvasView: UIViewRepresentable {
                 releaseImage()
             }
 
+            let storedVectorURL: URL? = if let vectorSource = attachment.vectorSourceStoredFileName {
+                try? storage.validatedURL(forRelativePath: vectorSource)
+            } else {
+                nil
+            }
+            if let vectorURL = vectorSourceURL ?? storedVectorURL,
+               let pageIndex = vectorPageIndex ?? attachment.vectorSourcePageIndex {
+                vectorPDFURL = vectorURL
+                vectorPDFPageIndex = pageIndex
+                pdfPageView.isHidden = false
+                if isImageLoadingEnabled {
+                    pdfPageView.configure(url: vectorURL, pageIndex: pageIndex)
+                }
+            } else {
+                vectorPDFURL = nil
+                vectorPDFPageIndex = nil
+                pdfPageView.isHidden = true
+                pdfPageView.releaseDocument()
+            }
+
             frame = attachment.normalizedFrame(for: pageSize)
-            isUserInteractionEnabled = !attachment.isLocked
+            // PDF/document page previews render as background images. They must never
+            // intercept Pencil or finger input intended for the canvas above them.
+            isUserInteractionEnabled = !attachment.isLocked && !attachment.rendersBehindDrawing
             resizeHandle.isHidden = attachment.isLocked
             layer.borderWidth = attachment.isLocked ? 0 : 1.5
             layer.borderColor = attachment.isLocked ? nil : UIColor.systemBlue.withAlphaComponent(0.65).cgColor
@@ -1511,6 +2071,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         override func layoutSubviews() {
             super.layoutSubviews()
             imageView.frame = bounds
+            pdfPageView.frame = bounds
             resizeHandle.frame = CGRect(
                 x: bounds.maxX - 34,
                 y: bounds.maxY - 34,
@@ -1524,6 +2085,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             layer.cornerRadius = 6
             imageView.contentMode = .scaleAspectFit
             addSubview(imageView)
+
+            pdfPageView.isHidden = true
+            addSubview(pdfPageView)
 
             resizeHandle.tintColor = .white
             resizeHandle.backgroundColor = UIColor.black.withAlphaComponent(0.62)
@@ -1548,6 +2112,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             imageView.layer.contentsScale = scale
             resizeHandle.contentScaleFactor = scale
             resizeHandle.layer.contentsScale = scale
+            pdfPageView.updateRenderScale(scale)
             currentRenderScale = scale
 
             guard reloadImageVariant, isImageLoadingEnabled, let imageURL, let attachment else { return }
@@ -1560,10 +2125,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             isImageLoadingEnabled = enabled
 
             if enabled {
+                if let vectorPDFURL, let vectorPDFPageIndex {
+                    pdfPageView.configure(url: vectorPDFURL, pageIndex: vectorPDFPageIndex)
+                }
                 guard let imageURL, let attachment else { return }
                 loadImageIfNeeded(from: imageURL, attachment: attachment)
             } else {
-                releaseImage()
+                releaseRasterImage()
             }
         }
 
@@ -1648,6 +2216,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func releaseImage(evictCachedVariants: Bool = false) {
+            releaseRasterImage(evictCachedVariants: evictCachedVariants)
+            pdfPageView.releaseDocument()
+        }
+
+        private func releaseRasterImage(evictCachedVariants: Bool = false) {
             cancelPendingImageLoad(evictCachedVariantsAfterDecode: evictCachedVariants)
             if evictCachedVariants, let imageURL {
                 ImageMemoryCache.shared.removeImages(for: imageURL)
@@ -1732,6 +2305,14 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
+        private final class WeakPageCanvasView {
+            weak var value: PageCanvasView?
+
+            init(_ value: PageCanvasView?) {
+                self.value = value
+            }
+        }
+
         var parent: DrawingCanvasView
         var selectedPageID: UUID?
         var saveNowSignal: Int
@@ -1748,7 +2329,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         var pendingSaveTokens: [UUID: UUID] = [:]
         var inFlightSaveTokens: [UUID: Set<UUID>] = [:]
         var registeredCanvasIDs: Set<ObjectIdentifier> = []
+        private var toolPickerObservedCanvasIDs: Set<ObjectIdentifier> = []
         var dirtyPageIDs: Set<UUID> = []
+        private var activeToolCanvasIDs: Set<ObjectIdentifier> = []
+        private var deferredDrawingChangeNotifications: Set<UUID> = []
         var toolStateCancellable: AnyCancellable?
         weak var observedToolState: DrawingToolState?
         weak var containerView: CanvasContainerView?
@@ -1756,13 +2340,16 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lifecycleObservers: [NSObjectProtocol] = []
 
         private var canvasPages: [ObjectIdentifier: NotePage] = [:]
+        private var canvasPageViews: [ObjectIdentifier: WeakPageCanvasView] = [:]
         private var pencilInteractions: [ObjectIdentifier: UIPencilInteraction] = [:]
         private var canvasToolSignatures: [ObjectIdentifier: String] = [:]
         private var lastPublishedCanUndo: Bool?
         private var lastPublishedCanRedo: Bool?
         private var lastPublishedZoomScale: CGFloat?
+        private var lastZoomPublishTime: CFTimeInterval = 0
         private let drawingSaveDebounce: TimeInterval = 1.25
-        private let zoomScalePublishThreshold: CGFloat = 0.005
+        private let zoomScalePublishThreshold: CGFloat = 0.01
+        private let minimumZoomPublishInterval: CFTimeInterval = 1 / 15
         private static let drawingWriteQueueKey = DispatchSpecificKey<Void>()
         private static let drawingWriteQueue: DispatchQueue = {
             let queue = DispatchQueue(label: "com.snowfox.BeanNotes.drawing-write", qos: .utility)
@@ -1834,12 +2421,16 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func publishZoomScale(_ scale: CGFloat, force: Bool = false) {
             guard scale.isFinite, scale > 0 else { return }
+            let now = CACurrentMediaTime()
             let shouldPublish = force
                 || (lastPublishedZoomScale.map { abs($0 - scale) > zoomScalePublishThreshold } ?? true)
-            guard shouldPublish else { return }
+            let intervalElapsed = now - lastZoomPublishTime >= minimumZoomPublishInterval
+            guard shouldPublish, force || intervalElapsed else { return }
 
             lastPublishedZoomScale = scale
-            if parent.strokeZoomBehavior.adjustsForZoomScale {
+            lastZoomPublishTime = now
+            if parent.strokeZoomBehavior.adjustsForZoomScale,
+               containerView?.isZoomTransitionActive != true {
                 applyCustomToolIfNeeded()
             }
 
@@ -1899,12 +2490,20 @@ struct DrawingCanvasView: UIViewRepresentable {
             return controller.view
         }
 
-        func register(canvasView: PKCanvasView, page: NotePage) {
+        func register(
+            canvasView: PKCanvasView,
+            page: NotePage,
+            pageView: PageCanvasView? = nil
+        ) {
             let id = ObjectIdentifier(canvasView)
             canvasPages[id] = page
+            canvasPageViews[id] = WeakPageCanvasView(pageView)
 
             if !registeredCanvasIDs.contains(id) {
                 registeredCanvasIDs.insert(id)
+            }
+            if parent.paletteMode == .applePencil,
+               toolPickerObservedCanvasIDs.insert(id).inserted {
                 toolPicker.addObserver(canvasView)
             }
 
@@ -1931,9 +2530,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             pendingSaves[page.id]?.cancel()
             pendingSaves[page.id] = nil
             pendingSaveTokens[page.id] = nil
-            toolPicker.removeObserver(canvasView)
+            if toolPickerObservedCanvasIDs.remove(id) != nil {
+                toolPicker.removeObserver(canvasView)
+            }
             registeredCanvasIDs.remove(id)
+            activeToolCanvasIDs.remove(id)
+            deferredDrawingChangeNotifications.remove(page.id)
             canvasPages[id] = nil
+            canvasPageViews[id] = nil
             canvasToolSignatures[id] = nil
 
             if let pencilInteraction = pencilInteractions[id] {
@@ -1956,16 +2560,31 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if mode == .applePencil {
                 canvasToolSignatures.removeAll()
+                let id = ObjectIdentifier(activeCanvasView)
+                if toolPickerObservedCanvasIDs.insert(id).inserted {
+                    toolPicker.addObserver(activeCanvasView)
+                }
                 activeCanvasView.becomeFirstResponder()
                 toolPicker.setVisible(true, forFirstResponder: activeCanvasView)
             } else {
                 hideToolPicker()
+                detachToolPickerObservers()
             }
         }
 
         func hideToolPicker() {
             for (_, canvasView) in containerView?.canvasPagePairs ?? [] {
                 toolPicker.setVisible(false, forFirstResponder: canvasView)
+            }
+        }
+
+        private func detachToolPickerObservers() {
+            guard !toolPickerObservedCanvasIDs.isEmpty else { return }
+            for (_, canvasView) in containerView?.canvasPagePairs ?? [] {
+                let id = ObjectIdentifier(canvasView)
+                if toolPickerObservedCanvasIDs.remove(id) != nil {
+                    toolPicker.removeObserver(canvasView)
+                }
             }
         }
 
@@ -1984,6 +2603,9 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func applyCustomToolIfNeeded() {
             guard parent.paletteMode == .custom else { return }
+            // Replacing PKCanvasView.tool while UIKit is zooming interrupts its live ink
+            // renderer. The settled zoom publish reapplies the calibrated tool once.
+            guard containerView?.isZoomTransitionActive != true else { return }
             applyCurrentCustomToolToVisibleCanvases()
         }
 
@@ -2065,11 +2687,20 @@ struct DrawingCanvasView: UIViewRepresentable {
             let key = ObjectIdentifier(canvasView)
             guard let page = canvasPages[key] else { return }
 
+            canvasPageViews[key]?.value?.drawingDidChange()
+
             let wasAlreadyDirty = dirtyPageIDs.contains(page.id)
                 || pendingSaves[page.id] != nil
                 || hasInFlightSave(for: page.id)
 
             dirtyPageIDs.insert(page.id)
+            if activeToolCanvasIDs.contains(key) {
+                if !wasAlreadyDirty {
+                    deferredDrawingChangeNotifications.insert(page.id)
+                }
+                return
+            }
+
             if !wasAlreadyDirty {
                 notifyDrawingChanged(pageID: page.id)
                 notifySaveStarted()
@@ -2265,7 +2896,35 @@ struct DrawingCanvasView: UIViewRepresentable {
             inFlightSaveTokens[pageID] = nil
         }
 
+        func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+            let id = ObjectIdentifier(canvasView)
+            activeToolCanvasIDs.insert(id)
+            if let page = canvasPages[id] {
+                pendingSaves[page.id]?.cancel()
+                pendingSaves[page.id] = nil
+                pendingSaveTokens[page.id] = nil
+                containerView?.setActiveDrawingPage(id: page.id)
+            }
+            canvasPageViews[id]?.value?.setLiveDrawingActive(true)
+        }
+
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+            let id = ObjectIdentifier(canvasView)
+            activeToolCanvasIDs.remove(id)
+            containerView?.setActiveDrawingPage(id: nil)
+            canvasPageViews[id]?.value?.setLiveDrawingActive(false)
+
+            if let page = canvasPages[id] {
+                if deferredDrawingChangeNotifications.remove(page.id) != nil {
+                    notifyDrawingChanged(pageID: page.id)
+                    notifySaveStarted()
+                }
+                if dirtyPageIDs.contains(page.id) {
+                    scheduleDrawingSave(for: page, canvasView: canvasView)
+                    publishUndoRedoAvailability()
+                }
+            }
+
             guard parent.toolState.temporaryEraserActive else { return }
             parent.toolState.restoreAfterTemporaryEraser()
         }
@@ -2539,64 +3198,28 @@ struct DrawingCanvasView: UIViewRepresentable {
 }
 
 private extension UIView {
-    func applyCanvasBackingScale(_ scale: CGFloat) {
-        var visitedLayers: Set<ObjectIdentifier> = []
-        guard applyBackingScale(scale, visitedLayers: &visitedLayers) else { return }
-        setNeedsDisplay()
-        layer.setNeedsDisplay()
-    }
+    func applyOwnedBackingScale(_ scale: CGFloat) {
+        guard scale.isFinite, scale > 0 else { return }
 
-    @discardableResult
-    private func applyBackingScale(_ scale: CGFloat, visitedLayers: inout Set<ObjectIdentifier>) -> Bool {
-        var didChange = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
 
         if abs(contentScaleFactor - scale) > 0.05 {
             contentScaleFactor = scale
-            didChange = true
+        }
+        if abs(layer.contentsScale - scale) > 0.05 {
+            layer.contentsScale = scale
+        }
+        if abs(layer.rasterizationScale - scale) > 0.05 {
+            layer.rasterizationScale = scale
         }
 
-        didChange = layer.applyBackingScale(scale, visitedLayers: &visitedLayers) || didChange
-
-        for subview in subviews {
-            didChange = subview.applyBackingScale(scale, visitedLayers: &visitedLayers) || didChange
-        }
-
-        if didChange {
-            setNeedsDisplay()
-            layer.setNeedsDisplay()
-        }
-
-        return didChange
+        layer.shouldRasterize = false
+        setNeedsDisplay()
+        layer.setNeedsDisplay()
+        CATransaction.commit()
     }
-}
 
-private extension CALayer {
-    @discardableResult
-    func applyBackingScale(_ scale: CGFloat, visitedLayers: inout Set<ObjectIdentifier>) -> Bool {
-        guard visitedLayers.insert(ObjectIdentifier(self)).inserted else { return false }
-
-        var didChange = false
-
-        if abs(contentsScale - scale) > 0.05 {
-            contentsScale = scale
-            didChange = true
-        }
-
-        if abs(rasterizationScale - scale) > 0.05 {
-            rasterizationScale = scale
-            didChange = true
-        }
-
-        for sublayer in sublayers ?? [] {
-            didChange = sublayer.applyBackingScale(scale, visitedLayers: &visitedLayers) || didChange
-        }
-
-        if didChange {
-            setNeedsDisplay()
-        }
-
-        return didChange
-    }
 }
 
 private extension UIEdgeInsets {

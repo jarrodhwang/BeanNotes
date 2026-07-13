@@ -48,6 +48,13 @@ final class NoteDocument {
         }
     }
 
+    static func libraryOrder(_ lhs: NoteDocument, _ rhs: NoteDocument) -> Bool {
+        if lhs.createdAt == rhs.createdAt {
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+        return lhs.createdAt > rhs.createdAt
+    }
+
     func touch(at date: Date = Date()) {
         updatedAt = date
         folder?.updatedAt = date

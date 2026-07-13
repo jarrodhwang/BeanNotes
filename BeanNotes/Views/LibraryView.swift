@@ -15,7 +15,10 @@ struct LibraryView: View {
     @Environment(\.beanNotesTheme) private var beanNotesTheme
 
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
-    @Query(sort: \NoteDocument.updatedAt, order: .reverse) private var recentNotes: [NoteDocument]
+    @Query(sort: [
+        SortDescriptor(\NoteDocument.createdAt, order: .reverse),
+        SortDescriptor(\NoteDocument.id, order: .forward)
+    ]) private var recentNotes: [NoteDocument]
 
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
@@ -41,7 +44,13 @@ struct LibraryView: View {
     @State private var folderCreatedToastDismissTask: Task<Void, Never>?
 
     private var sortedFolders: [NotebookFolder] {
-        folders.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        folders.sorted { lhs, rhs in
+            let comparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            if comparison == .orderedSame {
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            return comparison == .orderedAscending
+        }
     }
 
     private var selectedFolder: NotebookFolder? {
@@ -131,11 +140,13 @@ struct LibraryView: View {
         }
         .onAppear {
             bootstrapLibrary()
-            refreshSearchIndexesIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             absorbSharedInbox()
+        }
+        .onChange(of: searchText) { _, query in
+            guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             refreshSearchIndexesIfNeeded()
         }
         .fullScreenCover(isPresented: isShowingNoteEditor) {
@@ -373,7 +384,6 @@ struct LibraryView: View {
             try Task.checkCancellation()
 
             var firstImportedNote: NoteDocument?
-            var importedNotes: [NoteDocument] = []
             let total = max(urls.count, 1)
 
             for (index, url) in urls.enumerated() {
@@ -395,7 +405,6 @@ struct LibraryView: View {
                 }
                 try Task.checkCancellation()
                 firstImportedNote = firstImportedNote ?? imported.note
-                importedNotes.append(imported.note)
                 importProgress = Double(index + 1) / Double(total)
                 await Task.yield()
             }
@@ -404,8 +413,6 @@ struct LibraryView: View {
             try modelContext.save()
             didSave = true
             try staging.commit()
-
-            await indexImportedNotes(importedNotes)
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
@@ -446,7 +453,6 @@ struct LibraryView: View {
             try Task.checkCancellation()
 
             var firstImportedNote: NoteDocument?
-            var importedNotes: [NoteDocument] = []
             let total = max(photoItems.count, 1)
 
             for (index, item) in photoItems.enumerated() {
@@ -469,7 +475,6 @@ struct LibraryView: View {
                     staging: staging
                 )
                 firstImportedNote = firstImportedNote ?? imported.note
-                importedNotes.append(imported.note)
                 importProgress = Double(index + 1) / Double(total)
             }
 
@@ -477,8 +482,6 @@ struct LibraryView: View {
             try modelContext.save()
             didSave = true
             try staging.commit()
-
-            await indexImportedNotes(importedNotes)
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
@@ -619,28 +622,6 @@ struct LibraryView: View {
         }
     }
 
-    private func indexImportedNotes(_ notes: [NoteDocument]) async {
-        guard !notes.isEmpty else { return }
-
-        let service = NoteSearchIndexService()
-        let total = max(notes.count, 1)
-
-        for (index, note) in notes.enumerated() {
-            importProgressMessage = "Indexing searchable text..."
-            importProgress = Double(index) / Double(total)
-            await Task.yield()
-
-            do {
-                try await service.indexIfNeeded(note: note, modelContext: modelContext)
-            } catch {
-                errorMessage = "Imported, but BeanNotes could not index searchable text. \(error.localizedDescription)"
-                return
-            }
-
-            importProgress = Double(index + 1) / Double(total)
-        }
-    }
-
     private func refreshSearchIndexesIfNeeded() {
         searchIndexRefreshTask?.cancel()
 
@@ -648,6 +629,8 @@ struct LibraryView: View {
         guard !notes.isEmpty else { return }
 
         searchIndexRefreshTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
             let service = NoteSearchIndexService()
 
             for note in notes {
@@ -1227,9 +1210,6 @@ private struct NoteCardView: View {
         }
         .accessibilityLabel("\(note.title), \(note.pages.count) pages")
         .onAppear {
-            loadThumbnail()
-        }
-        .onChange(of: note.updatedAt) { _, _ in
             loadThumbnail()
         }
         .alert("BeanNotes", isPresented: Binding(
