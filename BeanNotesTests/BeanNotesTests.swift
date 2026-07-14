@@ -3263,6 +3263,35 @@ struct BeanNotesTests {
         _ = toolState.makePKTool()
     }
 
+    @Test @MainActor func eraserScopeTracksTheActivePencilKitEraserWidth() throws {
+        let fixture = try makePageCanvasFixture(name: "EraserScope")
+        defer { fixture.cleanup() }
+
+        let location = CGPoint(x: 140, y: 220)
+        fixture.pageView.canvasView.tool = PKEraserTool(.bitmap, width: 42)
+        fixture.pageView.updateEraserScope(at: location)
+        #expect(fixture.pageView.eraserScopeView.isHidden)
+
+        fixture.pageView.setLiveDrawingActive(true)
+        fixture.pageView.updateEraserScope(at: location)
+
+        #expect(!fixture.pageView.eraserScopeView.isHidden)
+        #expect(fixture.pageView.eraserScopeView.center == location)
+        #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 42, height: 42))
+
+        fixture.pageView.canvasView.tool = PKInkingTool(.pen, color: .black, width: 2)
+        fixture.pageView.updateEraserScope(at: location)
+        #expect(fixture.pageView.eraserScopeView.isHidden)
+
+        fixture.pageView.canvasView.tool = PKEraserTool(.vector)
+        fixture.pageView.updateEraserScope(at: nil)
+        #expect(fixture.pageView.eraserScopeView.isHidden)
+
+        fixture.pageView.setLiveDrawingActive(false)
+        fixture.pageView.updateEraserScope(at: location)
+        #expect(fixture.pageView.eraserScopeView.isHidden)
+    }
+
     @Test @MainActor func strokeWidthCalibrationClampsRoundsAndPersistsPerTool() throws {
         let suiteName = "BeanNotesStrokeWidth-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

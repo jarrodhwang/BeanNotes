@@ -1491,6 +1491,117 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
     }
 
+    final class EraserScopeGestureRecognizer: UIGestureRecognizer {
+        weak var coordinateView: UIView?
+        var locationChanged: ((CGPoint?) -> Void)?
+        private(set) var currentLocation: CGPoint?
+
+        private weak var trackedTouch: UITouch?
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            guard trackedTouch == nil, let touch = touches.first else { return }
+            trackedTouch = touch
+            state = .began
+            publishLocation(for: touch)
+        }
+
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+            guard let trackedTouch,
+                  touches.contains(where: { $0 === trackedTouch }) else { return }
+            state = .changed
+            publishLocation(for: trackedTouch)
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+            finishIfTracking(touches, state: .ended)
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+            finishIfTracking(touches, state: .cancelled)
+        }
+
+        override func reset() {
+            trackedTouch = nil
+            currentLocation = nil
+            locationChanged?(nil)
+            super.reset()
+        }
+
+        override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+            false
+        }
+
+        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+            false
+        }
+
+        private func finishIfTracking(_ touches: Set<UITouch>, state finalState: State) {
+            guard let trackedTouch,
+                  touches.contains(where: { $0 === trackedTouch }) else { return }
+            locationChanged?(nil)
+            self.trackedTouch = nil
+            currentLocation = nil
+            state = finalState
+        }
+
+        private func publishLocation(for touch: UITouch) {
+            guard let coordinateView else {
+                locationChanged?(nil)
+                return
+            }
+            let location = touch.location(in: coordinateView)
+            currentLocation = location
+            locationChanged?(location)
+        }
+    }
+
+    final class EraserScopeView: UIView {
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            configureView()
+        }
+
+        required init?(coder: NSCoder) {
+            super.init(coder: coder)
+            configureView()
+        }
+
+        func show(at location: CGPoint, diameter: CGFloat) {
+            guard location.x.isFinite,
+                  location.y.isFinite,
+                  diameter.isFinite,
+                  diameter > 0 else {
+                hide()
+                return
+            }
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+            center = location
+            layer.cornerRadius = diameter / 2
+            isHidden = false
+            CATransaction.commit()
+        }
+
+        func hide() {
+            isHidden = true
+        }
+
+        private func configureView() {
+            isHidden = true
+            isUserInteractionEnabled = false
+            isAccessibilityElement = false
+            backgroundColor = UIColor.white.withAlphaComponent(0.18)
+            layer.borderColor = UIColor.black.withAlphaComponent(0.68).cgColor
+            layer.borderWidth = 1.5
+            layer.shadowColor = UIColor.white.cgColor
+            layer.shadowOpacity = 0.95
+            layer.shadowRadius = 1
+            layer.shadowOffset = .zero
+        }
+    }
+
     final class PageCanvasView: UIView, UIGestureRecognizerDelegate {
         private struct NativeViewportRequest {
             var rect: CGRect
@@ -1504,8 +1615,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         let drawingViewportView = UIView(frame: .zero)
         let canvasView = PKCanvasView(frame: .zero)
         let foregroundImageContainerView = UIView(frame: .zero)
+        let eraserScopeView = EraserScopeView(frame: .zero)
 
         private var imageViews: [UUID: AttachmentImageContainerView] = [:]
+        private let eraserScopeGesture = EraserScopeGestureRecognizer()
         private var attachmentEditingOverlay: AttachmentEditingOverlayView?
         private(set) var page: NotePage?
         private(set) var selectedAttachmentID: UUID?
@@ -1586,6 +1699,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func applyInputMode(_ inputMode: DrawingInputMode) {
+            eraserScopeGesture.allowedTouchTypes = inputMode == .pencilOnly
+                ? [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+                : [
+                    NSNumber(value: UITouch.TouchType.pencil.rawValue),
+                    NSNumber(value: UITouch.TouchType.direct.rawValue)
+                ]
             guard canvasView.drawingPolicy != inputMode.drawingPolicy else { return }
             canvasView.drawingPolicy = inputMode.drawingPolicy
         }
@@ -1674,6 +1793,18 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.layer.allowsEdgeAntialiasing = true
             canvasView.contentMode = .redraw
             drawingViewportView.addSubview(canvasView)
+
+            eraserScopeGesture.coordinateView = self
+            eraserScopeGesture.locationChanged = { [weak self] location in
+                self?.updateEraserScope(at: location)
+            }
+            eraserScopeGesture.cancelsTouchesInView = false
+            eraserScopeGesture.delaysTouchesBegan = false
+            eraserScopeGesture.delaysTouchesEnded = false
+            eraserScopeGesture.delegate = self
+            canvasView.addGestureRecognizer(eraserScopeGesture)
+
+            addSubview(eraserScopeView)
 
             let selectAttachmentGesture = UITapGestureRecognizer(
                 target: self,
@@ -1771,6 +1902,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             isUsingDrawingTool = active
             if active {
                 clearAttachmentSelection()
+                updateEraserScope(at: eraserScopeGesture.currentLocation)
+            } else {
+                eraserScopeView.hide()
             }
             if !active, let pendingNativeViewport {
                 self.pendingNativeViewport = nil
@@ -2027,6 +2161,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldReceive touch: UITouch
         ) -> Bool {
+            if gestureRecognizer === eraserScopeGesture {
+                return true
+            }
+
             if let attachmentEditingOverlay,
                touch.view?.isDescendant(of: attachmentEditingOverlay) == true {
                 return false
@@ -2034,6 +2172,26 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             return selectedAttachmentID != nil
                 || topmostEditableAttachment(at: touch.location(in: self)) != nil
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            gestureRecognizer === eraserScopeGesture
+                || otherGestureRecognizer === eraserScopeGesture
+        }
+
+        func updateEraserScope(at location: CGPoint?) {
+            guard isUsingDrawingTool,
+                  let location,
+                  let eraserTool = canvasView.tool as? PKEraserTool else {
+                eraserScopeView.hide()
+                return
+            }
+
+            eraserScopeView.show(at: location, diameter: eraserTool.width)
+            bringSubviewToFront(eraserScopeView)
         }
 
         private func setDocumentPanningEnabled(_ enabled: Bool) {
@@ -2056,11 +2214,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             if let attachmentEditingOverlay {
                 bringSubviewToFront(attachmentEditingOverlay)
             }
+            bringSubviewToFront(eraserScopeView)
         }
 
         func releaseHeavyResources(evictCachedImages: Bool = false) {
             pendingNativeViewport = nil
             drawingViewportView.isHidden = true
+            eraserScopeView.hide()
             canvasView.delegate = nil
             canvasView.drawing = PKDrawing()
 
