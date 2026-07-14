@@ -8,6 +8,7 @@
 import Testing
 @testable import BeanNotes
 import Foundation
+import ImageIO
 import PDFKit
 import PencilKit
 import SwiftUI
@@ -260,6 +261,128 @@ struct BeanNotesTests {
         )
 
         #expect(oversizedFrame == CGRect(x: 0, y: 0, width: 612, height: 792))
+    }
+
+    @Test func attachmentEditingInitialFramePreservesAspectBoundsAndCascade() {
+        let pageSize = CGSize(width: 612, height: 792)
+        let sourceSize = CGSize(width: 1_200, height: 600)
+        let firstFrame = AttachmentEditingGeometry.initialImageFrame(
+            sourceSize: sourceSize,
+            pageSize: pageSize,
+            occupiedFrames: []
+        )
+        let secondFrame = AttachmentEditingGeometry.initialImageFrame(
+            sourceSize: sourceSize,
+            pageSize: pageSize,
+            occupiedFrames: [firstFrame]
+        )
+
+        #expect(firstFrame == CGRect(x: 80, y: 100, width: 420, height: 210))
+        #expect(abs(firstFrame.width / firstFrame.height - sourceSize.width / sourceSize.height) < 0.001)
+        #expect(firstFrame.minX >= 0)
+        #expect(firstFrame.minY >= 0)
+        #expect(firstFrame.maxX <= pageSize.width)
+        #expect(firstFrame.maxY <= pageSize.height)
+        #expect(secondFrame.origin == CGPoint(x: firstFrame.minX + 24, y: firstFrame.minY + 24))
+        #expect(secondFrame.size == firstFrame.size)
+    }
+
+    @Test func attachmentEditingMoveClampsToPageBounds() {
+        let pageSize = CGSize(width: 612, height: 792)
+        let startFrame = CGRect(x: 100, y: 200, width: 200, height: 100)
+
+        let topLeftFrame = AttachmentEditingGeometry.movedFrame(
+            from: startFrame,
+            translation: CGPoint(x: -1_000, y: -1_000),
+            pageSize: pageSize
+        )
+        let bottomRightFrame = AttachmentEditingGeometry.movedFrame(
+            from: startFrame,
+            translation: CGPoint(x: 1_000, y: 1_000),
+            pageSize: pageSize
+        )
+
+        #expect(topLeftFrame == CGRect(x: 0, y: 0, width: 200, height: 100))
+        #expect(bottomRightFrame == CGRect(x: 412, y: 692, width: 200, height: 100))
+    }
+
+    @Test func attachmentEditingResizeIsProportionalAndClamped() {
+        let startFrame = CGRect(x: 100, y: 100, width: 240, height: 120)
+        let pageSize = CGSize(width: 500, height: 400)
+
+        let proportionalFrame = AttachmentEditingGeometry.resizedFrame(
+            from: startFrame,
+            translation: CGPoint(x: 120, y: 0),
+            pageSize: pageSize
+        )
+        let minimumFrame = AttachmentEditingGeometry.resizedFrame(
+            from: startFrame,
+            translation: CGPoint(x: -1_000, y: -1_000),
+            pageSize: pageSize
+        )
+        let maximumFrame = AttachmentEditingGeometry.resizedFrame(
+            from: startFrame,
+            translation: CGPoint(x: 1_000, y: 1_000),
+            pageSize: pageSize
+        )
+
+        #expect(proportionalFrame == CGRect(x: 100, y: 100, width: 360, height: 180))
+        #expect(minimumFrame == CGRect(x: 100, y: 100, width: 180, height: 90))
+        #expect(maximumFrame == CGRect(x: 100, y: 100, width: 400, height: 200))
+        #expect(abs(minimumFrame.width / minimumFrame.height - 2) < 0.001)
+        #expect(abs(maximumFrame.width / maximumFrame.height - 2) < 0.001)
+        #expect(maximumFrame.maxX <= pageSize.width)
+        #expect(maximumFrame.maxY <= pageSize.height)
+    }
+
+    @Test func attachmentImageRenderingAspectFitsAndCenters() {
+        let bounds = CGRect(x: 10, y: 20, width: 200, height: 200)
+
+        let wideFrame = AttachmentImageRenderingGeometry.aspectFitRect(
+            for: CGSize(width: 400, height: 200),
+            in: bounds
+        )
+        let tallFrame = AttachmentImageRenderingGeometry.aspectFitRect(
+            for: CGSize(width: 100, height: 200),
+            in: bounds
+        )
+
+        #expect(wideFrame == CGRect(x: 10, y: 70, width: 200, height: 100))
+        #expect(tallFrame == CGRect(x: 60, y: 20, width: 100, height: 200))
+    }
+
+    @Test func imagePasteServicePreservesImageDataAndSuggestedName() async throws {
+        let imageData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02])
+        let textProvider = NSItemProvider(object: "Not an image" as NSString)
+        let imageProvider = NSItemProvider()
+        imageProvider.suggestedName = "Coffee Diagram.png"
+        imageProvider.registerDataRepresentation(
+            forTypeIdentifier: UTType.png.identifier,
+            visibility: .all
+        ) { completion in
+            completion(imageData, nil)
+            return Progress(totalUnitCount: 1)
+        }
+
+        let pastedImage = try await ImagePasteService().loadFirstImage(
+            from: [textProvider, imageProvider]
+        )
+
+        #expect(pastedImage.data == imageData)
+        #expect(pastedImage.originalFileName == "Coffee Diagram.png")
+    }
+
+    @Test func imagePasteServiceRejectsProvidersWithoutImages() async {
+        let textProvider = NSItemProvider(object: "Not an image" as NSString)
+
+        do {
+            _ = try await ImagePasteService().loadFirstImage(from: [textProvider])
+            Issue.record("Expected a clipboard without images to be rejected.")
+        } catch ImagePasteError.noImageProvider {
+            // Expected.
+        } catch {
+            Issue.record("Expected noImageProvider, received \(error).")
+        }
     }
 
     @Test func localStorageCreatesAppRelativePaths() throws {
@@ -1052,6 +1175,117 @@ struct BeanNotesTests {
 
         #expect(pageView.canvasView.contentSize == page.pageSize)
         #expect(pageView.canvasView.contentOffset == .zero)
+    }
+
+    @Test @MainActor func pageCanvasImageLayersSurroundDrawingAndSelectionClearsForLiveInk() throws {
+        let modelContext = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesImageLayerOrder-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(
+            pageOrder: 0,
+            drawingFileName: "ImageLayerOrder.drawing",
+            width: 612,
+            height: 792
+        )
+        let behindImage = Attachment(
+            kind: .image,
+            displayName: "Behind",
+            originalFileName: "behind.png",
+            storedFileName: "Imports/behind.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 80,
+            y: 100,
+            width: 240,
+            height: 120,
+            rendersBehindDrawing: true,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let foregroundImage = Attachment(
+            kind: .image,
+            displayName: "Foreground",
+            originalFileName: "foreground.png",
+            storedFileName: "Imports/foreground.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 120,
+            y: 160,
+            width: 180,
+            height: 180,
+            rendersBehindDrawing: false,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_001)
+        )
+        modelContext.insert(page)
+        page.attachments.append(contentsOf: [behindImage, foregroundImage])
+        try modelContext.save()
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView()
+        defer {
+            pageView.releaseHeavyResources()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {}
+        )
+
+        let behindIndex = try #require(pageView.subviews.firstIndex {
+            $0 === pageView.behindImageContainerView
+        })
+        let drawingIndex = try #require(pageView.subviews.firstIndex {
+            $0 === pageView.drawingViewportView
+        })
+        let foregroundIndex = try #require(pageView.subviews.firstIndex {
+            $0 === pageView.foregroundImageContainerView
+        })
+
+        #expect(behindIndex < drawingIndex)
+        #expect(drawingIndex < foregroundIndex)
+        #expect(pageView.behindImageContainerView.subviews.count == 1)
+        #expect(pageView.foregroundImageContainerView.subviews.count == 1)
+        #expect(pageView.behindImageContainerView.subviews.allSatisfy { !$0.isUserInteractionEnabled })
+        #expect(pageView.foregroundImageContainerView.subviews.allSatisfy { !$0.isUserInteractionEnabled })
+
+        pageView.beginEditingAttachment(id: behindImage.id)
+
+        #expect(pageView.selectedAttachmentID == behindImage.id)
+        let overlay = try #require(pageView.subviews.first {
+            $0 is DrawingCanvasView.AttachmentEditingOverlayView
+        })
+        let overlayIndex = try #require(pageView.subviews.firstIndex { $0 === overlay })
+        #expect(overlayIndex > foregroundIndex)
+        overlay.layoutIfNeeded()
+        #expect(overlay.hitTest(
+            CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY),
+            with: nil
+        ) == nil)
+        #expect(overlay.hitTest(CGPoint(x: 26, y: 26), with: nil) is UIControl)
+        #expect(overlay.hitTest(
+            CGPoint(x: overlay.bounds.maxX - 26, y: 26),
+            with: nil
+        ) is UIControl)
+        #expect(overlay.hitTest(
+            CGPoint(x: overlay.bounds.maxX - 26, y: overlay.bounds.maxY - 26),
+            with: nil
+        ) is UIControl)
+
+        pageView.setLiveDrawingActive(true)
+
+        #expect(pageView.selectedAttachmentID == nil)
+        #expect(!pageView.subviews.contains {
+            $0 is DrawingCanvasView.AttachmentEditingOverlayView
+        })
+        pageView.setLiveDrawingActive(false)
     }
 
     @Test @MainActor func nativeDrawingViewportUsesPencilKitZoomAndPreservesPageCoordinates() throws {
@@ -3559,8 +3793,8 @@ struct BeanNotesTests {
 
         #expect(beanFileName != standardFileName)
         #expect(beanFileName != beanArtworkFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-v4.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-v4.jpg"))
+        #expect(beanFileName.hasSuffix("-bean-off-v5.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-v5.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,
@@ -3825,6 +4059,122 @@ struct BeanNotesTests {
             #expect(contents.isEmpty)
             #expect(folder.notes.isEmpty)
             #expect(!progressMessages.contains { $0.contains("page 3") })
+        }
+    }
+
+    @Test @MainActor func imageDataImportCreatesEditableBackgroundImagesAndCascadesPlacement() async throws {
+        let modelContext = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesImageDataImport-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        )
+        try storage.prepareDirectories()
+
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(
+            size: CGSize(width: 800, height: 400),
+            format: format
+        ).image { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 800, height: 400))
+        }
+        let imageData = try #require(image.pngData())
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        modelContext.insert(page)
+
+        let firstImage = try await service.importImageData(
+            imageData,
+            named: "Layered Photo.jpg",
+            into: page
+        )
+        try modelContext.save()
+        let secondImage = try await service.importImageData(
+            imageData,
+            named: "Layered Photo.jpg",
+            into: page
+        )
+        try modelContext.save()
+        let firstFrame = firstImage.normalizedFrame(for: page.pageSize)
+        let secondFrame = secondImage.normalizedFrame(for: page.pageSize)
+        let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+
+        #expect(!firstImage.isLocked)
+        #expect(firstImage.rendersBehindDrawing)
+        #expect(firstImage.kind == .image)
+        #expect(firstImage.fileExtension == "png")
+        #expect(firstImage.originalFileName == "Layered Photo.png")
+        #expect(pageBounds.contains(firstFrame))
+        #expect(abs(firstFrame.width / firstFrame.height - 2) < 0.001)
+        #expect(secondFrame.size == firstFrame.size)
+        #expect(secondFrame.origin == CGPoint(x: firstFrame.minX + 24, y: firstFrame.minY + 24))
+        #expect(page.imageAttachments.map(\.id).contains(firstImage.id))
+        #expect(page.imageAttachments.map(\.id).contains(secondImage.id))
+        #expect(FileManager.default.fileExists(
+            atPath: storage.url(forRelativePath: firstImage.storedFileName).path
+        ))
+        #expect(FileManager.default.fileExists(
+            atPath: storage.url(forRelativePath: secondImage.storedFileName).path
+        ))
+    }
+
+    @Test @MainActor func imageDataImportUsesDisplayOrientedAspectForRotatedJPEGs() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesOrientedImageDataImport-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        )
+        try storage.prepareDirectories()
+
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        let sourceImage = UIGraphicsImageRenderer(
+            size: CGSize(width: 400, height: 200),
+            format: format
+        ).image { context in
+            UIColor.systemPurple.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 400, height: 200))
+        }
+        let sourceCGImage = try #require(sourceImage.cgImage)
+
+        for orientation in [6, 8] {
+            let encodedData = NSMutableData()
+            let destination = try #require(CGImageDestinationCreateWithData(
+                encodedData as CFMutableData,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ))
+            let properties: [CFString: Any] = [kCGImagePropertyOrientation: orientation]
+            CGImageDestinationAddImage(destination, sourceCGImage, properties as CFDictionary)
+            try #require(CGImageDestinationFinalize(destination))
+
+            let page = NotePage(pageOrder: orientation, width: 612, height: 792)
+            let importedImage = try await service.importImageData(
+                Data(referencing: encodedData),
+                named: "Rotated-\(orientation).jpg",
+                into: page
+            )
+            let frame = importedImage.normalizedFrame(for: page.pageSize)
+
+            #expect(frame.height > frame.width)
+            #expect(abs(frame.width / frame.height - 0.5) < 0.001)
+            #expect(CGRect(origin: .zero, size: page.pageSize).contains(frame))
         }
     }
 

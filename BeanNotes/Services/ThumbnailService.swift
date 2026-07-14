@@ -34,6 +34,28 @@ struct NoteImageAttachmentRenderSnapshot: Sendable {
     }
 }
 
+enum AttachmentImageRenderingGeometry {
+    nonisolated static func aspectFitRect(for imageSize: CGSize, in bounds: CGRect) -> CGRect {
+        guard imageSize.width.isFinite,
+              imageSize.height.isFinite,
+              imageSize.width > 0,
+              imageSize.height > 0,
+              !bounds.isNull,
+              !bounds.isEmpty else {
+            return bounds
+        }
+
+        let scale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        let fittedSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(
+            x: bounds.midX - fittedSize.width / 2,
+            y: bounds.midY - fittedSize.height / 2,
+            width: fittedSize.width,
+            height: fittedSize.height
+        )
+    }
+}
+
 struct NotePageRenderSnapshot: Sendable {
     var id: UUID
     var pageOrder: Int
@@ -86,7 +108,7 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
-    nonisolated private static let thumbnailRenderVersion = 4
+    nonisolated private static let thumbnailRenderVersion = 5
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
@@ -470,7 +492,10 @@ struct ThumbnailService {
                 }
                 continue
             }
-            image.draw(in: attachment.frame)
+            image.draw(in: AttachmentImageRenderingGeometry.aspectFitRect(
+                for: image.size,
+                in: attachment.frame
+            ))
         }
 
         return didRenderRequiredImages

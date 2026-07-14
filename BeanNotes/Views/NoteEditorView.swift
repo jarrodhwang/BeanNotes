@@ -88,6 +88,7 @@ struct NoteEditorView: View {
     @State private var isShowingAttachments = false
     @State private var isShowingBackgroundPicker = false
     @State private var isImportingFiles = false
+    @State private var isPastingImage = false
     @State private var importProgress: Double?
     @State private var importProgressMessage = "Preparing import..."
     @State private var importTask: Task<Void, Never>?
@@ -607,12 +608,12 @@ struct NoteEditorView: View {
             }
             .accessibilityLabel("Page background")
 
-            Button {
-                pasteImage()
-            } label: {
-                Image(systemName: "doc.on.clipboard")
-                    .frame(width: 34, height: 34)
+            PasteButton(supportedContentTypes: ImagePasteService.supportedContentTypes) { itemProviders in
+                pasteImage(from: itemProviders)
             }
+            .labelStyle(.iconOnly)
+            .frame(width: 34, height: 34)
+            .disabled(isPastingImage)
             .accessibilityLabel("Paste image")
 
             Button {
@@ -1728,21 +1729,16 @@ struct NoteEditorView: View {
         }
     }
 
-    private func pasteImage() {
-        guard let image = UIPasteboard.general.image else {
-            errorMessage = "The clipboard does not contain an image."
-            return
-        }
+    private func pasteImage(from itemProviders: [NSItemProvider]) {
+        guard !isPastingImage else { return }
+        isPastingImage = true
+        errorMessage = nil
 
-        Task {
+        Task { @MainActor in
+            defer { isPastingImage = false }
             do {
-                guard let data = await Task.detached(priority: .userInitiated, operation: {
-                    image.pngData()
-                }).value else {
-                    throw ImportExportError.unsupportedImageData
-                }
-
-                await importImageData(data, named: "Pasted Image.png")
+                let pastedImage = try await ImagePasteService().loadFirstImage(from: itemProviders)
+                await importImageData(pastedImage.data, named: pastedImage.originalFileName)
             } catch {
                 errorMessage = error.localizedDescription
             }

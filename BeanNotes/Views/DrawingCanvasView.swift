@@ -109,6 +109,7 @@ enum DrawingCanvasStaticContentSignature {
 
     static func attachmentComponent(for attachment: Attachment) -> String {
         let frame = attachment.frame
+        let origin = "\(Int(frame.minX.rounded())),\(Int(frame.minY.rounded()))"
         let size = "\(Int(frame.width.rounded()))x\(Int(frame.height.rounded()))"
         return [
             attachment.id.uuidString,
@@ -117,6 +118,7 @@ enum DrawingCanvasStaticContentSignature {
             attachment.vectorSourcePageIndex.map(String.init) ?? "",
             "\(attachment.isLocked)",
             "\(attachment.rendersBehindDrawing)",
+            origin,
             size
         ].joined(separator: ":")
     }
@@ -1489,7 +1491,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
     }
 
-    final class PageCanvasView: UIView {
+    final class PageCanvasView: UIView, UIGestureRecognizerDelegate {
         private struct NativeViewportRequest {
             var rect: CGRect
             var overscan: CGFloat
@@ -1498,12 +1500,18 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         let backgroundView = PageBackgroundUIView()
+        let behindImageContainerView = UIView(frame: .zero)
         let drawingViewportView = UIView(frame: .zero)
         let canvasView = PKCanvasView(frame: .zero)
+        let foregroundImageContainerView = UIView(frame: .zero)
 
         private var imageViews: [UUID: AttachmentImageContainerView] = [:]
+        private var attachmentEditingOverlay: AttachmentEditingOverlayView?
         private(set) var page: NotePage?
+        private(set) var selectedAttachmentID: UUID?
         private var configurationSignature: String?
+        private var attachmentChanged: (() -> Void)?
+        private var hasConfiguredImageAttachments = false
         private var lastBackgroundScale: CGFloat = 0
         private var lastImageScale: CGFloat = 0
         private var isImageLoadingEnabled = true
@@ -1541,7 +1549,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)#beanArtwork=\(showsBeanArtwork)"
             let needsStaticRefresh = isNewPage || signature != configurationSignature
             let pageSizeChanged = laidOutPageBounds.size != page.pageSize
+            if isNewPage {
+                clearAttachmentSelection()
+                hasConfiguredImageAttachments = false
+            }
             self.page = page
+            self.attachmentChanged = attachmentChanged
 
             applyInputMode(inputMode)
             if !isNewPage, !needsStaticRefresh, !pageSizeChanged {
@@ -1597,12 +1610,22 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if laidOutPageBounds != pageBounds {
                 backgroundView.frame = pageBounds
+                behindImageContainerView.frame = pageBounds
+                foregroundImageContainerView.frame = pageBounds
                 layer.shadowPath = UIBezierPath(rect: pageBounds).cgPath
                 laidOutPageBounds = pageBounds
             }
 
             for attachment in page.imageAttachments {
-                imageViews[attachment.id]?.frame = attachment.frame
+                imageViews[attachment.id]?.frame = attachment.normalizedFrame(for: page.pageSize)
+            }
+
+            if let selectedAttachmentID,
+               let selectedAttachment = page.imageAttachments.first(where: { $0.id == selectedAttachmentID }) {
+                attachmentEditingOverlay?.updateFrame(
+                    selectedAttachment.normalizedFrame(for: page.pageSize),
+                    pageSize: page.pageSize
+                )
             }
         }
 
@@ -1620,10 +1643,20 @@ struct DrawingCanvasView: UIViewRepresentable {
             backgroundView.isUserInteractionEnabled = false
             addSubview(backgroundView)
 
+            behindImageContainerView.backgroundColor = .clear
+            behindImageContainerView.clipsToBounds = true
+            behindImageContainerView.isUserInteractionEnabled = false
+            addSubview(behindImageContainerView)
+
             drawingViewportView.backgroundColor = .clear
             drawingViewportView.clipsToBounds = true
             drawingViewportView.isHidden = true
             addSubview(drawingViewportView)
+
+            foregroundImageContainerView.backgroundColor = .clear
+            foregroundImageContainerView.clipsToBounds = true
+            foregroundImageContainerView.isUserInteractionEnabled = false
+            addSubview(foregroundImageContainerView)
 
             canvasView.backgroundColor = .clear
             canvasView.isOpaque = false
@@ -1639,6 +1672,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.layer.allowsEdgeAntialiasing = true
             canvasView.contentMode = .redraw
             drawingViewportView.addSubview(canvasView)
+
+            let selectAttachmentGesture = UITapGestureRecognizer(
+                target: self,
+                action: #selector(handleAttachmentSelection(_:))
+            )
+            selectAttachmentGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            selectAttachmentGesture.cancelsTouchesInView = true
+            selectAttachmentGesture.delegate = self
+            addGestureRecognizer(selectAttachmentGesture)
         }
 
         func updateRenderScale(
@@ -1725,6 +1767,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         func setLiveDrawingActive(_ active: Bool) {
             guard isUsingDrawingTool != active else { return }
             isUsingDrawingTool = active
+            if active {
+                clearAttachmentSelection()
+            }
             if !active, let pendingNativeViewport {
                 self.pendingNativeViewport = nil
                 applyNativeDrawingViewport(pendingNativeViewport)
@@ -1820,6 +1865,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             storage: LocalStorageService,
             attachmentChanged: @escaping () -> Void
         ) {
+            let existingIDs = Set(imageViews.keys)
             let attachmentIDs = Set(attachments.map(\.id))
             let removedIDs = imageViews.keys.filter { !attachmentIDs.contains($0) }
             for id in removedIDs {
@@ -1834,9 +1880,18 @@ struct DrawingCanvasView: UIViewRepresentable {
                 let imageView = imageViews[attachment.id] ?? {
                     let view = AttachmentImageContainerView()
                     imageViews[attachment.id] = view
-                    addSubview(view)
                     return view
                 }()
+
+                let imageContainer = attachment.rendersBehindDrawing
+                    ? behindImageContainerView
+                    : foregroundImageContainerView
+                if imageView.superview !== imageContainer {
+                    imageView.removeFromSuperview()
+                    imageContainer.addSubview(imageView)
+                } else {
+                    imageContainer.bringSubviewToFront(imageView)
+                }
 
                 imageView.setImageLoadingEnabled(isImageLoadingEnabled)
                 let vectorSource = resolvedVectorSource(for: attachment, storage: storage)
@@ -1848,24 +1903,25 @@ struct DrawingCanvasView: UIViewRepresentable {
                     vectorPageIndex: vectorSource?.pageIndex,
                     changed: attachmentChanged
                 )
-                imageView.frame = attachment.frame
+                imageView.frame = attachment.normalizedFrame(for: page?.pageSize)
             }
 
-            sendSubviewToBack(backgroundView)
-
-            for attachment in attachments where attachment.rendersBehindDrawing {
-                if let view = imageViews[attachment.id] {
-                    insertSubview(view, aboveSubview: backgroundView)
-                }
+            let selectedAttachment = selectedAttachmentID.flatMap { selectedID in
+                attachments.first(where: { $0.id == selectedID && !$0.isLocked })
+            }
+            if let selectedAttachment {
+                beginEditingAttachment(selectedAttachment)
+            } else if selectedAttachmentID != nil {
+                clearAttachmentSelection()
+            } else if hasConfiguredImageAttachments,
+                      let addedAttachment = attachments.last(where: {
+                          !existingIDs.contains($0.id) && !$0.isLocked
+                      }) {
+                beginEditingAttachment(addedAttachment)
             }
 
-            bringSubviewToFront(drawingViewportView)
-
-            for attachment in attachments where !attachment.rendersBehindDrawing {
-                if let view = imageViews[attachment.id] {
-                    bringSubviewToFront(view)
-                }
-            }
+            hasConfiguredImageAttachments = true
+            restoreDrawingLayerOrder()
         }
 
         private func resolvedVectorSource(
@@ -1894,13 +1950,109 @@ struct DrawingCanvasView: UIViewRepresentable {
             return (url, pageIndex)
         }
 
-        private func restoreDrawingLayerOrder() {
-            bringSubviewToFront(drawingViewportView)
+        @objc private func handleAttachmentSelection(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
 
-            for attachment in page?.imageAttachments ?? [] where !attachment.rendersBehindDrawing {
-                if let view = imageViews[attachment.id] {
-                    bringSubviewToFront(view)
+            if let attachment = topmostEditableAttachment(at: recognizer.location(in: self)) {
+                beginEditingAttachment(attachment)
+            } else {
+                clearAttachmentSelection()
+            }
+        }
+
+        func beginEditingAttachment(id: UUID) {
+            guard let attachment = page?.imageAttachments.first(where: { $0.id == id && !$0.isLocked }) else {
+                clearAttachmentSelection()
+                return
+            }
+
+            beginEditingAttachment(attachment)
+        }
+
+        private func beginEditingAttachment(_ attachment: Attachment) {
+            guard !attachment.isLocked, let page else {
+                clearAttachmentSelection()
+                return
+            }
+
+            selectedAttachmentID = attachment.id
+            let overlay = attachmentEditingOverlay ?? {
+                let overlay = AttachmentEditingOverlayView()
+                attachmentEditingOverlay = overlay
+                addSubview(overlay)
+                return overlay
+            }()
+            let attachmentID = attachment.id
+            overlay.configure(
+                attachment: attachment,
+                pageSize: page.pageSize,
+                frameChanged: { [weak self] frame in
+                    guard self?.selectedAttachmentID == attachmentID else { return }
+                    self?.imageViews[attachmentID]?.frame = frame
+                },
+                changeCommitted: { [weak self] in
+                    self?.attachmentChanged?()
+                },
+                interactionChanged: { [weak self] isInteracting in
+                    self?.setDocumentPanningEnabled(!isInteracting)
+                },
+                dismiss: { [weak self] in
+                    self?.clearAttachmentSelection()
                 }
+            )
+            bringSubviewToFront(overlay)
+        }
+
+        func clearAttachmentSelection() {
+            selectedAttachmentID = nil
+            attachmentEditingOverlay?.removeFromSuperview()
+            attachmentEditingOverlay = nil
+            setDocumentPanningEnabled(true)
+        }
+
+        private func topmostEditableAttachment(at point: CGPoint) -> Attachment? {
+            guard let page else { return nil }
+            let attachments = page.imageAttachments.filter { !$0.isLocked }
+            let foreground = attachments.filter { !$0.rendersBehindDrawing }.reversed()
+            let background = attachments.filter(\.rendersBehindDrawing).reversed()
+
+            return (Array(foreground) + Array(background)).first(where: {
+                $0.normalizedFrame(for: page.pageSize).contains(point)
+            })
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            if let attachmentEditingOverlay,
+               touch.view?.isDescendant(of: attachmentEditingOverlay) == true {
+                return false
+            }
+
+            return selectedAttachmentID != nil
+                || topmostEditableAttachment(at: touch.location(in: self)) != nil
+        }
+
+        private func setDocumentPanningEnabled(_ enabled: Bool) {
+            var ancestor = superview
+            while let current = ancestor {
+                if let scrollView = current as? UIScrollView {
+                    scrollView.panGestureRecognizer.isEnabled = enabled
+                    return
+                }
+                ancestor = current.superview
+            }
+        }
+
+        private func restoreDrawingLayerOrder() {
+            sendSubviewToBack(backgroundView)
+            insertSubview(behindImageContainerView, aboveSubview: backgroundView)
+            insertSubview(drawingViewportView, aboveSubview: behindImageContainerView)
+            insertSubview(foregroundImageContainerView, aboveSubview: drawingViewportView)
+
+            if let attachmentEditingOverlay {
+                bringSubviewToFront(attachmentEditingOverlay)
             }
         }
 
@@ -1916,6 +2068,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             imageViews.removeAll()
+            clearAttachmentSelection()
+            hasConfiguredImageAttachments = false
         }
     }
 
@@ -2071,6 +2225,306 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
     }
 
+    final class AttachmentEditingOverlayView: UIView, UIGestureRecognizerDelegate {
+        private let outerBorderView = UIView()
+        private let innerBorderView = UIView()
+        private let moveHandle = UIButton(type: .custom)
+        private let resizeHandle = UIButton(type: .custom)
+        private let doneButton = UIButton(type: .custom)
+        private weak var attachment: Attachment?
+        private var pageSize: CGSize = .zero
+        private var dragStart: CGRect?
+        private var resizeStart: CGRect?
+        private var frameChanged: ((CGRect) -> Void)?
+        private var changeCommitted: (() -> Void)?
+        private var interactionChanged: ((Bool) -> Void)?
+        private var dismiss: (() -> Void)?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            configureView()
+        }
+
+        required init?(coder: NSCoder) {
+            super.init(coder: coder)
+            configureView()
+        }
+
+        func configure(
+            attachment: Attachment,
+            pageSize: CGSize,
+            frameChanged: @escaping (CGRect) -> Void,
+            changeCommitted: @escaping () -> Void,
+            interactionChanged: @escaping (Bool) -> Void,
+            dismiss: @escaping () -> Void
+        ) {
+            self.attachment = attachment
+            self.frameChanged = frameChanged
+            self.changeCommitted = changeCommitted
+            self.interactionChanged = interactionChanged
+            self.dismiss = dismiss
+            updateFrame(attachment.normalizedFrame(for: pageSize), pageSize: pageSize)
+
+            moveHandle.accessibilityLabel = "Move \(attachment.displayName)"
+            moveHandle.accessibilityHint = "Drag to reposition the image on the page"
+            resizeHandle.accessibilityLabel = "Resize \(attachment.displayName)"
+            resizeHandle.accessibilityHint = "Drag to resize the image proportionally"
+            doneButton.accessibilityLabel = "Finish editing \(attachment.displayName)"
+        }
+
+        func updateFrame(_ frame: CGRect, pageSize: CGSize) {
+            self.pageSize = pageSize
+            self.frame = frame
+            setNeedsLayout()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            outerBorderView.frame = bounds
+            innerBorderView.frame = bounds.insetBy(dx: 1, dy: 1)
+            moveHandle.frame = CGRect(x: 4, y: 4, width: 44, height: 44)
+            doneButton.frame = CGRect(x: bounds.maxX - 48, y: 4, width: 44, height: 44)
+            resizeHandle.frame = CGRect(
+                x: bounds.maxX - 48,
+                y: bounds.maxY - 48,
+                width: 44,
+                height: 44
+            )
+        }
+
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            if event?.allTouches?.contains(where: { $0.type == .pencil }) == true {
+                return nil
+            }
+
+            let interactiveControls = [moveHandle, resizeHandle, doneButton]
+            guard interactiveControls.contains(where: {
+                $0.frame.contains(point) && !$0.isHidden && $0.alpha > 0.01
+            }) else {
+                return nil
+            }
+
+            return super.hitTest(point, with: event)
+        }
+
+        private func configureView() {
+            backgroundColor = .clear
+            clipsToBounds = false
+
+            outerBorderView.isUserInteractionEnabled = false
+            outerBorderView.backgroundColor = .clear
+            outerBorderView.layer.borderWidth = 4
+            outerBorderView.layer.borderColor = UIColor.systemBackground.withAlphaComponent(0.92).cgColor
+            addSubview(outerBorderView)
+
+            innerBorderView.isUserInteractionEnabled = false
+            innerBorderView.backgroundColor = .clear
+            innerBorderView.layer.borderWidth = 2
+            innerBorderView.layer.borderColor = UIColor.systemBlue.cgColor
+            addSubview(innerBorderView)
+
+            configureHandle(
+                moveHandle,
+                systemImage: "arrow.up.and.down.and.arrow.left.and.right",
+                backgroundColor: .systemBlue
+            )
+            moveHandle.accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: "Move left") { [weak self] _ in
+                    self?.nudge(by: CGPoint(x: -8, y: 0)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Move right") { [weak self] _ in
+                    self?.nudge(by: CGPoint(x: 8, y: 0)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Move up") { [weak self] _ in
+                    self?.nudge(by: CGPoint(x: 0, y: -8)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Move down") { [weak self] _ in
+                    self?.nudge(by: CGPoint(x: 0, y: 8)) ?? false
+                }
+            ]
+            configureInteractionTracking(for: moveHandle)
+            addSubview(moveHandle)
+
+            configureHandle(
+                resizeHandle,
+                systemImage: "arrow.up.left.and.arrow.down.right",
+                backgroundColor: UIColor.black.withAlphaComponent(0.72)
+            )
+            resizeHandle.accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: "Increase size") { [weak self] _ in
+                    self?.resize(by: CGPoint(x: 16, y: 16)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Decrease size") { [weak self] _ in
+                    self?.resize(by: CGPoint(x: -16, y: -16)) ?? false
+                }
+            ]
+            configureInteractionTracking(for: resizeHandle)
+            addSubview(resizeHandle)
+
+            configureHandle(
+                doneButton,
+                systemImage: "checkmark",
+                backgroundColor: UIColor.systemGreen.withAlphaComponent(0.94)
+            )
+            doneButton.addTarget(self, action: #selector(finishEditing), for: .touchUpInside)
+            addSubview(doneButton)
+
+            let moveGesture = UIPanGestureRecognizer(target: self, action: #selector(handleMove(_:)))
+            moveGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            moveGesture.cancelsTouchesInView = false
+            moveGesture.delegate = self
+            moveHandle.addGestureRecognizer(moveGesture)
+
+            let resizeGesture = UIPanGestureRecognizer(target: self, action: #selector(handleResize(_:)))
+            resizeGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            resizeGesture.cancelsTouchesInView = false
+            resizeGesture.delegate = self
+            resizeHandle.addGestureRecognizer(resizeGesture)
+        }
+
+        private func configureHandle(
+            _ button: UIButton,
+            systemImage: String,
+            backgroundColor: UIColor
+        ) {
+            var configuration = UIButton.Configuration.filled()
+            configuration.image = UIImage(systemName: systemImage)
+            configuration.cornerStyle = .capsule
+            configuration.baseForegroundColor = .white
+            configuration.baseBackgroundColor = backgroundColor
+            configuration.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+            button.configuration = configuration
+            button.tintColor = .white
+            button.isAccessibilityElement = true
+        }
+
+        private func configureInteractionTracking(for button: UIButton) {
+            button.addTarget(self, action: #selector(beginHandleInteraction), for: .touchDown)
+            button.addTarget(
+                self,
+                action: #selector(endHandleInteraction),
+                for: [.touchUpInside, .touchUpOutside, .touchCancel]
+            )
+        }
+
+        @objc private func beginHandleInteraction() {
+            interactionChanged?(true)
+        }
+
+        @objc private func endHandleInteraction() {
+            interactionChanged?(false)
+        }
+
+        override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            interactionChanged?(true)
+            return true
+        }
+
+        @objc private func finishEditing() {
+            dismiss?()
+        }
+
+        @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
+            guard let attachment else { return }
+
+            switch recognizer.state {
+            case .began:
+                dragStart = attachment.normalizedFrame(for: pageSize)
+            case .changed:
+                guard let dragStart else { return }
+                apply(AttachmentEditingGeometry.movedFrame(
+                    from: dragStart,
+                    translation: recognizer.translation(in: superview),
+                    pageSize: pageSize
+                ))
+            case .ended:
+                commitChange(startingAt: dragStart)
+                dragStart = nil
+                interactionChanged?(false)
+            case .cancelled, .failed:
+                if let dragStart {
+                    apply(dragStart)
+                }
+                dragStart = nil
+                interactionChanged?(false)
+            default:
+                break
+            }
+        }
+
+        @objc private func handleResize(_ recognizer: UIPanGestureRecognizer) {
+            guard let attachment else { return }
+
+            switch recognizer.state {
+            case .began:
+                resizeStart = attachment.normalizedFrame(for: pageSize)
+            case .changed:
+                guard let resizeStart else { return }
+                apply(AttachmentEditingGeometry.resizedFrame(
+                    from: resizeStart,
+                    translation: recognizer.translation(in: superview),
+                    pageSize: pageSize
+                ))
+            case .ended:
+                commitChange(startingAt: resizeStart)
+                resizeStart = nil
+                interactionChanged?(false)
+            case .cancelled, .failed:
+                if let resizeStart {
+                    apply(resizeStart)
+                }
+                resizeStart = nil
+                interactionChanged?(false)
+            default:
+                break
+            }
+        }
+
+        private func nudge(by translation: CGPoint) -> Bool {
+            guard let attachment else { return false }
+            let startFrame = attachment.normalizedFrame(for: pageSize)
+            apply(AttachmentEditingGeometry.movedFrame(
+                from: startFrame,
+                translation: translation,
+                pageSize: pageSize
+            ))
+            commitChange(startingAt: startFrame)
+            return true
+        }
+
+        private func resize(by translation: CGPoint) -> Bool {
+            guard let attachment else { return false }
+            let startFrame = attachment.normalizedFrame(for: pageSize)
+            apply(AttachmentEditingGeometry.resizedFrame(
+                from: startFrame,
+                translation: translation,
+                pageSize: pageSize
+            ))
+            commitChange(startingAt: startFrame)
+            return true
+        }
+
+        private func apply(_ frame: CGRect) {
+            guard let attachment else { return }
+            attachment.x = Double(frame.minX)
+            attachment.y = Double(frame.minY)
+            attachment.width = Double(frame.width)
+            attachment.height = Double(frame.height)
+            self.frame = frame
+            frameChanged?(frame)
+        }
+
+        private func commitChange(startingAt startFrame: CGRect?) {
+            guard let attachment, let startFrame,
+                  attachment.normalizedFrame(for: pageSize) != startFrame else {
+                return
+            }
+
+            attachment.touch()
+            changeCommitted?()
+        }
+    }
+
     final class AttachmentImageContainerView: UIView {
         private final class ImageLoadToken {
             private let lock = NSLock()
@@ -2104,12 +2558,8 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private let imageView = UIImageView()
         private let pdfPageView = PDFPageTiledView()
-        private let resizeHandle = UIImageView(image: UIImage(systemName: "arrow.up.left.and.arrow.down.right"))
         private weak var attachment: Attachment?
         private var pageSize: CGSize = .zero
-        private var dragStart: CGRect?
-        private var resizeStart: CGRect?
-        private var changed: (() -> Void)?
         private var imageURL: URL?
         private var vectorPDFURL: URL?
         private var vectorPDFPageIndex: Int?
@@ -2152,7 +2602,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         ) {
             self.attachment = attachment
             self.pageSize = pageSize
-            self.changed = changed
 
             if let imageURL = try? storage.validatedURL(forRelativePath: attachment.storedFileName) {
                 self.imageURL = imageURL
@@ -2187,13 +2636,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             frame = attachment.normalizedFrame(for: pageSize)
-            // PDF/document page previews render as background images. They must never
-            // intercept Pencil or finger input intended for the canvas above them.
-            isUserInteractionEnabled = !attachment.isLocked && !attachment.rendersBehindDrawing
-            resizeHandle.isHidden = attachment.isLocked
-            layer.borderWidth = attachment.isLocked ? 0 : 1.5
-            layer.borderColor = attachment.isLocked ? nil : UIColor.systemBlue.withAlphaComponent(0.65).cgColor
-            backgroundColor = attachment.isLocked ? .clear : UIColor.secondarySystemBackground.withAlphaComponent(0.72)
+            // Image pixels are document content only. Selection chrome and editing
+            // gestures live in a separate layer above PencilKit.
+            isUserInteractionEnabled = false
+            layer.borderWidth = 0
+            layer.borderColor = nil
+            backgroundColor = .clear
             setNeedsLayout()
         }
 
@@ -2201,37 +2649,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             super.layoutSubviews()
             imageView.frame = bounds
             pdfPageView.frame = bounds
-            resizeHandle.frame = CGRect(
-                x: bounds.maxX - 34,
-                y: bounds.maxY - 34,
-                width: 28,
-                height: 28
-            )
         }
 
         private func configureView() {
             clipsToBounds = true
-            layer.cornerRadius = 6
             imageView.contentMode = .scaleAspectFit
             addSubview(imageView)
 
             pdfPageView.isHidden = true
             addSubview(pdfPageView)
-
-            resizeHandle.tintColor = .white
-            resizeHandle.backgroundColor = UIColor.black.withAlphaComponent(0.62)
-            resizeHandle.layer.cornerRadius = 14
-            resizeHandle.contentMode = .center
-            resizeHandle.isUserInteractionEnabled = true
-            addSubview(resizeHandle)
-
-            let moveGesture = UIPanGestureRecognizer(target: self, action: #selector(handleMove(_:)))
-            moveGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-            addGestureRecognizer(moveGesture)
-
-            let resizeGesture = UIPanGestureRecognizer(target: self, action: #selector(handleResize(_:)))
-            resizeGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-            resizeHandle.addGestureRecognizer(resizeGesture)
         }
 
         func updateRasterScale(_ scale: CGFloat, reloadImageVariant: Bool = true) {
@@ -2239,8 +2665,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             layer.contentsScale = scale
             imageView.contentScaleFactor = scale
             imageView.layer.contentsScale = scale
-            resizeHandle.contentScaleFactor = scale
-            resizeHandle.layer.contentsScale = scale
             pdfPageView.updateRenderScale(scale)
             currentRenderScale = scale
 
@@ -2387,51 +2811,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             return "\(modified)|\(size)"
         }
 
-        @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
-            guard let attachment, let superview else { return }
-
-            switch recognizer.state {
-            case .began:
-                dragStart = attachment.frame
-            case .changed:
-                guard let dragStart else { return }
-                let translation = recognizer.translation(in: superview)
-                let maxX = max(pageSize.width - dragStart.width, 0)
-                let maxY = max(pageSize.height - dragStart.height, 0)
-                attachment.x = min(max(dragStart.origin.x + translation.x, 0), maxX)
-                attachment.y = min(max(dragStart.origin.y + translation.y, 0), maxY)
-                frame = attachment.frame
-            case .ended, .cancelled, .failed:
-                attachment.touch()
-                changed?()
-                dragStart = nil
-            default:
-                break
-            }
-        }
-
-        @objc private func handleResize(_ recognizer: UIPanGestureRecognizer) {
-            guard let attachment, let superview else { return }
-
-            switch recognizer.state {
-            case .began:
-                resizeStart = attachment.frame
-            case .changed:
-                guard let resizeStart else { return }
-                let translation = recognizer.translation(in: superview)
-                let width = max(120, resizeStart.width + translation.x)
-                let height = max(90, resizeStart.height + translation.y)
-                attachment.width = min(width, max(pageSize.width - resizeStart.minX, 120))
-                attachment.height = min(height, max(pageSize.height - resizeStart.minY, 90))
-                frame = attachment.frame
-            case .ended, .cancelled, .failed:
-                attachment.touch()
-                changed?()
-                resizeStart = nil
-            default:
-                break
-            }
-        }
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {

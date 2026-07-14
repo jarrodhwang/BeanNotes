@@ -34,6 +34,160 @@ enum AttachmentKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum AttachmentEditingGeometry {
+    static let minimumWidth: CGFloat = 120
+    static let minimumHeight: CGFloat = 90
+
+    private static let maximumInitialWidth: CGFloat = 420
+    private static let minimumInitialLongEdge: CGFloat = 120
+    private static let placementMargin: CGFloat = 24
+    private static let placementStep: CGFloat = 24
+    private static let placementCandidateCount = 8
+
+    static func initialImageFrame(
+        sourceSize: CGSize,
+        pageSize: CGSize,
+        occupiedFrames: [CGRect]
+    ) -> CGRect {
+        let pageSize = normalizedPageSize(pageSize)
+        let sourceSize = normalizedSourceSize(sourceSize)
+        let availableSize = CGSize(
+            width: max(pageSize.width - placementMargin * 2, 1),
+            height: max(pageSize.height - placementMargin * 2, 1)
+        )
+
+        let fittingScale = min(
+            1,
+            maximumInitialWidth / sourceSize.width,
+            availableSize.width / sourceSize.width,
+            availableSize.height / sourceSize.height
+        )
+        var fittedSize = CGSize(
+            width: sourceSize.width * fittingScale,
+            height: sourceSize.height * fittingScale
+        )
+
+        let fittedLongEdge = max(fittedSize.width, fittedSize.height)
+        if fittedLongEdge < minimumInitialLongEdge {
+            let enlargement = min(
+                minimumInitialLongEdge / max(fittedLongEdge, 1),
+                availableSize.width / max(fittedSize.width, 1),
+                availableSize.height / max(fittedSize.height, 1)
+            )
+            fittedSize.width *= enlargement
+            fittedSize.height *= enlargement
+        }
+
+        let minimumX = min(placementMargin, max(pageSize.width - fittedSize.width, 0))
+        let minimumY = min(placementMargin, max(pageSize.height - fittedSize.height, 0))
+        let maximumX = max(pageSize.width - placementMargin - fittedSize.width, minimumX)
+        let maximumY = max(pageSize.height - placementMargin - fittedSize.height, minimumY)
+        let baseX = min(max(CGFloat(Attachment.defaultX), minimumX), maximumX)
+        let baseY = min(max(CGFloat(Attachment.defaultY), minimumY), maximumY)
+        let startingCandidate = occupiedFrames.count % placementCandidateCount
+
+        for candidateOffset in 0..<placementCandidateCount {
+            let candidateIndex = (startingCandidate + candidateOffset) % placementCandidateCount
+            let origin = CGPoint(
+                x: min(baseX + CGFloat(candidateIndex) * placementStep, maximumX),
+                y: min(baseY + CGFloat(candidateIndex) * placementStep, maximumY)
+            )
+            let candidate = CGRect(origin: origin, size: fittedSize)
+            if !occupiedFrames.contains(where: { $0.intersects(candidate) }) {
+                return candidate
+            }
+        }
+
+        let fallbackIndex = occupiedFrames.count % placementCandidateCount
+        return CGRect(
+            x: min(baseX + CGFloat(fallbackIndex) * placementStep, maximumX),
+            y: min(baseY + CGFloat(fallbackIndex) * placementStep, maximumY),
+            width: fittedSize.width,
+            height: fittedSize.height
+        )
+    }
+
+    static func movedFrame(
+        from startFrame: CGRect,
+        translation: CGPoint,
+        pageSize: CGSize
+    ) -> CGRect {
+        let startFrame = normalizedFrame(startFrame, pageSize: pageSize)
+        let pageSize = normalizedPageSize(pageSize)
+        let translationX = translation.x.isFinite ? translation.x : 0
+        let translationY = translation.y.isFinite ? translation.y : 0
+        let maximumX = max(pageSize.width - startFrame.width, 0)
+        let maximumY = max(pageSize.height - startFrame.height, 0)
+
+        return CGRect(
+            x: min(max(startFrame.minX + translationX, 0), maximumX),
+            y: min(max(startFrame.minY + translationY, 0), maximumY),
+            width: startFrame.width,
+            height: startFrame.height
+        )
+    }
+
+    static func resizedFrame(
+        from startFrame: CGRect,
+        translation: CGPoint,
+        pageSize: CGSize
+    ) -> CGRect {
+        let startFrame = normalizedFrame(startFrame, pageSize: pageSize)
+        let pageSize = normalizedPageSize(pageSize)
+        let translationX = translation.x.isFinite ? translation.x : 0
+        let translationY = translation.y.isFinite ? translation.y : 0
+        let widthScale = (startFrame.width + translationX) / max(startFrame.width, 1)
+        let heightScale = (startFrame.height + translationY) / max(startFrame.height, 1)
+        let proposedScale = abs(widthScale - 1) >= abs(heightScale - 1) ? widthScale : heightScale
+        let maximumScale = min(
+            max(pageSize.width - startFrame.minX, 1) / max(startFrame.width, 1),
+            max(pageSize.height - startFrame.minY, 1) / max(startFrame.height, 1)
+        )
+        let requestedMinimumScale = max(
+            minimumWidth / max(startFrame.width, 1),
+            minimumHeight / max(startFrame.height, 1)
+        )
+        let minimumScale = min(requestedMinimumScale, maximumScale)
+        let resolvedScale = min(max(proposedScale, minimumScale), maximumScale)
+
+        return CGRect(
+            origin: startFrame.origin,
+            size: CGSize(
+                width: startFrame.width * resolvedScale,
+                height: startFrame.height * resolvedScale
+            )
+        )
+    }
+
+    private static func normalizedFrame(_ frame: CGRect, pageSize: CGSize) -> CGRect {
+        Attachment.normalizedFrame(
+            x: Double(frame.origin.x),
+            y: Double(frame.origin.y),
+            width: Double(frame.width),
+            height: Double(frame.height),
+            pageSize: normalizedPageSize(pageSize)
+        )
+    }
+
+    private static func normalizedPageSize(_ size: CGSize) -> CGSize {
+        CGSize(
+            width: size.width.isFinite && size.width > 0
+                ? size.width
+                : CGFloat(NotePage.defaultPageWidth),
+            height: size.height.isFinite && size.height > 0
+                ? size.height
+                : CGFloat(NotePage.defaultPageHeight)
+        )
+    }
+
+    private static func normalizedSourceSize(_ size: CGSize) -> CGSize {
+        CGSize(
+            width: size.width.isFinite && size.width > 0 ? size.width : 1,
+            height: size.height.isFinite && size.height > 0 ? size.height : 1
+        )
+    }
+}
+
 @Model
 final class Attachment {
     static let defaultX: Double = 80

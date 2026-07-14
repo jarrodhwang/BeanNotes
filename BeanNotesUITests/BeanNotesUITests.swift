@@ -81,6 +81,24 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
+    func testImagePasteControlsAreAvailableWithoutReadingClipboard() throws {
+        app.launch()
+
+        let createNoteButton = app.buttons["Create note"]
+        XCTAssertTrue(createNoteButton.waitForExistence(timeout: 8))
+        createNoteButton.tap()
+
+        XCTAssertTrue(app.buttons["Paste image"].waitForExistence(timeout: 8))
+
+        let addAttachmentButton = app.buttons["Add attachment"]
+        XCTAssertTrue(addAttachmentButton.waitForExistence(timeout: 8))
+        addAttachmentButton.tap()
+
+        XCTAssertTrue(app.navigationBars["Add Attachment"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Paste Image"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor
     func testTitleRemainsScreenSpaceWhilePageZooms() throws {
         app.launch()
 

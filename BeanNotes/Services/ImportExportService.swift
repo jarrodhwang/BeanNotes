@@ -348,15 +348,16 @@ struct ImportExportService {
         try Task.checkCancellation()
         let kind = attachmentKind(for: contentType, fileExtension: sourceURL.pathExtension)
 
-        var width: Double = 320
-        var height: Double = 220
+        var frame = CGRect(
+            x: Attachment.defaultX,
+            y: Attachment.defaultY,
+            width: Attachment.defaultWidth,
+            height: Attachment.defaultHeight
+        )
 
         if kind == .image,
            let imageSize = Self.imageSize(at: actualURL(for: stored, staging: staging)) {
-            let maxWidth: Double = 420
-            let ratio = imageSize.height / max(imageSize.width, 1)
-            width = min(Double(imageSize.width), maxWidth)
-            height = max(120, width * Double(ratio))
+            frame = initialImageAttachmentFrame(sourceSize: imageSize, on: page)
         }
 
         let attachment = Attachment(
@@ -366,8 +367,11 @@ struct ImportExportService {
             storedFileName: stored.relativePath,
             contentTypeIdentifier: stored.contentTypeIdentifier,
             fileExtension: sourceURL.pathExtension,
-            width: width,
-            height: height
+            x: Double(frame.minX),
+            y: Double(frame.minY),
+            width: Double(frame.width),
+            height: Double(frame.height),
+            rendersBehindDrawing: kind == .image ? true : nil
         )
 
         page.attachments.append(attachment)
@@ -394,9 +398,7 @@ struct ImportExportService {
             rootURL: storage.rootURL,
             staging: staging
         )
-        let width = min(Double(image.size.width), 420)
-        let ratio = image.size.height / max(image.size.width, 1)
-        let height = max(120, width * Double(ratio))
+        let frame = initialImageAttachmentFrame(sourceSize: image.size, on: page)
 
         let attachment = Attachment(
             kind: .image,
@@ -405,8 +407,11 @@ struct ImportExportService {
             storedFileName: stored.relativePath,
             contentTypeIdentifier: UTType.png.identifier,
             fileExtension: "png",
-            width: width,
-            height: height
+            x: Double(frame.minX),
+            y: Double(frame.minY),
+            width: Double(frame.width),
+            height: Double(frame.height),
+            rendersBehindDrawing: true
         )
 
         page.attachments.append(attachment)
@@ -428,9 +433,7 @@ struct ImportExportService {
             staging: staging
         )
         try Task.checkCancellation()
-        let width = min(Double(storedImage.sourceSize.width), 420)
-        let ratio = storedImage.sourceSize.height / max(storedImage.sourceSize.width, 1)
-        let height = max(120, width * Double(ratio))
+        let frame = initialImageAttachmentFrame(sourceSize: storedImage.sourceSize, on: page)
 
         let attachment = Attachment(
             kind: .image,
@@ -439,13 +442,24 @@ struct ImportExportService {
             storedFileName: storedImage.storedImage.relativePath,
             contentTypeIdentifier: storedImage.storedImage.contentTypeIdentifier,
             fileExtension: URL(fileURLWithPath: storedImage.storedImage.fileName).pathExtension,
-            width: width,
-            height: height
+            x: Double(frame.minX),
+            y: Double(frame.minY),
+            width: Double(frame.width),
+            height: Double(frame.height),
+            rendersBehindDrawing: true
         )
 
         page.attachments.append(attachment)
         page.touch()
         return attachment
+    }
+
+    private func initialImageAttachmentFrame(sourceSize: CGSize, on page: NotePage) -> CGRect {
+        AttachmentEditingGeometry.initialImageFrame(
+            sourceSize: sourceSize,
+            pageSize: page.pageSize,
+            occupiedFrames: page.imageAttachments.map { $0.normalizedFrame(for: page.pageSize) }
+        )
     }
 
     func exportPage(_ page: NotePage, format: ExportFormat) async throws -> URL {
@@ -1467,9 +1481,8 @@ struct ImportExportService {
             let sanitizedName = preferredName.sanitizedFileName
             let preferredURL = URL(fileURLWithPath: sanitizedName)
             let contentType = imageContentType(for: data, fallbackExtension: preferredURL.pathExtension)
-            let fileExtension = preferredURL.pathExtension.isEmpty
-                ? (contentType.preferredFilenameExtension ?? "png")
-                : preferredURL.pathExtension
+            let fileExtension = contentType.preferredFilenameExtension
+                ?? (preferredURL.pathExtension.isEmpty ? "png" : preferredURL.pathExtension)
             let baseName = preferredURL.deletingPathExtension().lastPathComponent
             let storedImage = try saveImportData(
                 data,
@@ -1683,14 +1696,12 @@ struct ImportExportService {
 
         guard
             let source = CGImageSourceCreateWithURL(url as CFURL, options),
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, options) as? [CFString: Any],
-            let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-            let height = properties[kCGImagePropertyPixelHeight] as? NSNumber
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, options) as? [CFString: Any]
         else {
             return nil
         }
 
-        return CGSize(width: width.doubleValue, height: height.doubleValue)
+        return displayOrientedImageSize(from: properties)
     }
 
     nonisolated private static func imageSize(in data: Data) -> CGSize? {
@@ -1700,14 +1711,27 @@ struct ImportExportService {
 
         guard
             let source = CGImageSourceCreateWithData(data as CFData, options),
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, options) as? [CFString: Any],
-            let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-            let height = properties[kCGImagePropertyPixelHeight] as? NSNumber
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, options) as? [CFString: Any]
         else {
             return nil
         }
 
-        return CGSize(width: width.doubleValue, height: height.doubleValue)
+        return displayOrientedImageSize(from: properties)
+    }
+
+    nonisolated private static func displayOrientedImageSize(
+        from properties: [CFString: Any]
+    ) -> CGSize? {
+        guard let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
+            return nil
+        }
+
+        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        let swapsDimensions = [5, 6, 7, 8].contains(orientation)
+        return swapsDimensions
+            ? CGSize(width: height.doubleValue, height: width.doubleValue)
+            : CGSize(width: width.doubleValue, height: height.doubleValue)
     }
 
     nonisolated private static func imageContentType(for data: Data, fallbackExtension: String) -> UTType {

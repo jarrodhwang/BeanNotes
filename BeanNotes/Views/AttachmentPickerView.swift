@@ -31,12 +31,10 @@ struct AttachmentPickerView: View {
                         Label("Files", systemImage: "folder")
                     }
 
-                    Button {
-                        pasteImage()
-                    } label: {
-                        Label("Paste Image", systemImage: "doc.on.clipboard")
+                    PasteButton(supportedContentTypes: ImagePasteService.supportedContentTypes) { itemProviders in
+                        pasteImage(from: itemProviders)
                     }
-                    .disabled(!UIPasteboard.general.hasImages)
+                    .accessibilityLabel("Paste Image")
                 }
 
                 if let errorMessage {
@@ -95,25 +93,15 @@ struct AttachmentPickerView: View {
         }
     }
 
-    private func pasteImage() {
-        guard let image = UIPasteboard.general.image else { return }
-
-        Task {
+    private func pasteImage(from itemProviders: [NSItemProvider]) {
+        errorMessage = nil
+        Task { @MainActor in
             do {
-                guard let data = await Task.detached(priority: .userInitiated, operation: {
-                    image.pngData()
-                }).value else {
-                    throw ImportExportError.unsupportedImageData
-                }
-
-                await MainActor.run {
-                    importImageData(data, "Pasted Image.png")
-                    dismiss()
-                }
+                let pastedImage = try await ImagePasteService().loadFirstImage(from: itemProviders)
+                importImageData(pastedImage.data, pastedImage.originalFileName)
+                dismiss()
             } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                }
+                errorMessage = error.localizedDescription
             }
         }
     }
