@@ -370,6 +370,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastZoomEndTime: CFTimeInterval = 0
         private var lastObservedContentOffsetY: CGFloat = 0
         private var isScrollingTowardLaterPages = true
+        private var isUserScrolling = false
         private let pageGap: CGFloat = 28
         private let pageMargin: CGFloat = 52
         private let autoAddFooterSize: CGFloat = 56
@@ -785,6 +786,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             publishViewport()
         }
 
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            isUserScrolling = true
+        }
+
         func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
             settledZoomWorkItem?.cancel()
             settledZoomWorkItem = nil
@@ -818,11 +823,13 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             guard !decelerate else { return }
+            isUserScrolling = false
             updateNativeDrawingViewports(force: true)
             publishViewport(force: true)
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            isUserScrolling = false
             updateNativeDrawingViewports(force: true)
             publishViewport(force: true)
         }
@@ -1452,6 +1459,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func triggerBottomIfNeeded() {
             guard !defersViewStatePublishing,
+                  isUserScrolling,
                   pageFlowMode.autoAddsPages,
                   bottomTriggerArmed,
                   documentSize.height > 0 else {

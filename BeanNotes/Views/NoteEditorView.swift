@@ -1201,7 +1201,7 @@ struct NoteEditorView: View {
     @discardableResult
     private func addPage(after page: NotePage, shouldSelect: Bool = true) -> NotePage? {
         let previousOrders = pageOrders(in: note)
-        let newPage = NotePage(pageOrder: page.pageOrder + 1, background: page.background)
+        let newPage = page.makeFollowingPage()
         note.pages.append(newPage)
         applyPageOrder(inserting: newPage, after: page)
         note.touch()

@@ -109,6 +109,15 @@ final class NotePage {
         note?.markSearchIndexStale()
     }
 
+    func makeFollowingPage() -> NotePage {
+        NotePage(
+            pageOrder: pageOrder + 1,
+            background: background,
+            width: normalizedWidth,
+            height: normalizedHeight
+        )
+    }
+
     static func normalizedPageDimension(_ value: Double, fallback: Double) -> Double {
         guard value.isFinite, value >= minimumPageDimension else { return fallback }
         return min(value, maximumPageDimension)

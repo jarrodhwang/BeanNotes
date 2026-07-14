@@ -248,6 +248,24 @@ struct BeanNotesTests {
         #expect(PaperSize.b5.dimensions == CGSize(width: 499, height: 709))
     }
 
+    @Test func followingPageInheritsPaperAndBackground() {
+        let background = NoteBackground(style: .grid, colorHex: "#F5E8C8")
+        let page = NotePage(
+            pageOrder: 3,
+            background: background,
+            width: PaperSize.a5.dimensions.width,
+            height: PaperSize.a5.dimensions.height
+        )
+
+        let followingPage = page.makeFollowingPage()
+
+        #expect(followingPage.pageOrder == 4)
+        #expect(followingPage.pageSize == page.pageSize)
+        #expect(followingPage.background == background)
+        #expect(followingPage.id != page.id)
+        #expect(followingPage.drawingFileName != page.drawingFileName)
+    }
+
     @Test func attachmentFrameNormalizesCorruptStoredGeometry() {
         let pageSize = CGSize(width: 612, height: 792)
         let corruptFrame = Attachment.normalizedFrame(
@@ -3231,6 +3249,47 @@ struct BeanNotesTests {
         container.layoutIfNeeded()
 
         #expect(addPageRequestCount == 0)
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+    }
+
+    @Test @MainActor func initialInfiniteCanvasLayoutDoesNotAddAPageUntilUserScrolls() {
+        let drawingStorage = DrawingStorageService()
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844)
+        )
+        var addPageRequestCount = 0
+        container.reachedBottom = {
+            addPageRequestCount += 1
+        }
+        coordinator.containerView = container
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .infinite,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        #expect(addPageRequestCount == 0)
+
+        container.scrollViewWillBeginDragging(container.scrollView)
+        container.scrollView.setContentOffset(
+            CGPoint(
+                x: container.scrollView.contentOffset.x,
+                y: container.scrollView.contentOffset.y + 1
+            ),
+            animated: false
+        )
+
+        #expect(addPageRequestCount == 1)
         DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
     }
 
