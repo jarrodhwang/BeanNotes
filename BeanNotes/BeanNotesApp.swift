@@ -39,7 +39,7 @@ enum BeanNotesModelContainer {
             return try ModelContainer(for: schema, configurations: [configuration(for: schema)])
         } catch {
             NSLog("BeanNotes SwiftData store failed to open: \(error)")
-            archivePersistentStore()
+            archivePersistentStore(at: persistentStoreURL())
 
             do {
                 return try ModelContainer(for: schema, configurations: [configuration(for: schema)])
@@ -70,26 +70,36 @@ enum BeanNotesModelContainer {
         return directoryURL.appendingPathComponent("BeanNotes.store")
     }
 
-    private static func archivePersistentStore() {
-        let fileManager = FileManager.default
-        let storeURL = persistentStoreURL()
-        let archiveDirectory = storeURL
+    @discardableResult
+    static func archivePersistentStore(
+        at storeURL: URL,
+        fileManager: FileManager = .default
+    ) -> URL? {
+        let recoveredStoresURL = storeURL
             .deletingLastPathComponent()
             .appendingPathComponent("RecoveredStores", isDirectory: true)
-            .appendingPathComponent(Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)), isDirectory: true)
+        let archiveDirectory = recoveredStoresURL
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
 
         do {
             try fileManager.createDirectory(at: archiveDirectory, withIntermediateDirectories: true)
+        } catch {
+            NSLog("BeanNotes could not create failed SwiftData store archive: \(error)")
+            return nil
+        }
 
-            for url in persistentStoreSidecarURLs(for: storeURL) where fileManager.fileExists(atPath: url.path) {
+        for url in persistentStoreSidecarURLs(for: storeURL) where fileManager.fileExists(atPath: url.path) {
+            do {
                 try fileManager.moveItem(
                     at: url,
                     to: archiveDirectory.appendingPathComponent(url.lastPathComponent)
                 )
+            } catch {
+                NSLog("BeanNotes could not archive failed SwiftData store sidecar \(url.lastPathComponent): \(error)")
             }
-        } catch {
-            NSLog("BeanNotes could not archive failed SwiftData store: \(error)")
         }
+
+        return archiveDirectory
     }
 
     private static func inMemoryFallbackContainer(for schema: Schema) -> ModelContainer {

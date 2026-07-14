@@ -47,32 +47,47 @@ struct NoteSearchIndexService {
 
     @MainActor
     func indexIfNeeded(note: NoteDocument, modelContext: ModelContext) async throws {
+        try Task.checkCancellation()
         guard needsIndex(note) else { return }
         try await index(note: note, modelContext: modelContext)
     }
 
     @MainActor
     func index(note: NoteDocument, modelContext: ModelContext) async throws {
+        try Task.checkCancellation()
         let now = Date()
+        // Keep the SwiftData model unchanged until every requested page has been recognized.
+        var indexedPages: [(page: NotePage, searchableText: String)] = []
 
         for page in note.sortedPages {
+            try Task.checkCancellation()
             if page.searchIndexUpdatedAt == nil || page.searchIndexUpdatedAt.map({ $0 < page.updatedAt }) == true {
                 let snapshot = NotePageRenderSnapshot(page: page)
                 let recognizedText = try await Self.recognizePageText(
                     snapshot: snapshot,
                     rootURL: storage.rootURL
                 )
+                try Task.checkCancellation()
 
-                page.searchableText = NoteSearchText.join([
-                    recognizedText,
-                    Self.attachmentMetadata(for: page)
-                ])
-                page.searchIndexUpdatedAt = now
+                indexedPages.append(
+                    (
+                        page: page,
+                        searchableText: NoteSearchText.join([
+                            recognizedText,
+                            Self.attachmentMetadata(for: page)
+                        ])
+                    )
+                )
             }
 
             await Task.yield()
         }
 
+        try Task.checkCancellation()
+        for indexedPage in indexedPages {
+            indexedPage.page.searchableText = indexedPage.searchableText
+            indexedPage.page.searchIndexUpdatedAt = now
+        }
         note.rebuildSearchableText()
         note.searchIndexUpdatedAt = now
         try modelContext.save()
@@ -91,20 +106,31 @@ struct NoteSearchIndexService {
         snapshot: NotePageRenderSnapshot,
         rootURL: URL
     ) async throws -> String {
+        try Task.checkCancellation()
         let scale = recognitionScale(for: snapshot.pageSize)
-
-        return try await Task.detached(priority: .utility) {
+        let worker = Task.detached(priority: .utility) { () throws -> String in
+            try Task.checkCancellation()
             let drawing = ThumbnailService.loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
+            try Task.checkCancellation()
             let image = ThumbnailService.renderPageImage(
                 snapshot: snapshot,
                 drawing: drawing,
                 rootURL: rootURL,
                 scale: scale
             )
+            try Task.checkCancellation()
 
             guard let cgImage = image.cgImage else { return "" }
-            return try recognizeText(in: cgImage)
-        }.value
+            let recognizedText = try recognizeText(in: cgImage)
+            try Task.checkCancellation()
+            return recognizedText
+        }
+
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     nonisolated private static func recognitionScale(for pageSize: CGSize) -> CGFloat {

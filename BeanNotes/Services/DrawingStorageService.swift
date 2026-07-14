@@ -26,7 +26,7 @@ struct DrawingStorageService {
     }()
     private static let prefetchQueue = DispatchQueue(
         label: "com.snowfox.BeanNotes.drawing-prefetch",
-        qos: .userInitiated
+        qos: .utility
     )
     private static let prefetchLock = NSLock()
     private static var prefetchedOrInFlightKeys: Set<String> = []
@@ -102,28 +102,30 @@ struct DrawingStorageService {
         guard inserted else { return }
 
         prefetchQueue.async {
-            let url = rootURL
-                .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
-                .appendingPathComponent(fileName)
-            let drawing: PKDrawing
-            let approximateBytes: Int
+            autoreleasepool {
+                let url = rootURL
+                    .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
+                    .appendingPathComponent(fileName)
+                let drawing: PKDrawing
+                let approximateBytes: Int
 
-            if let data = try? Data(contentsOf: url),
-               let storedDrawing = try? PKDrawing(data: data) {
-                drawing = storedDrawing
-                approximateBytes = data.count
-            } else {
-                drawing = PKDrawing()
-                approximateBytes = 1
-            }
+                if let data = try? Data(contentsOf: url),
+                   let storedDrawing = try? PKDrawing(data: data) {
+                    drawing = storedDrawing
+                    approximateBytes = data.count
+                } else {
+                    drawing = PKDrawing()
+                    approximateBytes = 1
+                }
 
-            prefetchLock.lock()
-            let shouldCache = generation == prefetchGeneration
-            prefetchedOrInFlightKeys.remove(stringKey)
-            prefetchLock.unlock()
+                prefetchLock.lock()
+                let shouldCache = generation == prefetchGeneration
+                prefetchedOrInFlightKeys.remove(stringKey)
+                prefetchLock.unlock()
 
-            if shouldCache {
-                cache(drawing, fileName: fileName, rootURL: rootURL, approximateBytes: approximateBytes)
+                if shouldCache {
+                    cache(drawing, fileName: fileName, rootURL: rootURL, approximateBytes: approximateBytes)
+                }
             }
         }
     }

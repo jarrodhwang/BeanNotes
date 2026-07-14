@@ -296,11 +296,6 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class CanvasContainerView: UIView, UIScrollViewDelegate {
-        private struct ZoomAnchor {
-            var contentPoint: CGPoint
-            var viewportPoint: CGPoint
-        }
-
         let scrollView = UIScrollView()
         let contentView = UIView()
         let autoAddFooterButton = UIButton(type: .system)
@@ -475,7 +470,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             updateZoomScalesIfNeeded(force: qualityChanged || selectionChanged)
-            materializePagesNearViewport(forceSelectedPage: true)
+            materializePagesNearViewport()
 
             if inputModeChanged {
                 applyInputModeToMaterializedPages()
@@ -492,7 +487,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 y: scaledTopY - scrollView.adjustedContentInset.top + 12
             )
             scrollView.setContentOffset(clampedContentOffset(target), animated: animated)
-            materializePagesNearViewport(forceSelectedPage: true)
+            materializePagesNearViewport()
         }
 
         func fitSelectedPageToScreen(animated: Bool) {
@@ -598,7 +593,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             lastZoomEndTime = CACurrentMediaTime()
             centerDocument()
             updateRasterScale(force: true)
-            materializePagesNearViewport(forceSelectedPage: true, updatesRenderScale: false)
+            materializePagesNearViewport(updatesRenderScale: false)
             updateNativeDrawingViewports(force: true)
             updateVisiblePage()
             publishZoomScale(force: true)
@@ -644,7 +639,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             if !isPinchZooming && !isProgrammaticZooming {
                 centerDocument()
             }
-            materializePagesNearViewport(forceSelectedPage: true)
+            materializePagesNearViewport()
             if viewportSizeChanged {
                 updateNativeDrawingViewports(force: true)
             } else {
@@ -679,8 +674,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             settledZoomWorkItem = nil
             isPinchZooming = true
         }
-
-        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {}
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             // UIScrollView already preserves the pinch anchor. Avoid page-set scans and
@@ -923,34 +916,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             scrollView.contentInset = inset
         }
 
-        private func zoomAnchor() -> ZoomAnchor? {
-            guard isPinchZooming,
-                  let pinchGesture = scrollView.pinchGestureRecognizer,
-                  pinchGesture.numberOfTouches >= 2 else {
-                return nil
-            }
-
-            let viewportPoint = pinchGesture.location(in: scrollView)
-            let scale = max(scrollView.zoomScale, 0.01)
-            let contentPoint = CGPoint(
-                x: (scrollView.contentOffset.x + viewportPoint.x) / scale,
-                y: (scrollView.contentOffset.y + viewportPoint.y) / scale
-            )
-
-            return ZoomAnchor(contentPoint: contentPoint, viewportPoint: viewportPoint)
-        }
-
-        private func restoreZoomAnchor(_ anchor: ZoomAnchor?) {
-            guard let anchor else { return }
-
-            let scale = max(scrollView.zoomScale, 0.01)
-            let targetOffset = CGPoint(
-                x: anchor.contentPoint.x * scale - anchor.viewportPoint.x,
-                y: anchor.contentPoint.y * scale - anchor.viewportPoint.y
-            )
-            scrollView.setContentOffset(clampedContentOffset(targetOffset), animated: false)
-        }
-
         private func updateRasterScale(force: Bool = false, reloadImageVariants: Bool = true) {
             // Do not rebuild PencilKit's backing layers in the middle of a native zoom.
             // SwiftUI republishes the zoom value for the controls, which otherwise makes
@@ -983,10 +948,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        private func materializePagesNearViewport(
-            forceSelectedPage: Bool = false,
-            updatesRenderScale: Bool = true
-        ) {
+        private func materializePagesNearViewport(updatesRenderScale: Bool = true) {
             guard !orderedPageIDs.isEmpty, let drawingStorage, let coordinator else { return }
 
             let visibleRect = visibleContentRect()
@@ -1423,10 +1385,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var activeDrawingViewportRect: CGRect = .null
         private var nativeZoomScale: CGFloat = 1
         private var pendingNativeViewport: NativeViewportRequest?
-
-        var preparedDrawingScale: CGFloat {
-            nativeZoomScale * (window?.screen.scale ?? UIScreen.main.scale)
-        }
 
         var currentNativeDrawingZoomScale: CGFloat {
             nativeZoomScale
@@ -2014,7 +1972,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private static let imageDecodeQueue = DispatchQueue(
             label: "com.snowfox.BeanNotes.attachment-image-decode",
-            qos: .userInitiated
+            qos: .utility
         )
 
         private let imageView = UIImageView()
@@ -2176,6 +2134,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 loadImageIfNeeded(from: imageURL, attachment: attachment)
             } else {
                 releaseRasterImage()
+                pdfPageView.releaseDocument()
             }
         }
 
@@ -2734,19 +2693,19 @@ struct DrawingCanvasView: UIViewRepresentable {
             let key = ObjectIdentifier(canvasView)
             guard let page = canvasPages[key] else { return }
 
-            canvasPageViews[key]?.value?.drawingDidChange()
-
-            let wasAlreadyDirty = dirtyPageIDs.contains(page.id)
+            let didBecomeDirty = dirtyPageIDs.insert(page.id).inserted
+            let wasAlreadyDirty = !didBecomeDirty
                 || pendingSaves[page.id] != nil
                 || hasInFlightSave(for: page.id)
 
-            dirtyPageIDs.insert(page.id)
             if activeToolCanvasIDs.contains(key) {
                 if !wasAlreadyDirty {
                     deferredDrawingChangeNotifications.insert(page.id)
                 }
                 return
             }
+
+            canvasPageViews[key]?.value?.drawingDidChange()
 
             if !wasAlreadyDirty {
                 notifyDrawingChanged(pageID: page.id)

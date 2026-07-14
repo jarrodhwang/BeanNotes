@@ -42,6 +42,7 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
     var attachmentCount: Int
     var folders: [FolderSnapshot]
 
+    @MainActor
     init(folders: [NotebookFolder], createdAt: Date = Date()) {
         let folderSnapshots = folders
             .sorted { lhs, rhs in
@@ -202,14 +203,19 @@ struct LibraryBackupService {
         let manifest = LibraryBackupManifest(folders: folders)
         let rootURL = storage.rootURL
         let preferredFileName = Self.backupFileName(createdAt: manifest.createdAt)
-
-        return try await Task.detached(priority: .utility) {
+        let worker = Task.detached(priority: .utility) {
             try await LibraryBackupArchiveWorker(
                 rootURL: rootURL,
                 preferredFileName: preferredFileName
             )
             .createArchive(manifest: manifest, progress: progress)
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     private static func backupFileName(createdAt: Date) -> String {
@@ -244,6 +250,7 @@ private struct LibraryBackupArchiveWorker: Sendable {
         await progress?(0.08, "Collecting library files...")
 
         let fileEntries = try collectStorageFiles()
+        try Task.checkCancellation()
         let totalEntries = max(fileEntries.count + 1, 1)
         let temporaryDirectoryURL = fileManager.temporaryDirectory
             .appendingPathComponent("BeanNotesBackups", isDirectory: true)
@@ -273,6 +280,7 @@ private struct LibraryBackupArchiveWorker: Sendable {
         try await writer.finish()
         try Task.checkCancellation()
         await progress?(0.96, "Saving backup...")
+        try Task.checkCancellation()
 
         let storage = LocalStorageService(rootURL: rootURL)
         let storedFile = try storage.copyFile(
@@ -281,15 +289,23 @@ private struct LibraryBackupArchiveWorker: Sendable {
             to: .exports
         )
         let backupURL = storage.url(forRelativePath: storedFile.relativePath)
-        let byteCount = Int64((try? backupURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
 
-        await progress?(1, "Backup ready to share.")
+        do {
+            try Task.checkCancellation()
+            let byteCount = Int64((try? backupURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
 
-        return LibraryBackupResult(
-            url: backupURL,
-            fileCount: fileEntries.count,
-            byteCount: byteCount
-        )
+            await progress?(1, "Backup ready to share.")
+            try Task.checkCancellation()
+
+            return LibraryBackupResult(
+                url: backupURL,
+                fileCount: fileEntries.count,
+                byteCount: byteCount
+            )
+        } catch {
+            try? fileManager.removeItem(at: backupURL)
+            throw error
+        }
     }
 
     private func progressFraction(_ completedEntries: Int, _ totalEntries: Int) -> Double {
@@ -300,6 +316,7 @@ private struct LibraryBackupArchiveWorker: Sendable {
         var entries: [LibraryBackupFileEntry] = []
 
         for directory in StorageDirectory.allCases {
+            try Task.checkCancellation()
             let directoryURL = rootURL.appendingPathComponent(directory.rawValue, isDirectory: true)
             guard fileManager.fileExists(atPath: directoryURL.path),
                   let enumerator = fileManager.enumerator(
@@ -311,6 +328,7 @@ private struct LibraryBackupArchiveWorker: Sendable {
             }
 
             for case let fileURL as URL in enumerator {
+                try Task.checkCancellation()
                 let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
                 guard values.isRegularFile == true else { continue }
                 guard shouldInclude(fileURL, from: directory) else { continue }

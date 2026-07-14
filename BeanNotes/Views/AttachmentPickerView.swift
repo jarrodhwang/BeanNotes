@@ -36,7 +36,7 @@ struct AttachmentPickerView: View {
                     } label: {
                         Label("Paste Image", systemImage: "doc.on.clipboard")
                     }
-                    .disabled(UIPasteboard.general.image == nil)
+                    .disabled(!UIPasteboard.general.hasImages)
                 }
 
                 if let errorMessage {

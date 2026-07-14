@@ -1262,7 +1262,8 @@ struct ImportExportService {
         staging: ImportStagingTransaction?,
         progress: ImportExportProgressHandler?
     ) async throws -> PDFImportWorkerResult {
-        try await Task.detached(priority: .userInitiated) { () async throws -> PDFImportWorkerResult in
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) { () async throws -> PDFImportWorkerResult in
             let isScoped = sourceURL.startAccessingSecurityScopedResource()
             defer {
                 if isScoped {
@@ -1329,7 +1330,13 @@ struct ImportExportService {
                 sourceFileExtension: sourceURL.pathExtension,
                 pages: pages
             )
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     nonisolated private static func importPreviewableDocumentInBackground(
@@ -1338,7 +1345,8 @@ struct ImportExportService {
         staging: ImportStagingTransaction?,
         progress: ImportExportProgressHandler?
     ) async throws -> PreviewableDocumentWorkerResult {
-        try await Task.detached(priority: .userInitiated) { () async throws -> PreviewableDocumentWorkerResult in
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) { () async throws -> PreviewableDocumentWorkerResult in
             try Task.checkCancellation()
             let pageSize = CGSize(width: 1024, height: 1366)
             let baseName = sourceURL.deletingPathExtension().lastPathComponent
@@ -1402,7 +1410,13 @@ struct ImportExportService {
                 storedPreview: storedPreview,
                 pageSize: pageSize
             )
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     nonisolated private static func storeImageFileInBackground(
@@ -1410,7 +1424,8 @@ struct ImportExportService {
         rootURL: URL,
         staging: ImportStagingTransaction?
     ) async throws -> StoredImagePageResult {
-        try await Task.detached(priority: .userInitiated) { () throws -> StoredImagePageResult in
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) { () throws -> StoredImagePageResult in
             try Task.checkCancellation()
             let storedImage = try copyImportFile(from: sourceURL, rootURL: rootURL, staging: staging)
             try Task.checkCancellation()
@@ -1426,7 +1441,13 @@ struct ImportExportService {
                 originalFileName: sourceURL.lastPathComponent,
                 displayName: sourceURL.deletingPathExtension().lastPathComponent
             )
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     nonisolated private static func storeImageDataInBackground(
@@ -1435,7 +1456,8 @@ struct ImportExportService {
         rootURL: URL,
         staging: ImportStagingTransaction?
     ) async throws -> StoredImagePageResult {
-        try await Task.detached(priority: .userInitiated) { () throws -> StoredImagePageResult in
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) { () throws -> StoredImagePageResult in
             try Task.checkCancellation()
             guard let imageSize = imageSize(in: data) else {
                 throw ImportExportError.unsupportedImageData
@@ -1464,7 +1486,13 @@ struct ImportExportService {
                 originalFileName: "\(baseName).\(fileExtension)",
                 displayName: baseName
             )
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     nonisolated private static func exportPageSnapshot(
@@ -1474,7 +1502,8 @@ struct ImportExportService {
         exportURL: URL,
         renderScale: CGFloat
     ) async throws {
-        try await Task.detached(priority: .userInitiated) { () throws -> Void in
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) { () throws -> Void in
             try autoreleasepool {
                 try Task.checkCancellation()
                 let drawing = try ThumbnailService.loadDrawingForExport(
@@ -1504,7 +1533,13 @@ struct ImportExportService {
                 }
                 try Task.checkCancellation()
             }
-        }.value
+        }
+
+        try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     nonisolated private static func writePDF(
@@ -1514,7 +1549,8 @@ struct ImportExportService {
         exportURL: URL,
         progress: ImportExportProgressHandler? = nil
     ) async throws {
-        try await Task.detached(priority: .userInitiated) { () async throws -> Void in
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) { () async throws -> Void in
             guard let firstSnapshot = snapshots.first else {
                 throw ImportExportError.exportFailed
             }
@@ -1574,7 +1610,13 @@ struct ImportExportService {
             guard FileManager.default.fileExists(atPath: exportURL.path) else {
                 throw ImportExportError.exportFailed
             }
-        }.value
+        }
+
+        try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     nonisolated private static func writePDFImage(_ image: UIImage, pageSize: CGSize, exportURL: URL) throws {

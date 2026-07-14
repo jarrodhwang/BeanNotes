@@ -317,8 +317,15 @@ struct LocalStorageService {
     }
 
     nonisolated func directoryURL(for directory: StorageDirectory) throws -> URL {
-        let url = rootURL.appendingPathComponent(directory.rawValue, isDirectory: true)
+        var url = rootURL.appendingPathComponent(directory.rawValue, isDirectory: true)
         try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+
+        if directory == .thumbnails {
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? url.setResourceValues(values)
+        }
+
         return url
     }
 

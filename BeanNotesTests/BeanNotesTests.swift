@@ -309,6 +309,54 @@ struct BeanNotesTests {
         #expect(snapshot.totalFileCount == 4)
     }
 
+    @Test func localStorageExcludesRegenerableThumbnailsFromDeviceBackup() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesThumbnailBackup-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let thumbnailsURL = try storage.directoryURL(for: .thumbnails)
+        let values = try thumbnailsURL.resourceValues(forKeys: [.isExcludedFromBackupKey])
+
+        #expect(values.isExcludedFromBackup == true)
+    }
+
+    @Test func modelContainerArchivesAllStoreSidecarsIntoUniqueDirectory() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesStoreArchive-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let fileManager = FileManager.default
+        let storeURL = rootURL.appendingPathComponent("BeanNotes.store")
+        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        for (index, sidecarURL) in BeanNotesModelContainer.persistentStoreSidecarURLs(for: storeURL).enumerated() {
+            try Data("sidecar-\(index)".utf8).write(to: sidecarURL)
+        }
+
+        let firstArchiveURL = try #require(
+            BeanNotesModelContainer.archivePersistentStore(at: storeURL, fileManager: fileManager)
+        )
+
+        for (index, sidecarURL) in BeanNotesModelContainer.persistentStoreSidecarURLs(for: storeURL).enumerated() {
+            #expect(!fileManager.fileExists(atPath: sidecarURL.path))
+            let archivedURL = firstArchiveURL.appendingPathComponent(sidecarURL.lastPathComponent)
+            #expect(try Data(contentsOf: archivedURL) == Data("sidecar-\(index)".utf8))
+        }
+
+        try Data("retry".utf8).write(to: storeURL)
+        let secondArchiveURL = try #require(
+            BeanNotesModelContainer.archivePersistentStore(at: storeURL, fileManager: fileManager)
+        )
+
+        #expect(firstArchiveURL != secondArchiveURL)
+        #expect(fileManager.fileExists(atPath: secondArchiveURL.appendingPathComponent(storeURL.lastPathComponent).path))
+    }
+
     @Test func localStorageRemovesOnlyOldExports() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesOldExports-\(UUID().uuidString)", isDirectory: true)
@@ -437,6 +485,46 @@ struct BeanNotesTests {
         #expect(archiveText.contains("storage/\(imported.relativePath)"))
         #expect(archiveText.contains("storage/\(exported.relativePath)"))
         #expect(!archiveText.contains("storage/\(priorBackup.relativePath)"))
+    }
+
+    @Test @MainActor func cancelingLibraryBackupBeforeSavingLeavesNoArchive() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCanceledLibraryBackup-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let service = LibraryBackupService(storage: storage)
+        var backupTask: Task<LibraryBackupResult, Error>?
+
+        backupTask = Task { @MainActor in
+            try await service.exportLibraryBackup(folders: []) { fraction, _ in
+                if fraction.map({ $0 >= 0.96 }) == true {
+                    backupTask?.cancel()
+                }
+            }
+        }
+
+        guard let backupTask else {
+            Issue.record("Backup task should be created.")
+            return
+        }
+
+        do {
+            _ = try await backupTask.value
+            Issue.record("Canceled backup should not return an archive.")
+        } catch is CancellationError {
+            // Expected: cancellation is observed before the archive reaches Exports.
+        }
+
+        let exportDirectoryURL = try storage.directoryURL(for: .exports)
+        let exportURLs = try FileManager.default.contentsOfDirectory(
+            at: exportDirectoryURL,
+            includingPropertiesForKeys: nil
+        )
+        #expect(exportURLs.allSatisfy { $0.pathExtension.lowercased() != "beannotes" })
     }
 
     @Test func localStorageRejectsPathsOutsideRootUsingPathComponents() throws {
@@ -3506,8 +3594,10 @@ struct BeanNotesTests {
         try context.save()
 
         var importTask: Task<ImportedDocumentNote, Error>?
+        var progressMessages: [String] = []
         importTask = Task { @MainActor in
             try await service.importDocumentAsNote(from: pdfURL, into: folder) { _, message in
+                progressMessages.append(message)
                 if message.contains("page 2") {
                     importTask?.cancel()
                 }
@@ -3526,6 +3616,7 @@ struct BeanNotesTests {
 
             #expect(contents.isEmpty)
             #expect(folder.notes.isEmpty)
+            #expect(!progressMessages.contains { $0.contains("page 3") })
         }
     }
 
