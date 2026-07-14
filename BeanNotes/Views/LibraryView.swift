@@ -32,6 +32,7 @@ struct LibraryView: View {
     @State private var searchText = ""
     @State private var openNoteTabs: [NoteDocument] = []
     @State private var selectedOpenNoteID: UUID?
+    @StateObject private var editorSessionStore = NoteEditorSessionStore()
     @State private var notePendingDeletion: NoteDocument?
     @State private var isShowingFolderEditor = false
     @State private var isShowingDocumentImporter = false
@@ -228,6 +229,7 @@ struct LibraryView: View {
             NoteTabbedEditorWorkspace(
                 tabs: openNoteTabs,
                 selectedNoteID: $selectedOpenNoteID,
+                editorSessionStore: editorSessionStore,
                 beanVisit: beanVisit,
                 createNote: createNote,
                 closeTab: closeNoteTab,
@@ -876,13 +878,13 @@ private struct NoteTabbedEditorWorkspace: View {
 
     var tabs: [NoteDocument]
     @Binding var selectedNoteID: UUID?
+    @ObservedObject var editorSessionStore: NoteEditorSessionStore
     var beanVisit: BeanVisit?
     var createNote: () -> Void
     var closeTab: (UUID) -> Void
     var backToLibrary: () -> Void
 
     @State private var isFocusModeEnabled = false
-    @StateObject private var editorSessionStore = NoteEditorSessionStore()
 
     private var selectedNote: NoteDocument? {
         guard let selectedNoteID else { return tabs.first }
