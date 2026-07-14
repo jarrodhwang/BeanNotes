@@ -76,6 +76,23 @@ struct DrawingCanvasLayoutSignature: Equatable {
     }
 }
 
+/// A logical reading anchor for a drawing document.
+///
+/// The center is expressed in unscaled document coordinates rather than a raw
+/// `UIScrollView.contentOffset`, which lets the position survive changes to insets,
+/// zoom bounds, and device size.
+struct DrawingCanvasViewport: Equatable {
+    var center: CGPoint
+    var zoomScale: CGFloat
+
+    var isValid: Bool {
+        center.x.isFinite
+            && center.y.isFinite
+            && zoomScale.isFinite
+            && zoomScale > 0
+    }
+}
+
 @MainActor
 enum DrawingCanvasStaticContentSignature {
     static func signature(for page: NotePage) -> String {
@@ -134,6 +151,10 @@ struct DrawingCanvasView: UIViewRepresentable {
     var exportPreparationCompleted: (Int, Result<Void, Error>) -> Void = { _, _ in }
     var undoRedoAvailabilityChanged: (Bool, Bool) -> Void = { _, _ in }
     var zoomScaleChanged: (CGFloat) -> Void = { _ in }
+    var initialViewport: DrawingCanvasViewport? = nil
+    var viewportRestorationID = 0
+    var viewportChanged: (DrawingCanvasViewport) -> Void = { _ in }
+    var finalViewportChanged: (DrawingCanvasViewport, UUID?) -> Void = { _, _ in }
     var addPageAtBottom: () -> Void
     var topContent: AnyView?
     var theme: BeanNotesTheme = .defaultTheme
@@ -148,11 +169,15 @@ struct DrawingCanvasView: UIViewRepresentable {
         containerView.visiblePageChanged = { [weak coordinator = context.coordinator] pageID in
             coordinator?.selectVisiblePage(pageID)
         }
+        containerView.viewportChanged = { [weak coordinator = context.coordinator] viewport, force in
+            coordinator?.publishViewport(viewport, force: force)
+        }
         containerView.reachedBottom = { [weak coordinator = context.coordinator] in
             coordinator?.requestAddPageAtBottom()
         }
 
         context.coordinator.containerView = containerView
+        context.coordinator.viewportRestorationID = viewportRestorationID
 
         let twoFingerTap = UITapGestureRecognizer(
             target: context.coordinator,
@@ -203,6 +228,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             theme: theme,
             showsBeanArtwork: showsBeanArtwork
         )
+        containerView.restoreViewport(initialViewport)
         context.coordinator.configureToolPicker(mode: paletteMode)
 
         return containerView
@@ -235,6 +261,11 @@ struct DrawingCanvasView: UIViewRepresentable {
            let selectedPageID {
             context.coordinator.selectedPageID = selectedPageID
             containerView.scrollToPage(id: selectedPageID, animated: true)
+        }
+
+        if context.coordinator.viewportRestorationID != viewportRestorationID {
+            context.coordinator.viewportRestorationID = viewportRestorationID
+            containerView.restoreViewport(initialViewport)
         }
 
         if context.coordinator.saveNowSignal != saveNowSignal {
@@ -288,6 +319,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ containerView: CanvasContainerView, coordinator: Coordinator) {
+        coordinator.publishCurrentViewport()
         coordinator.performFinalDrawingFlush(reason: "Editor closed")
         coordinator.hideToolPicker()
         containerView.cancelPendingRenderingWork()
@@ -301,6 +333,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         let autoAddFooterButton = UIButton(type: .system)
 
         var visiblePageChanged: ((UUID) -> Void)?
+        var viewportChanged: ((DrawingCanvasViewport, Bool) -> Void)?
         var reachedBottom: (() -> Void)?
 
         private var pageViews: [UUID: PageCanvasView] = [:]
@@ -323,6 +356,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastBackgroundRenderScale: CGFloat = 0
         private var lastImageRenderScale: CGFloat = 0
         private var didSetInitialZoom = false
+        private var pendingViewport: DrawingCanvasViewport?
+        private var isRestoringViewport = false
         private var bottomTriggerArmed = true
         private var isPinchZooming = false
         private var isProgrammaticZooming = false
@@ -373,6 +408,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             isPinchZooming || isProgrammaticZooming || scrollView.isZooming || isScrollViewAnimatingZoom
         }
 
+        var defersViewStatePublishing: Bool {
+            pendingViewport != nil || isRestoringViewport
+        }
+
         override init(frame: CGRect) {
             super.init(frame: frame)
             configureView()
@@ -390,6 +429,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             return pageViews[selectedPageID]?.canvasView
+        }
+
+        var currentSelectedPageID: UUID? {
+            guard let viewport = currentViewport() else { return selectedPageID }
+            return nearestPageID(toY: viewport.center.y) ?? selectedPageID
         }
 
         var canvasPagePairs: [(NotePage, PKCanvasView)] {
@@ -475,6 +519,32 @@ struct DrawingCanvasView: UIViewRepresentable {
             if inputModeChanged {
                 applyInputModeToMaterializedPages()
             }
+        }
+
+        /// Defers restoration until the document has frames, zoom limits, and a viewport.
+        /// A raw scroll offset is intentionally not used because it changes with content
+        /// insets and screen size.
+        func restoreViewport(_ viewport: DrawingCanvasViewport?) {
+            guard let viewport, viewport.isValid else { return }
+            pendingViewport = viewport
+            setNeedsLayout()
+        }
+
+        func currentViewport() -> DrawingCanvasViewport? {
+            guard !defersViewStatePublishing,
+                  scrollView.bounds.width > 0,
+                  scrollView.bounds.height > 0,
+                  scrollView.zoomScale.isFinite,
+                  scrollView.zoomScale > 0 else {
+                return nil
+            }
+
+            let center = contentView.convert(
+                CGPoint(x: scrollView.bounds.midX, y: scrollView.bounds.midY),
+                from: scrollView
+            )
+            let viewport = DrawingCanvasViewport(center: center, zoomScale: scrollView.zoomScale)
+            return viewport.isValid ? viewport : nil
         }
 
         func scrollToPage(id: UUID, animated: Bool) {
@@ -585,6 +655,45 @@ struct DrawingCanvasView: UIViewRepresentable {
             return CGRect(origin: origin, size: CGSize(width: width, height: height))
         }
 
+        @discardableResult
+        private func restorePendingViewportIfPossible() -> Bool {
+            guard let viewport = pendingViewport,
+                  viewport.isValid,
+                  documentSize.width > 0,
+                  documentSize.height > 0,
+                  scrollView.bounds.width > 0,
+                  scrollView.bounds.height > 0 else {
+                return false
+            }
+
+            isRestoringViewport = true
+            defer {
+                isRestoringViewport = false
+                pendingViewport = nil
+            }
+
+            let restoredScale = DrawingZoomLevel.clampedScale(
+                viewport.zoomScale,
+                minimum: scrollView.minimumZoomScale,
+                maximum: scrollView.maximumZoomScale
+            )
+            didSetInitialZoom = true
+
+            if abs(scrollView.zoomScale - restoredScale) > 0.001 {
+                scrollView.setZoomScale(restoredScale, animated: false)
+            }
+
+            centerDocument()
+            let positionInScrollView = contentView.convert(viewport.center, to: scrollView)
+            let proposedOffset = CGPoint(
+                x: scrollView.contentOffset.x + positionInScrollView.x - scrollView.bounds.midX,
+                y: scrollView.contentOffset.y + positionInScrollView.y - scrollView.bounds.midY
+            )
+            scrollView.setContentOffset(clampedContentOffset(proposedOffset), animated: false)
+            lastObservedContentOffsetY = scrollView.contentOffset.y
+            return true
+        }
+
         private func finishProgrammaticZoom() {
             settledZoomWorkItem?.cancel()
             settledZoomWorkItem = nil
@@ -597,6 +706,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             updateNativeDrawingViewports(force: true)
             updateVisiblePage()
             publishZoomScale(force: true)
+            publishViewport(force: true)
         }
 
         private func scheduleSettledZoomRefresh() {
@@ -639,6 +749,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             if !isPinchZooming && !isProgrammaticZooming {
                 centerDocument()
             }
+            let didRestoreViewport = restorePendingViewportIfPossible()
             materializePagesNearViewport()
             if viewportSizeChanged {
                 updateNativeDrawingViewports(force: true)
@@ -646,7 +757,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 updateNativeDrawingViewports()
             }
             updateVisiblePage()
-            publishZoomScale()
+            publishZoomScale(force: didRestoreViewport)
+            publishViewport(force: didRestoreViewport)
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -667,6 +779,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 updateVisiblePage()
             }
             triggerBottomIfNeeded()
+            publishViewport()
         }
 
         func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
@@ -682,6 +795,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             updateNativeDrawingViewports()
             scheduleSettledZoomRefresh()
             publishZoomScale()
+            publishViewport()
         }
 
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
@@ -702,15 +816,18 @@ struct DrawingCanvasView: UIViewRepresentable {
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             guard !decelerate else { return }
             updateNativeDrawingViewports(force: true)
+            publishViewport(force: true)
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
             updateNativeDrawingViewports(force: true)
+            publishViewport(force: true)
         }
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
             guard !isProgrammaticZooming else { return }
             updateNativeDrawingViewports(force: true)
+            publishViewport(force: true)
         }
 
         private func configureView() {
@@ -1242,7 +1359,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func updateVisiblePage() {
-            guard !pageFrames.isEmpty else { return }
+            guard !defersViewStatePublishing, !pageFrames.isEmpty else { return }
 
             let visibleCenter = CGPoint(
                 x: scrollView.contentOffset.x + scrollView.bounds.midX,
@@ -1328,7 +1445,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func triggerBottomIfNeeded() {
-            guard pageFlowMode.autoAddsPages, bottomTriggerArmed, documentSize.height > 0 else { return }
+            guard !defersViewStatePublishing,
+                  pageFlowMode.autoAddsPages,
+                  bottomTriggerArmed,
+                  documentSize.height > 0 else {
+                return
+            }
 
             let visibleMaxY = (scrollView.contentOffset.y + scrollView.bounds.height) / max(scrollView.zoomScale, 0.01)
             let triggerDistance = autoAddFooterTopPadding + autoAddFooterSize + 180
@@ -1359,6 +1481,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func publishZoomScale(force: Bool = false) {
             coordinator?.publishZoomScale(scrollView.zoomScale, force: force)
+        }
+
+        private func publishViewport(force: Bool = false) {
+            guard let viewport = currentViewport() else { return }
+            viewportChanged?(viewport, force)
         }
     }
 
@@ -2327,6 +2454,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         var undoSignal: Int
         var redoSignal: Int
         var toolShortcutSignal: Int
+        var viewportRestorationID: Int
         var pageIDs: Set<UUID>
         var toolPicker = PKToolPicker()
         var pendingSaves: [UUID: DispatchWorkItem] = [:]
@@ -2352,9 +2480,14 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastPublishedCanRedo: Bool?
         private var lastPublishedZoomScale: CGFloat?
         private var lastZoomPublishTime: CFTimeInterval = 0
+        private var lastPublishedViewport: DrawingCanvasViewport?
+        private var lastViewportPublishTime: CFTimeInterval = 0
         private let drawingSaveDebounce: TimeInterval = 1.25
         private let zoomScalePublishThreshold: CGFloat = 0.01
         private let minimumZoomPublishInterval: CFTimeInterval = 1 / 15
+        private let viewportCenterPublishThreshold: CGFloat = 4
+        private let viewportZoomPublishThreshold: CGFloat = 0.01
+        private let minimumViewportPublishInterval: CFTimeInterval = 1 / 15
         private static let drawingWriteQueueKey = DispatchSpecificKey<Void>()
         private static let drawingWriteQueue: DispatchQueue = {
             let queue = DispatchQueue(label: "com.snowfox.BeanNotes.drawing-write", qos: .utility)
@@ -2425,7 +2558,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func publishZoomScale(_ scale: CGFloat, force: Bool = false) {
-            guard scale.isFinite, scale > 0 else { return }
+            guard scale.isFinite,
+                  scale > 0,
+                  containerView?.defersViewStatePublishing != true else {
+                return
+            }
             let now = CACurrentMediaTime()
             let shouldPublish = force
                 || (lastPublishedZoomScale.map { abs($0 - scale) > zoomScalePublishThreshold } ?? true)
@@ -2442,6 +2579,43 @@ struct DrawingCanvasView: UIViewRepresentable {
             let zoomScaleChanged = parent.zoomScaleChanged
             dispatchToSwiftUI {
                 zoomScaleChanged(scale)
+            }
+        }
+
+        func publishViewport(_ viewport: DrawingCanvasViewport, force: Bool = false) {
+            guard viewport.isValid,
+                  containerView?.defersViewStatePublishing != true else {
+                return
+            }
+
+            let now = CACurrentMediaTime()
+            let hasMeaningfulChange = lastPublishedViewport.map { previous in
+                let centerDelta = hypot(
+                    viewport.center.x - previous.center.x,
+                    viewport.center.y - previous.center.y
+                )
+                return centerDelta > viewportCenterPublishThreshold
+                    || abs(viewport.zoomScale - previous.zoomScale) > viewportZoomPublishThreshold
+            } ?? true
+            let intervalElapsed = now - lastViewportPublishTime >= minimumViewportPublishInterval
+            guard force || (hasMeaningfulChange && intervalElapsed) else { return }
+
+            lastPublishedViewport = viewport
+            lastViewportPublishTime = now
+            let viewportChanged = parent.viewportChanged
+            dispatchToSwiftUI {
+                viewportChanged(viewport)
+            }
+        }
+
+        func publishCurrentViewport() {
+            guard let viewport = containerView?.currentViewport() else { return }
+            publishViewport(viewport, force: true)
+
+            let finalViewportChanged = parent.finalViewportChanged
+            let selectedPageID = containerView?.currentSelectedPageID
+            dispatchToSwiftUI {
+                finalViewportChanged(viewport, selectedPageID)
             }
         }
 
@@ -2467,6 +2641,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.undoSignal = parent.undoSignal
             self.redoSignal = parent.redoSignal
             self.toolShortcutSignal = parent.toolShortcutSignal
+            self.viewportRestorationID = parent.viewportRestorationID
             self.pageIDs = Set(parent.pages.map(\.id))
             super.init()
             observeApplicationLifecycle()

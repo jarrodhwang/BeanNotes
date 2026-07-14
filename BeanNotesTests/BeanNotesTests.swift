@@ -2548,6 +2548,211 @@ struct BeanNotesTests {
         #expect(abs(finalDrawing.bounds.midY - drawing.bounds.midY) < 0.5)
     }
 
+    @Test @MainActor func canvasViewportRestoresReadingAnchorAfterCanvasRecreation() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesViewportRestore-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = [
+            NotePage(pageOrder: 0, drawingFileName: "viewport-first.drawing", width: 612, height: 1_000),
+            NotePage(pageOrder: 1, drawingFileName: "viewport-second.drawing", width: 612, height: 1_000)
+        ]
+        let parent = makeDrawingCanvasView(
+            page: pages[0],
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let originalCoordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let original = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        originalCoordinator.containerView = original
+        original.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: originalCoordinator
+        )
+        original.setNeedsLayout()
+        original.layoutIfNeeded()
+        original.scrollView.setZoomScale(1.4, animated: false)
+        original.scrollView.setContentOffset(CGPoint(x: 0, y: 1_200), animated: false)
+
+        let expectedViewport = try #require(original.currentViewport())
+        #expect(expectedViewport.center.y > pages[1].pageSize.height)
+        #expect(abs(expectedViewport.zoomScale - 1.4) < 0.01)
+
+        let restoredCoordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let restored = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        restoredCoordinator.containerView = restored
+        restored.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: restoredCoordinator
+        )
+        restored.restoreViewport(expectedViewport)
+        restored.setNeedsLayout()
+        restored.layoutIfNeeded()
+
+        let actualViewport = try #require(restored.currentViewport())
+        #expect(abs(actualViewport.zoomScale - expectedViewport.zoomScale) < 0.01)
+        #expect(abs(actualViewport.center.x - expectedViewport.center.x) < 1)
+        #expect(abs(actualViewport.center.y - expectedViewport.center.y) < 1)
+
+        DrawingCanvasView.dismantleUIView(original, coordinator: originalCoordinator)
+        DrawingCanvasView.dismantleUIView(restored, coordinator: restoredCoordinator)
+    }
+
+    @Test @MainActor func canvasDismantlePublishesFinalReadingState() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesFinalViewport-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = [
+            NotePage(pageOrder: 0, drawingFileName: "final-viewport-first.drawing", width: 612, height: 1_000),
+            NotePage(pageOrder: 1, drawingFileName: "final-viewport-second.drawing", width: 612, height: 1_000)
+        ]
+        let session = NoteEditorSession()
+        let parent = makeDrawingCanvasView(
+            page: pages[0],
+            drawingStorage: drawingStorage,
+            pages: pages,
+            finalViewportChanged: { viewport, selectedPageID in
+                session.recordFinalCanvasState(
+                    viewport: viewport,
+                    selectedPageID: selectedPageID
+                )
+            }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        container.scrollView.setZoomScale(1.4, animated: false)
+        container.scrollView.setContentOffset(CGPoint(x: 0, y: 1_200), animated: false)
+        let expectedViewport = try #require(container.currentViewport())
+
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+
+        let deadline = ContinuousClock.now + .seconds(1)
+        while session.viewportRestorationID == 0 && ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+
+        #expect(session.viewportRestorationID == 1)
+        #expect(session.selectedPageID == pages[1].id)
+        let finalViewport = try #require(session.viewport)
+        #expect(abs(finalViewport.zoomScale - expectedViewport.zoomScale) < 0.01)
+        #expect(abs(finalViewport.center.y - expectedViewport.center.y) < 1)
+    }
+
+    @Test func noteEditorSessionStoreKeepsTabStateIsolated() {
+        let store = NoteEditorSessionStore()
+        let firstNoteID = UUID()
+        let secondNoteID = UUID()
+        let firstSession = store.session(for: firstNoteID)
+        let finalPageID = UUID()
+        firstSession.selectedPageID = UUID()
+        firstSession.currentZoomScale = 1.8
+        firstSession.viewport = DrawingCanvasViewport(
+            center: CGPoint(x: 320, y: 1_400),
+            zoomScale: 1.8
+        )
+        firstSession.recordFinalCanvasState(
+            viewport: DrawingCanvasViewport(center: CGPoint(x: 360, y: 1_620), zoomScale: 2),
+            selectedPageID: finalPageID
+        )
+
+        let secondSession = store.session(for: secondNoteID)
+
+        #expect(store.session(for: firstNoteID) === firstSession)
+        #expect(secondSession !== firstSession)
+        #expect(secondSession.selectedPageID == nil)
+        #expect(secondSession.currentZoomScale == 1)
+        #expect(secondSession.viewport == nil)
+        #expect(firstSession.selectedPageID == finalPageID)
+        #expect(firstSession.currentZoomScale == 2)
+        #expect(firstSession.viewport?.center == CGPoint(x: 360, y: 1_620))
+        #expect(firstSession.viewportRestorationID == 1)
+    }
+
+    @Test @MainActor func restoringInfiniteCanvasNearFooterDoesNotAddAPage() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesViewportFooter-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "viewport-footer.drawing", width: 612, height: 1_000)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .infinite,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        var addPageRequestCount = 0
+        container.reachedBottom = {
+            addPageRequestCount += 1
+        }
+        container.restoreViewport(
+            DrawingCanvasViewport(center: CGPoint(x: 306, y: 960), zoomScale: 1.4)
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        #expect(addPageRequestCount == 0)
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+    }
+
     private struct PageCanvasFixture {
         let rootURL: URL
         let storage: LocalStorageService
@@ -2592,11 +2797,13 @@ struct BeanNotesTests {
     private func makeDrawingCanvasView(
         page: NotePage,
         drawingStorage: DrawingStorageService,
+        pages: [NotePage]? = nil,
+        finalViewportChanged: @escaping (DrawingCanvasViewport, UUID?) -> Void = { _, _ in },
         exportPreparationCompleted: @escaping (Int, Result<Void, Error>) -> Void = { _, _ in }
     ) -> DrawingCanvasView {
         let defaults = UserDefaults(suiteName: "BeanNotesCanvasTest-\(UUID().uuidString)")!
         return DrawingCanvasView(
-            pages: [page],
+            pages: pages ?? [page],
             selectedPageID: .constant(page.id),
             toolState: DrawingToolState(defaults: defaults),
             paletteMode: .custom,
@@ -2623,6 +2830,7 @@ struct BeanNotesTests {
             exportPreparationCompleted: exportPreparationCompleted,
             undoRedoAvailabilityChanged: { _, _ in },
             zoomScaleChanged: { _ in },
+            finalViewportChanged: finalViewportChanged,
             addPageAtBottom: {},
             topContent: nil
         )

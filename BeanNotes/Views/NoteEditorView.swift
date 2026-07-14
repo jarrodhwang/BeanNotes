@@ -3,9 +3,63 @@
 //  BeanNotes
 //
 
+import Combine
 import SwiftData
 import SwiftUI
 import UIKit
+
+/// Transient editor state retained while a note remains open in the tab workspace.
+///
+/// This deliberately stays out of SwiftData so normal scrolling and zooming do not
+/// create a stream of document writes. A tab can therefore be recreated to release
+/// its drawing/PDF resources without losing the reader's place.
+final class NoteEditorSession: ObservableObject {
+    @Published var selectedPageID: UUID?
+    @Published var currentZoomScale: CGFloat
+    @Published private(set) var viewportRestorationID = 0
+    var viewport: DrawingCanvasViewport?
+
+    init(
+        selectedPageID: UUID? = nil,
+        currentZoomScale: CGFloat = 1,
+        viewport: DrawingCanvasViewport? = nil
+    ) {
+        self.selectedPageID = selectedPageID
+        self.currentZoomScale = currentZoomScale
+        self.viewport = viewport
+    }
+
+    func recordFinalCanvasState(
+        viewport: DrawingCanvasViewport,
+        selectedPageID: UUID?
+    ) {
+        self.viewport = viewport
+        currentZoomScale = viewport.zoomScale
+        if let selectedPageID {
+            self.selectedPageID = selectedPageID
+        }
+        viewportRestorationID &+= 1
+    }
+}
+
+/// Owns small, in-memory editor sessions for the lifetime of a tab workspace.
+final class NoteEditorSessionStore: ObservableObject {
+    private var sessions: [UUID: NoteEditorSession] = [:]
+
+    func session(for noteID: UUID) -> NoteEditorSession {
+        if let session = sessions[noteID] {
+            return session
+        }
+
+        let session = NoteEditorSession()
+        sessions[noteID] = session
+        return session
+    }
+
+    func removeSession(for noteID: UUID) {
+        sessions[noteID] = nil
+    }
+}
 
 struct NoteEditorView: View {
     @Environment(\.modelContext) private var modelContext
@@ -28,7 +82,7 @@ struct NoteEditorView: View {
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
 
-    @State private var selectedPageID: UUID?
+    @ObservedObject private var editorSession: NoteEditorSession
     @State private var isShowingAttachmentPicker = false
     @State private var isShowingExport = false
     @State private var isShowingAttachments = false
@@ -46,7 +100,6 @@ struct NoteEditorView: View {
     @State private var zoomOutSignal = 0
     @State private var zoomToScaleSignal = 0
     @State private var zoomTargetScale: CGFloat = 1
-    @State private var currentZoomScale: CGFloat = 1
     @State private var undoSignal = 0
     @State private var redoSignal = 0
     @State private var toolShortcutSignal = 0
@@ -69,9 +122,31 @@ struct NoteEditorView: View {
     private let importExportService = ImportExportService()
     private let drawingMetadataSaveDelayNanoseconds: UInt64 = 700_000_000
 
-    init(note: NoteDocument, isWorkspaceFocusModeEnabled: Binding<Bool> = .constant(false)) {
+    init(
+        note: NoteDocument,
+        isWorkspaceFocusModeEnabled: Binding<Bool> = .constant(false),
+        editorSession: NoteEditorSession = NoteEditorSession()
+    ) {
         self.note = note
         self._isWorkspaceFocusModeEnabled = isWorkspaceFocusModeEnabled
+        self.editorSession = editorSession
+    }
+
+    private var selectedPageID: UUID? {
+        get { editorSession.selectedPageID }
+        nonmutating set { editorSession.selectedPageID = newValue }
+    }
+
+    private var selectedPageIDBinding: Binding<UUID?> {
+        Binding(
+            get: { editorSession.selectedPageID },
+            set: { editorSession.selectedPageID = $0 }
+        )
+    }
+
+    private var currentZoomScale: CGFloat {
+        get { editorSession.currentZoomScale }
+        nonmutating set { editorSession.currentZoomScale = newValue }
     }
 
     private var selectedPage: NotePage? {
@@ -277,7 +352,7 @@ struct NoteEditorView: View {
                 ZStack(alignment: .trailing) {
                     DrawingCanvasView(
                         pages: editorPages,
-                        selectedPageID: $selectedPageID,
+                        selectedPageID: selectedPageIDBinding,
                         toolState: toolState,
                         paletteMode: penPaletteMode,
                         inputMode: drawingInputMode,
@@ -309,6 +384,17 @@ struct NoteEditorView: View {
                         exportPreparationCompleted: handleExportPreparationCompleted(id:result:),
                         undoRedoAvailabilityChanged: updateUndoRedoAvailability(canUndo:canRedo:),
                         zoomScaleChanged: updateZoomScale(_:),
+                        initialViewport: editorSession.viewport,
+                        viewportRestorationID: editorSession.viewportRestorationID,
+                        viewportChanged: { viewport in
+                            editorSession.viewport = viewport
+                        },
+                        finalViewportChanged: { viewport, selectedPageID in
+                            editorSession.recordFinalCanvasState(
+                                viewport: viewport,
+                                selectedPageID: selectedPageID
+                            )
+                        },
                         addPageAtBottom: addPageAtBottom,
                         topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page)),
                         theme: beanNotesTheme,
@@ -1065,7 +1151,9 @@ struct NoteEditorView: View {
 
     private func ensurePage() {
         if let firstPage = note.sortedPages.first {
-            selectedPageID = selectedPageID ?? firstPage.id
+            if !note.pages.contains(where: { $0.id == selectedPageID }) {
+                selectedPageID = firstPage.id
+            }
             return
         }
 

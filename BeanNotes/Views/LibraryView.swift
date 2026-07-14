@@ -884,6 +884,7 @@ private struct NoteTabbedEditorWorkspace: View {
     @State private var isSwitchingTabs = false
     @State private var isFocusModeEnabled = false
     @State private var switchLoadingTask: Task<Void, Never>?
+    @StateObject private var editorSessionStore = NoteEditorSessionStore()
 
     private var selectedNote: NoteDocument? {
         guard let selectedNoteID else { return tabs.first }
@@ -904,7 +905,10 @@ private struct NoteTabbedEditorWorkspace: View {
                         tabs: tabs,
                         selectedNoteID: selectedNote.id,
                         selectTab: selectTab,
-                        closeTab: closeTab,
+                        closeTab: { noteID in
+                            editorSessionStore.removeSession(for: noteID)
+                            closeTab(noteID)
+                        },
                         backToLibrary: backToLibrary
                     )
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -917,7 +921,8 @@ private struct NoteTabbedEditorWorkspace: View {
                     NavigationStack {
                         NoteEditorView(
                             note: selectedNote,
-                            isWorkspaceFocusModeEnabled: $isFocusModeEnabled
+                            isWorkspaceFocusModeEnabled: $isFocusModeEnabled,
+                            editorSession: editorSessionStore.session(for: selectedNote.id)
                         )
                             .id(selectedNote.id)
                     }
