@@ -389,6 +389,10 @@ struct NoteEditorView: View {
 
     private func editorTitleHeader(page: NotePage) -> some View {
         HStack(alignment: .center, spacing: 16) {
+            if beanNotesTheme == .bean {
+                BeanAvatarView(size: 38)
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 if isEditingTitle {
                     TextField("Untitled Note", text: $draftTitle)

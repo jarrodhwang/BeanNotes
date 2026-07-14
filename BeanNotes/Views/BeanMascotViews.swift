@@ -23,6 +23,41 @@ struct BeanAvatarView: View {
     }
 }
 
+struct BeanBadgeView: View {
+    var size: CGFloat
+
+    var body: some View {
+        Image("BeanBadge")
+            .resizable()
+            .scaledToFill()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+                    .stroke(.white.opacity(0.68), lineWidth: max(1, size * 0.045))
+            }
+            .shadow(color: .black.opacity(0.12), radius: size * 0.08, y: size * 0.035)
+            .accessibilityHidden(true)
+    }
+}
+
+struct BeanThemeHintView: View {
+    var message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            BeanAvatarView(size: 34)
+
+            Text(message)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct BeanPetVisitView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 

@@ -8,6 +8,7 @@ import UIKit
 
 struct ExportView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.beanNotesTheme) private var beanNotesTheme
 
     var note: NoteDocument
     var page: NotePage
@@ -36,6 +37,12 @@ struct ExportView: View {
     var body: some View {
         NavigationStack {
             List {
+                if beanNotesTheme == .bean {
+                    Section {
+                        BeanThemeHintView(message: "Bean will help package this note without changing your original.")
+                    }
+                }
+
                 Section("Current Page") {
                     ForEach(ExportFormat.allCases) { format in
                         Button {

@@ -24,16 +24,36 @@ struct FolderListView: View {
             searchField
 
             HStack {
-                Text("Folders")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 7) {
+                    if beanNotesTheme == .bean {
+                        BeanBadgeView(size: 20)
+                    }
+
+                    Text("Folders")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
 
                 Spacer()
 
                 Button(action: createFolder) {
-                    Image(systemName: "plus")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+                    ZStack(alignment: .bottomTrailing) {
+                        if beanNotesTheme == .bean {
+                            BeanBadgeView(size: 28)
+                        }
+
+                        Image(systemName: beanNotesTheme == .bean ? "plus.circle.fill" : "plus")
+                            .font(beanNotesTheme == .bean ? .caption.weight(.bold) : .title3)
+                            .foregroundStyle(beanNotesTheme == .bean ? beanNotesTheme.accentColor : .secondary)
+                            .background {
+                                if beanNotesTheme == .bean {
+                                    Circle()
+                                        .fill(beanNotesTheme.cardBackground)
+                                        .frame(width: 15, height: 15)
+                                }
+                            }
+                    }
+                    .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Create folder")

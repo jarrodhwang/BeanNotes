@@ -119,6 +119,8 @@ struct SettingsView: View {
                     Section("Bean Theme") {
                         Toggle("Occasional Bean Visits", isOn: $beanVisitsEnabled)
 
+                        BeanThemeHintView(message: "Bean is on hand to keep your library and writing space cozy.")
+
                         Text("When this is on, Bean may quietly peek into the main library after you have been there for a while. Visits never interrupt the note editor.")
                             .font(.caption)
                             .foregroundStyle(.secondary)

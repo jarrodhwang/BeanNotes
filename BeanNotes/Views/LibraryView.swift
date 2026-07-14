@@ -1170,8 +1170,16 @@ private struct NotesCardGridView: View {
             .accessibilityLabel("Import file or photo")
 
             Button(action: createNote) {
-                Label("New", systemImage: "plus")
-                    .font(.headline)
+                HStack(spacing: 7) {
+                    if beanNotesTheme == .bean {
+                        BeanBadgeView(size: 24)
+                    } else {
+                        Image(systemName: "plus")
+                    }
+
+                    Text("New")
+                }
+                .font(.headline)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
@@ -1246,6 +1254,10 @@ struct BeanNotesProgressOverlay: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 14) {
+                    if beanNotesTheme == .bean {
+                        BeanBadgeView(size: 34)
+                    }
+
                     ProgressView()
                         .controlSize(.large)
                         .tint(beanNotesTheme.accentColor)
