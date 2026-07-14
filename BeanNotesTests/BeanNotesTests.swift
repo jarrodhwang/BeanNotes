@@ -235,6 +235,19 @@ struct BeanNotesTests {
         #expect(page.normalizedHeight == 612)
     }
 
+    @Test func paperSizesProvideValidPortraitDimensions() {
+        for paperSize in PaperSize.allCases {
+            #expect(paperSize.dimensions.width > 0)
+            #expect(paperSize.dimensions.height > paperSize.dimensions.width)
+            #expect(paperSize.dimensions.width <= NotePage.maximumPageDimension)
+            #expect(paperSize.dimensions.height <= NotePage.maximumPageDimension)
+        }
+
+        #expect(PaperSize.defaultPaperSize == .letter)
+        #expect(PaperSize.a4.dimensions == CGSize(width: 595, height: 842))
+        #expect(PaperSize.b5.dimensions == CGSize(width: 499, height: 709))
+    }
+
     @Test func attachmentFrameNormalizesCorruptStoredGeometry() {
         let pageSize = CGSize(width: 612, height: 792)
         let corruptFrame = Attachment.normalizedFrame(

@@ -24,6 +24,7 @@ struct SettingsView: View {
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
+    @AppStorage(PaperSize.storageKey) private var paperSizeRaw = PaperSize.defaultPaperSize.rawValue
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
@@ -175,6 +176,18 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                Section("Default Paper Size") {
+                    Picker("Paper Size", selection: $paperSizeRaw) {
+                        ForEach(PaperSize.allCases) { paperSize in
+                            Text(paperSize.label).tag(paperSize.rawValue)
+                        }
+                    }
+
+                    Text("Applies to new notes. Existing pages keep their current size.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Storage") {

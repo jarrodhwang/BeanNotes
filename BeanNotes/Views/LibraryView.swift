@@ -23,6 +23,7 @@ struct LibraryView: View {
 
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
+    @AppStorage(PaperSize.storageKey) private var paperSizeRaw = PaperSize.defaultPaperSize.rawValue
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
     @AppStorage(BeanVisitPolicy.allowsInterruptionsKey) private var beanVisitsMayInterrupt = false
@@ -83,6 +84,10 @@ struct LibraryView: View {
 
     private var defaultNoteBackground: NoteBackground {
         NoteBackground.fromDefaults(styleRaw: defaultBackgroundStyleRaw, colorHex: defaultBackgroundColorHex)
+    }
+
+    private var defaultPaperSize: PaperSize {
+        PaperSize(rawValue: paperSizeRaw) ?? PaperSize.defaultPaperSize
     }
 
     private var appTheme: AppTheme {
@@ -530,7 +535,14 @@ struct LibraryView: View {
             let folder = try folderForNewContent()
             let now = Date()
             let note = NoteDocument(title: "Untitled Note", createdAt: now, updatedAt: now)
-            let page = NotePage(pageOrder: 0, background: defaultNoteBackground, createdAt: now, updatedAt: now)
+            let page = NotePage(
+                pageOrder: 0,
+                background: defaultNoteBackground,
+                width: defaultPaperSize.dimensions.width,
+                height: defaultPaperSize.dimensions.height,
+                createdAt: now,
+                updatedAt: now
+            )
 
             modelContext.insert(note)
             modelContext.insert(page)
