@@ -86,7 +86,9 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
             32...72
         case .plain, .chalkboard:
             0...0
-        case .grid, .dotted, .lined, .cornell:
+        case .grid:
+            2...64
+        case .dotted, .lined, .cornell:
             18...64
         }
     }
