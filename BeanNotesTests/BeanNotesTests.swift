@@ -1789,6 +1789,31 @@ struct BeanNotesTests {
         #expect(BeanVisitPolicy.normalizedFocusReminderInterval(30 * 60) == 30 * 60)
     }
 
+    @Test func beanVisitsOfferVariedDogSayingsAndScreenPlacements() {
+        #expect(BeanVisit.Placement.allCases.count == 8)
+
+        for reason in [
+            BeanVisitPolicy.VisitReason.friendly,
+            .returnFromBreak,
+            .focusBreak
+        ] {
+            #expect(reason.sayings.count >= 4)
+            #expect(Set(reason.sayings.map(\.title)).count == reason.sayings.count)
+            #expect(reason.sayings.allSatisfy { !$0.message.isEmpty })
+        }
+
+        let dogLanguage = ["Bean", "tail", "dog", "paws", "walk", "sniff", "ears", "scratch"]
+        let allMessages = [
+            BeanVisitPolicy.VisitReason.friendly,
+            .returnFromBreak,
+            .focusBreak
+        ].flatMap(\.sayings).map { "\($0.title) \($0.message)" }
+
+        #expect(allMessages.allSatisfy { saying in
+            dogLanguage.contains { saying.localizedCaseInsensitiveContains($0) }
+        })
+    }
+
     @Test func folderWelcomeUsesOnlyInAppFeedbackWhileForegrounded() {
         #expect(!LocalNotificationService.shouldPresentSystemNotificationInForeground(
             identifier: "folder-welcome-test"

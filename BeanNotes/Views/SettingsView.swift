@@ -363,14 +363,8 @@ struct SettingsView: View {
                     )
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
-                if let beanVisitPreview {
-                    BeanPetVisitView(visit: beanVisitPreview)
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 14)
-                        .transition(beanVisitPreviewTransition)
-                        .zIndex(4)
-                }
+            .overlay {
+                BeanVisitOverlayView(visit: beanVisitPreview)
             }
             .onDisappear {
                 backupTask?.cancel()
@@ -381,12 +375,6 @@ struct SettingsView: View {
         .environment(\.beanNotesTheme, selectedMoodTheme)
         .preferredColorScheme(selectedAppTheme.colorScheme)
         .presentationBackground(selectedMoodTheme.appBackground)
-    }
-
-    private var beanVisitPreviewTransition: AnyTransition {
-        accessibilityReduceMotion
-            ? .opacity
-            : .move(edge: .trailing).combined(with: .opacity)
     }
 
     private var beanVisitPreviewAnimation: Animation {

@@ -6,6 +6,39 @@
 import SwiftUI
 
 struct BeanVisit: Identifiable, Equatable {
+    enum Placement: CaseIterable, Equatable {
+        case topLeading
+        case top
+        case topTrailing
+        case leading
+        case trailing
+        case bottomLeading
+        case bottom
+        case bottomTrailing
+
+        var alignment: Alignment {
+            switch self {
+            case .topLeading: .topLeading
+            case .top: .top
+            case .topTrailing: .topTrailing
+            case .leading: .leading
+            case .trailing: .trailing
+            case .bottomLeading: .bottomLeading
+            case .bottom: .bottom
+            case .bottomTrailing: .bottomTrailing
+            }
+        }
+
+        var entranceEdge: Edge {
+            switch self {
+            case .topLeading, .leading, .bottomLeading: .leading
+            case .top, .topTrailing: .top
+            case .trailing, .bottomTrailing: .trailing
+            case .bottom: .bottom
+            }
+        }
+    }
+
     enum Artwork: CaseIterable {
         case cozyPortrait
         case curiousAvatar
@@ -35,12 +68,16 @@ struct BeanVisit: Identifiable, Equatable {
     let id: UUID
     let reason: BeanVisitPolicy.VisitReason
     let artwork: Artwork
+    let placement: Placement
+    let saying: BeanVisitPolicy.Saying
 
     static func make(reason: BeanVisitPolicy.VisitReason) -> BeanVisit {
         BeanVisit(
             id: UUID(),
             reason: reason,
-            artwork: Artwork.allCases.randomElement() ?? .cozyPortrait
+            artwork: Artwork.allCases.randomElement() ?? .cozyPortrait,
+            placement: Placement.allCases.randomElement() ?? .bottomTrailing,
+            saying: reason.randomSaying()
         )
     }
 }
@@ -116,11 +153,11 @@ struct BeanPetVisitView: View {
     var body: some View {
         VStack(spacing: 5) {
             VStack(spacing: 2) {
-                Text(visit.reason.title)
+                Text(visit.saying.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.primary)
 
-                Text(visit.reason.message)
+                Text(visit.saying.message)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -145,5 +182,32 @@ struct BeanPetVisitView: View {
         .frame(width: containerWidth, height: containerHeight, alignment: .bottom)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+struct BeanVisitOverlayView: View {
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    var visit: BeanVisit?
+
+    var body: some View {
+        ZStack {
+            if let visit {
+                BeanPetVisitView(visit: visit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: visit.placement.alignment)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 18)
+                    .transition(transition(for: visit))
+                    .zIndex(4)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func transition(for visit: BeanVisit) -> AnyTransition {
+        accessibilityReduceMotion
+            ? .opacity
+            : .move(edge: visit.placement.entranceEdge).combined(with: .opacity)
     }
 }

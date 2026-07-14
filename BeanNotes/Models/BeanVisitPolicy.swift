@@ -29,27 +29,91 @@ struct BeanVisitPolicy {
         case returnFromBreak
         case focusBreak
 
-        var title: String {
+        var sayings: [Saying] {
             switch self {
             case .friendly:
-                "Bean stopped by"
+                [
+                    Saying(
+                        title: "Bean stopped by",
+                        message: "Bean brought you one supportive tail wag."
+                    ),
+                    Saying(
+                        title: "A note from Bean",
+                        message: "Bean says you have got this. She would also like to know if that is cheese."
+                    ),
+                    Saying(
+                        title: "Bean heard an idea",
+                        message: "Her ears perked up, so it must be a good one."
+                    ),
+                    Saying(
+                        title: "Paws for encouragement",
+                        message: "Bean is cheering on your next idea with her whole tail."
+                    ),
+                    Saying(
+                        title: "Bean's tiny patrol",
+                        message: "She checked the page for squirrels. All clear."
+                    ),
+                    Saying(
+                        title: "Good work, human",
+                        message: "Bean approves and requests a celebratory ear scratch."
+                    )
+                ]
             case .returnFromBreak:
-                "Welcome back"
+                [
+                    Saying(
+                        title: "Welcome back",
+                        message: "Bean saved your spot while you were away."
+                    ),
+                    Saying(
+                        title: "Bean kept watch",
+                        message: "Your notes are safe. She only sniffed them a little."
+                    ),
+                    Saying(
+                        title: "You came back!",
+                        message: "Bean's tail has officially resumed wagging."
+                    ),
+                    Saying(
+                        title: "Bean missed you",
+                        message: "She waited very patiently, by dog standards."
+                    )
+                ]
             case .focusBreak:
-                "Time for a Bean break"
+                [
+                    Saying(
+                        title: "Time for a Bean break",
+                        message: "Stretch, sip some water, or take a short walk. Bean recommends all three."
+                    ),
+                    Saying(
+                        title: "Bean says: paws up",
+                        message: "You have been focused for a while. Give your eyes and paws a rest."
+                    ),
+                    Saying(
+                        title: "Walkies?",
+                        message: "Bean thinks a quick movement break would do you both good."
+                    ),
+                    Saying(
+                        title: "Snack inspection",
+                        message: "Time to refuel. Bean volunteers to supervise every bite."
+                    ),
+                    Saying(
+                        title: "Bean's stretch club",
+                        message: "Stand up, stretch tall, and shake it out like a very happy dog."
+                    )
+                ]
             }
         }
 
-        var message: String {
-            switch self {
-            case .friendly:
-                "Bean is cheering on your next idea."
-            case .returnFromBreak:
-                "Bean saved your spot while you were away."
-            case .focusBreak:
-                "You have been focused for a while. Stretch, sip some water, or grab a meal."
-            }
+        func randomSaying() -> Saying {
+            sayings.randomElement() ?? Saying(
+                title: "Bean stopped by",
+                message: "Bean brought you one supportive tail wag."
+            )
         }
+    }
+
+    struct Saying: Equatable, Sendable {
+        let title: String
+        let message: String
     }
 
     struct FocusReminderOption: Identifiable, Equatable, Sendable {

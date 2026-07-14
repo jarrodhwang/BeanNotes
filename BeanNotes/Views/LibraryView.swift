@@ -134,12 +134,6 @@ struct LibraryView: View {
         "\(canScheduleBeanVisit)-\(beanVisitsMayInterrupt)-\(beanFocusReminderInterval)-\(focusSessionStartedAt.timeIntervalSinceReferenceDate)"
     }
 
-    private var beanVisitTransition: AnyTransition {
-        accessibilityReduceMotion
-            ? .opacity
-            : .move(edge: .trailing).combined(with: .opacity)
-    }
-
     var body: some View {
         NavigationSplitView {
             FolderListView(
@@ -185,14 +179,8 @@ struct LibraryView: View {
             )
         }
         .navigationSplitViewStyle(.balanced)
-        .overlay(alignment: .bottomTrailing) {
-            if let beanVisit {
-                BeanPetVisitView(visit: beanVisit)
-                    .padding(.trailing, 22)
-                    .padding(.bottom, 18)
-                    .transition(beanVisitTransition)
-                    .zIndex(4)
-            }
+        .overlay {
+            BeanVisitOverlayView(visit: beanVisit)
         }
         .overlay(alignment: .bottom) {
             if let folderCreatedToast {
@@ -889,7 +877,6 @@ struct LibraryView: View {
 
 private struct NoteTabbedEditorWorkspace: View {
     @Environment(\.beanNotesTheme) private var beanNotesTheme
-    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     var tabs: [NoteDocument]
     @Binding var selectedNoteID: UUID?
@@ -904,12 +891,6 @@ private struct NoteTabbedEditorWorkspace: View {
     private var selectedNote: NoteDocument? {
         guard let selectedNoteID else { return tabs.first }
         return tabs.first { $0.id == selectedNoteID } ?? tabs.first
-    }
-
-    private var beanVisitTransition: AnyTransition {
-        accessibilityReduceMotion
-            ? .opacity
-            : .move(edge: .trailing).combined(with: .opacity)
     }
 
     var body: some View {
@@ -943,14 +924,8 @@ private struct NoteTabbedEditorWorkspace: View {
             }
             .background(beanNotesTheme.appBackground.ignoresSafeArea())
             .tint(beanNotesTheme.accentColor)
-            .overlay(alignment: .bottomTrailing) {
-                if let beanVisit {
-                    BeanPetVisitView(visit: beanVisit)
-                        .padding(.trailing, 22)
-                        .padding(.bottom, 18)
-                        .transition(beanVisitTransition)
-                        .zIndex(4)
-                }
+            .overlay {
+                BeanVisitOverlayView(visit: beanVisit)
             }
             .animation(.snappy(duration: 0.18), value: isFocusModeEnabled)
             .onChange(of: selectedNote.id) { _, _ in
