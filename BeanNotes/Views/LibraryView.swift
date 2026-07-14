@@ -30,11 +30,13 @@ struct LibraryView: View {
     @AppStorage(BeanVisitPolicy.focusReminderIntervalKey) private var beanFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
 
     @State private var selectedFolderID: UUID?
+    @State private var isTrashSelected = false
     @State private var searchText = ""
     @State private var openNoteTabs: [NoteDocument] = []
     @State private var selectedOpenNoteID: UUID?
     @StateObject private var editorSessionStore = NoteEditorSessionStore()
-    @State private var notePendingDeletion: NoteDocument?
+    @State private var notesPendingTrash: [NoteDocument] = []
+    @State private var notesPendingPermanentDeletion: [NoteDocument] = []
     @State private var isShowingFolderEditor = false
     @State private var isShowingDocumentImporter = false
     @State private var isImportingDocument = false
@@ -54,6 +56,11 @@ struct LibraryView: View {
     @State private var awayStartedAt: Date?
     @State private var visitScheduleToken = 0
     @State private var thumbnailRefreshVersions: [UUID: Int] = [:]
+    @State private var exportSharePayload: ExportSharePayload?
+    @State private var isExportingNotes = false
+    @State private var exportProgress: Double?
+    @State private var exportProgressMessage = "Preparing export..."
+    @State private var exportTask: Task<Void, Never>?
 
     private var sortedFolders: [NotebookFolder] {
         folders.sorted { lhs, rhs in
@@ -74,8 +81,38 @@ struct LibraryView: View {
         return sortedFolders.first
     }
 
+    private var trashedNotes: [NoteDocument] {
+        recentNotes
+            .filter(\.isInTrash)
+            .sorted { lhs, rhs in
+                let lhsDate = lhs.trashedAt ?? .distantPast
+                let rhsDate = rhs.trashedAt ?? .distantPast
+                if lhsDate == rhsDate {
+                    return NoteDocument.libraryOrder(lhs, rhs)
+                }
+                return lhsDate > rhsDate
+            }
+    }
+
+    private var activeRecentNotes: [NoteDocument] {
+        recentNotes.filter { !$0.isInTrash }
+    }
+
+    private var nextTrashExpiration: Date? {
+        trashedNotes.compactMap(\.trashExpirationDate).min()
+    }
+
+    private var trashPurgeTaskID: TimeInterval {
+        nextTrashExpiration?.timeIntervalSinceReferenceDate ?? -1
+    }
+
     private var visibleNotes: [NoteDocument] {
-        let source = selectedFolder?.sortedNotes ?? Array(recentNotes.prefix(24))
+        let source: [NoteDocument]
+        if isTrashSelected {
+            source = trashedNotes
+        } else {
+            source = selectedFolder?.activeSortedNotes ?? Array(activeRecentNotes.prefix(24))
+        }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return source }
 
@@ -108,7 +145,9 @@ struct LibraryView: View {
             && !isImportingDocument
             && folderCreatedToast == nil
             && folderPendingDeletion == nil
-            && notePendingDeletion == nil
+            && notesPendingTrash.isEmpty
+            && notesPendingPermanentDeletion.isEmpty
+            && !isExportingNotes
             && errorMessage == nil
             && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -139,7 +178,9 @@ struct LibraryView: View {
             FolderListView(
                 folders: sortedFolders,
                 selectedFolderID: $selectedFolderID,
+                isTrashSelected: $isTrashSelected,
                 searchText: $searchText,
+                trashNoteCount: trashedNotes.count,
                 createFolder: {
                     folderBeingEdited = nil
                     isShowingFolderEditor = true
@@ -157,9 +198,10 @@ struct LibraryView: View {
             )
         } detail: {
             NotesCardGridView(
-                folder: selectedFolder,
+                folder: isTrashSelected ? nil : selectedFolder,
                 notes: visibleNotes,
                 searchText: searchText,
+                isTrash: isTrashSelected,
                 createNote: createNote,
                 importFiles: presentFileImporter,
                 importPhotos: { photoItems in
@@ -174,7 +216,10 @@ struct LibraryView: View {
                 importProgressMessage: importProgressMessage,
                 cancelImport: cancelImport,
                 openNote: openNote,
-                deleteNote: { notePendingDeletion = $0 },
+                exportNotes: exportNotes,
+                moveNotesToTrash: { notesPendingTrash = $0 },
+                restoreNotes: restoreNotes,
+                permanentlyDeleteNotes: { notesPendingPermanentDeletion = $0 },
                 thumbnailRefreshVersions: thumbnailRefreshVersions
             )
         }
@@ -191,6 +236,16 @@ struct LibraryView: View {
                     .zIndex(5)
             }
         }
+        .overlay {
+            if isExportingNotes {
+                BeanNotesProgressOverlay(
+                    title: "Exporting",
+                    message: exportProgressMessage,
+                    progress: exportProgress,
+                    cancel: cancelNotesExport
+                )
+            }
+        }
         .onAppear {
             bootstrapLibrary()
         }
@@ -200,9 +255,13 @@ struct LibraryView: View {
         .task(id: focusVisitTaskID) {
             await runFocusBeanVisitIfEligible()
         }
+        .task(id: trashPurgeTaskID) {
+            await waitForNextTrashExpiration()
+        }
         .onChange(of: scenePhase) { _, phase in
             handleScenePhaseChange(phase)
             if phase == .active {
+                purgeExpiredTrash()
                 absorbSharedInbox()
             }
         }
@@ -249,6 +308,9 @@ struct LibraryView: View {
                 .preferredColorScheme(appTheme.colorScheme)
                 .presentationBackground(beanNotesTheme.appBackground)
         }
+        .sheet(item: $exportSharePayload) { payload in
+            ActivityView(activityItems: payload.urls)
+        }
         .fileImporter(
             isPresented: $isShowingDocumentImporter,
             allowedContentTypes: ImportExportService.supportedContentTypes,
@@ -276,20 +338,36 @@ struct LibraryView: View {
                 folderPendingDeletion = nil
             }
         } message: {
-            Text("Notes in this folder will also be deleted.")
+            Text("All notes in this folder, including notes in Trash, will be permanently deleted.")
         }
-        .alert("Delete Note?", isPresented: Binding(
-            get: { notePendingDeletion != nil },
-            set: { if !$0 { notePendingDeletion = nil } }
+        .alert(notesPendingTrash.count == 1 ? "Move Note to Trash?" : "Move Notes to Trash?", isPresented: Binding(
+            get: { !notesPendingTrash.isEmpty },
+            set: { if !$0 { notesPendingTrash = [] } }
         )) {
-            Button("Delete", role: .destructive) {
-                deletePendingNote()
+            Button("Move to Trash", role: .destructive) {
+                movePendingNotesToTrash()
             }
             Button("Cancel", role: .cancel) {
-                notePendingDeletion = nil
+                notesPendingTrash = []
             }
         } message: {
-            Text("This note and its pages will be deleted.")
+            Text("You can restore \(notesPendingTrash.count == 1 ? "this note" : "these notes") for 30 days before permanent deletion.")
+        }
+        .alert(
+            notesPendingPermanentDeletion.count == 1 ? "Permanently Delete Note?" : "Permanently Delete Notes?",
+            isPresented: Binding(
+                get: { !notesPendingPermanentDeletion.isEmpty },
+                set: { if !$0 { notesPendingPermanentDeletion = [] } }
+            )
+        ) {
+            Button("Delete Permanently", role: .destructive) {
+                permanentlyDeletePendingNotes()
+            }
+            Button("Cancel", role: .cancel) {
+                notesPendingPermanentDeletion = []
+            }
+        } message: {
+            Text("This permanently removes \(notesPendingPermanentDeletion.count == 1 ? "the note and its local files" : "the selected notes and their local files"). This cannot be undone.")
         }
         .alert("BeanNotes", isPresented: Binding(
             get: { errorMessage != nil },
@@ -304,6 +382,8 @@ struct LibraryView: View {
     private func bootstrapLibrary() {
         do {
             try LocalStorageService().prepareDirectories()
+            let purgeResult = try NoteTrashService().purgeExpiredNotes(in: modelContext)
+            reportCleanup(purgeResult.cleanupReport)
 
             if folders.isEmpty {
                 let inbox = NotebookFolder(name: "Inbox", colorHex: beanNotesTheme.defaultFolderColorHex)
@@ -711,17 +791,66 @@ struct LibraryView: View {
         }
     }
 
-    private func deletePendingNote() {
-        guard let note = notePendingDeletion else { return }
-        let cleanupTarget = LocalStorageCleanupTarget(note: note)
-        let deletingNoteID = note.id
+    private func movePendingNotesToTrash() {
+        let notes = notesPendingTrash
+        notesPendingTrash = []
 
-        modelContext.delete(note)
-        notePendingDeletion = nil
+        do {
+            let movedNoteIDs = try NoteTrashService().moveToTrash(notes, in: modelContext)
+            closeNoteTabs(movedNoteIDs)
+        } catch {
+            errorMessage = "BeanNotes could not move the selected notes to Trash. \(error.localizedDescription)"
+        }
+    }
 
-        if saveLibraryChanges("delete the note", rollbackOnFailure: true) {
-            closeNoteTab(deletingNoteID)
-            reportCleanup(LocalStorageService().removeStoredFiles(matching: cleanupTarget))
+    private func restoreNotes(_ notes: [NoteDocument]) {
+        do {
+            try NoteTrashService().restore(notes, in: modelContext)
+        } catch {
+            errorMessage = "BeanNotes could not restore the selected notes. \(error.localizedDescription)"
+        }
+    }
+
+    private func permanentlyDeletePendingNotes() {
+        let notes = notesPendingPermanentDeletion
+        notesPendingPermanentDeletion = []
+
+        do {
+            let result = try NoteTrashService().permanentlyDelete(notes, in: modelContext)
+            closeNoteTabs(result.deletedNoteIDs)
+            reportCleanup(result.cleanupReport)
+        } catch {
+            errorMessage = "BeanNotes could not permanently delete the selected notes. \(error.localizedDescription)"
+        }
+    }
+
+    private func purgeExpiredTrash() {
+        do {
+            let result = try NoteTrashService().purgeExpiredNotes(in: modelContext)
+            closeNoteTabs(result.deletedNoteIDs)
+            reportCleanup(result.cleanupReport)
+        } catch {
+            errorMessage = "BeanNotes could not finish cleaning up expired Trash items. \(error.localizedDescription)"
+        }
+    }
+
+    private func waitForNextTrashExpiration() async {
+        guard let nextTrashExpiration else { return }
+        let delay = max(0, nextTrashExpiration.timeIntervalSinceNow)
+
+        do {
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            purgeExpiredTrash()
+        } catch {
+            // The task is expected to be canceled when the next expiration changes.
+        }
+    }
+
+    private func closeNoteTabs(_ noteIDs: Set<UUID>) {
+        for noteID in noteIDs {
+            editorSessionStore.removeSession(for: noteID)
+            closeNoteTab(noteID)
         }
     }
 
@@ -737,9 +866,7 @@ struct LibraryView: View {
         folderPendingDeletion = nil
 
         if saveLibraryChanges("delete the folder", rollbackOnFailure: true) {
-            for noteID in deletingNoteIDs {
-                closeNoteTab(noteID)
-            }
+            closeNoteTabs(deletingNoteIDs)
 
             if deletingSelectedFolder {
                 selectedFolderID = nextSelectedFolderID
@@ -752,7 +879,68 @@ struct LibraryView: View {
 
     private func reportCleanup(_ report: LocalStorageCleanupReport) {
         guard report.hasFailures else { return }
-        errorMessage = "The item was deleted, but BeanNotes could not remove \(report.failedRelativePaths.count) local file(s)."
+        errorMessage = "The notes were deleted, but BeanNotes could not remove \(report.failedRelativePaths.count) local file(s)."
+    }
+
+    private func exportNotes(_ notes: [NoteDocument], format: ExportFormat) {
+        guard !isExportingNotes else { return }
+
+        var seenIDs: Set<UUID> = []
+        let notes = notes.filter { seenIDs.insert($0.id).inserted }
+        guard !notes.isEmpty else { return }
+
+        isExportingNotes = true
+        exportProgress = 0
+        exportProgressMessage = "Preparing export..."
+        exportTask?.cancel()
+
+        exportTask = Task { @MainActor in
+            let service = ImportExportService()
+            var exportedURLs: [URL] = []
+
+            defer {
+                isExportingNotes = false
+                exportProgress = nil
+                exportProgressMessage = "Preparing export..."
+                exportTask = nil
+            }
+
+            do {
+                let total = max(notes.count, 1)
+                for (index, note) in notes.enumerated() {
+                    try Task.checkCancellation()
+                    let noteNumber = index + 1
+                    exportProgress = Double(index) / Double(total)
+                    exportProgressMessage = "Exporting note \(noteNumber) of \(total)..."
+
+                    let noteURLs = try await service.exportNoteForSharing(note, format: format) { fraction, message in
+                        let noteProgress = fraction ?? 0
+                        exportProgress = (Double(index) + noteProgress) / Double(total)
+                        exportProgressMessage = total == 1 ? message : "\(message) Note \(noteNumber) of \(total)."
+                    }
+                    exportedURLs.append(contentsOf: noteURLs)
+                    await Task.yield()
+                }
+
+                try Task.checkCancellation()
+                guard !exportedURLs.isEmpty else { throw ImportExportError.exportFailed }
+                exportProgress = 1
+                exportProgressMessage = "Opening share sheet..."
+                await Task.yield()
+                try Task.checkCancellation()
+                exportSharePayload = ExportSharePayload(urls: exportedURLs)
+            } catch is CancellationError {
+                service.removeTemporaryExportFiles(exportedURLs)
+            } catch {
+                service.removeTemporaryExportFiles(exportedURLs)
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancelNotesExport() {
+        exportProgressMessage = "Canceling export..."
+        exportTask?.cancel()
     }
 
     @discardableResult
@@ -850,7 +1038,7 @@ struct LibraryView: View {
     private func refreshSearchIndexesIfNeeded() {
         searchIndexRefreshTask?.cancel()
 
-        let notes = Array(recentNotes.prefix(8))
+        let notes = Array(activeRecentNotes.prefix(8))
         guard !notes.isEmpty else { return }
 
         searchIndexRefreshTask = Task { @MainActor in
@@ -1124,6 +1312,7 @@ private struct NotesCardGridView: View {
     var folder: NotebookFolder?
     var notes: [NoteDocument]
     var searchText: String
+    var isTrash: Bool
     var createNote: () -> Void
     var importFiles: (LibraryImportSource) -> Void
     var importPhotos: ([PhotosPickerItem]) -> Void
@@ -1132,10 +1321,19 @@ private struct NotesCardGridView: View {
     var importProgressMessage: String
     var cancelImport: () -> Void
     var openNote: (NoteDocument) -> Void
-    var deleteNote: (NoteDocument) -> Void
+    var exportNotes: ([NoteDocument], ExportFormat) -> Void
+    var moveNotesToTrash: ([NoteDocument]) -> Void
+    var restoreNotes: ([NoteDocument]) -> Void
+    var permanentlyDeleteNotes: ([NoteDocument]) -> Void
     var thumbnailRefreshVersions: [UUID: Int]
 
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var isSelecting = false
+    @State private var selectedNoteIDs: Set<UUID> = []
+
+    private var selectedNotes: [NoteDocument] {
+        notes.filter { selectedNoteIDs.contains($0.id) }
+    }
 
     private let columns = [
         GridItem(
@@ -1150,6 +1348,10 @@ private struct NotesCardGridView: View {
             VStack(alignment: .leading, spacing: 26) {
                 header
 
+                if isSelecting {
+                    selectionActions
+                }
+
                 if notes.isEmpty {
                     emptyState
                 } else {
@@ -1157,8 +1359,19 @@ private struct NotesCardGridView: View {
                         ForEach(notes) { note in
                             NoteCardView(
                                 note: note,
-                                openNote: { openNote(note) },
-                                deleteNote: { deleteNote(note) },
+                                isTrash: isTrash,
+                                isSelecting: isSelecting,
+                                isSelected: selectedNoteIDs.contains(note.id),
+                                openNote: {
+                                    if isSelecting {
+                                        toggleSelection(note)
+                                    } else {
+                                        openNote(note)
+                                    }
+                                },
+                                moveToTrash: { moveNotesToTrash([note]) },
+                                restore: { restoreNotes([note]) },
+                                permanentlyDelete: { permanentlyDeleteNotes([note]) },
                                 thumbnailRefreshVersion: note.sortedPages.first.map {
                                     thumbnailRefreshVersions[$0.id] ?? 0
                                 } ?? 0
@@ -1196,12 +1409,21 @@ private struct NotesCardGridView: View {
             importPhotos(newItems)
             selectedPhotoItems = []
         }
+        .onChange(of: notes.map(\.id)) { _, visibleNoteIDs in
+            selectedNoteIDs.formIntersection(visibleNoteIDs)
+            if visibleNoteIDs.isEmpty {
+                isSelecting = false
+            }
+        }
+        .onChange(of: isTrash) { _, _ in
+            endSelection()
+        }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(folder?.name ?? "Recent Notes")
+                Text(isTrash ? "Trash" : (folder?.name ?? "Recent Notes"))
                     .font(.system(size: 38, weight: .black, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
@@ -1213,82 +1435,179 @@ private struct NotesCardGridView: View {
 
             Spacer()
 
-            HStack(spacing: 7) {
-                if beanNotesTheme == .bean {
-                    BeanAvatarView(size: 26)
-                } else {
-                    Image(systemName: beanNotesTheme.symbolName)
+            if isSelecting {
+                Button("Done") {
+                    endSelection()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityLabel("Finish selecting notes")
+            } else {
+                HStack(spacing: 8) {
+                    if beanNotesTheme == .bean {
+                        BeanAvatarView(size: 26)
+                    } else {
+                        Image(systemName: beanNotesTheme.symbolName)
+                            .font(.subheadline.weight(.semibold))
+                    }
+
+                    Text(beanNotesTheme.label)
                         .font(.subheadline.weight(.semibold))
                 }
-
-                Text(beanNotesTheme.label)
-                    .font(.subheadline.weight(.semibold))
-            }
-            .foregroundStyle(beanNotesTheme.accentColor)
-            .padding(.horizontal, 12)
-            .frame(height: 38)
-            .background(beanNotesTheme.cardBackground, in: Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(beanNotesTheme.accentColor.opacity(0.18), lineWidth: 1)
-            }
-            .accessibilityLabel("\(beanNotesTheme.label) theme")
-
-            Menu {
-                Button {
-                    importFiles(.files)
-                } label: {
-                    Label("File", systemImage: LibraryImportSource.files.systemImage)
+                .foregroundStyle(beanNotesTheme.accentColor)
+                .padding(.horizontal, 12)
+                .frame(height: 38)
+                .background(beanNotesTheme.cardBackground, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(beanNotesTheme.accentColor.opacity(0.18), lineWidth: 1)
                 }
+                .accessibilityLabel("\(beanNotesTheme.label) theme")
 
-                PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 12, matching: .images) {
-                    Label("Photo", systemImage: "photo.on.rectangle")
-                }
-
-                Button {
-                    importFiles(.googleDrive)
-                } label: {
-                    Label("Google Drive", systemImage: LibraryImportSource.googleDrive.systemImage)
-                }
-
-                Button {
-                    importFiles(.oneDrive)
-                } label: {
-                    Label("OneDrive", systemImage: LibraryImportSource.oneDrive.systemImage)
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    if isImportingDocument {
-                        ProgressView()
-                            .controlSize(.small)
+                if !notes.isEmpty {
+                    Button {
+                        isSelecting = true
+                    } label: {
+                        Image(systemName: "checkmark.circle")
+                            .font(.headline)
+                            .frame(width: 22, height: 22)
                     }
-
-                    Label(isImportingDocument ? "Importing" : "Import", systemImage: "square.and.arrow.down")
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .accessibilityLabel("Select notes")
                 }
-                .font(.headline)
+
+                if !isTrash {
+                    Menu {
+                        Button {
+                            importFiles(.files)
+                        } label: {
+                            Label("File", systemImage: LibraryImportSource.files.systemImage)
+                        }
+
+                        PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 12, matching: .images) {
+                            Label("Photo", systemImage: "photo.on.rectangle")
+                        }
+
+                        Button {
+                            importFiles(.googleDrive)
+                        } label: {
+                            Label("Google Drive", systemImage: LibraryImportSource.googleDrive.systemImage)
+                        }
+
+                        Button {
+                            importFiles(.oneDrive)
+                        } label: {
+                            Label("OneDrive", systemImage: LibraryImportSource.oneDrive.systemImage)
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isImportingDocument {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+
+                            Label(isImportingDocument ? "Importing" : "Import", systemImage: "square.and.arrow.down")
+                        }
+                        .font(.headline)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(folder == nil || isImportingDocument)
+                    .keyboardShortcut("i", modifiers: [.command])
+                    .accessibilityLabel("Import file or photo")
+
+                    Button(action: createNote) {
+                        HStack(spacing: 7) {
+                            if beanNotesTheme == .bean {
+                                BeanBadgeView(size: 24)
+                            } else {
+                                Image(systemName: "plus")
+                            }
+
+                            Text("New")
+                        }
+                        .font(.headline)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut("n", modifiers: [.command])
+                    .accessibilityLabel("Create note")
+                }
+            }
+        }
+    }
+
+    private var selectionActions: some View {
+        HStack(spacing: 12) {
+            Button(selectedNoteIDs.count == notes.count ? "Deselect All" : "Select All") {
+                if selectedNoteIDs.count == notes.count {
+                    selectedNoteIDs.removeAll()
+                } else {
+                    selectedNoteIDs = Set(notes.map(\.id))
+                }
             }
             .buttonStyle(.bordered)
-            .controlSize(.large)
-            .disabled(folder == nil || isImportingDocument)
-            .keyboardShortcut("i", modifiers: [.command])
-            .accessibilityLabel("Import file or photo")
 
-            Button(action: createNote) {
-                HStack(spacing: 7) {
-                    if beanNotesTheme == .bean {
-                        BeanBadgeView(size: 24)
-                    } else {
-                        Image(systemName: "plus")
-                    }
+            Text("\(selectedNoteIDs.count) selected")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
 
-                    Text("New")
+            Spacer()
+
+            if isTrash {
+                Button {
+                    let notes = selectedNotes
+                    endSelection()
+                    restoreNotes(notes)
+                } label: {
+                    Label("Restore", systemImage: "arrow.uturn.backward")
                 }
-                .font(.headline)
+                .buttonStyle(.bordered)
+                .disabled(selectedNoteIDs.isEmpty)
+
+                Button(role: .destructive) {
+                    let notes = selectedNotes
+                    endSelection()
+                    permanentlyDeleteNotes(notes)
+                } label: {
+                    Label("Delete", systemImage: "trash.slash")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedNoteIDs.isEmpty)
+            } else {
+                Menu {
+                    ForEach(ExportFormat.allCases) { format in
+                        Button {
+                            let notes = selectedNotes
+                            endSelection()
+                            exportNotes(notes, format)
+                        } label: {
+                            Label(format.label, systemImage: exportIcon(for: format))
+                        }
+                    }
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.bordered)
+                .disabled(selectedNoteIDs.isEmpty)
+
+                Button(role: .destructive) {
+                    let notes = selectedNotes
+                    endSelection()
+                    moveNotesToTrash(notes)
+                } label: {
+                    Label("Trash", systemImage: "trash")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedNoteIDs.isEmpty)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .keyboardShortcut("n", modifiers: [.command])
-            .accessibilityLabel("Create note")
+        }
+        .padding(14)
+        .background(beanNotesTheme.cardBackground.opacity(0.94), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
         }
     }
 
@@ -1301,6 +1620,13 @@ private struct NotesCardGridView: View {
                 "No Matching Notes",
                 systemImage: "magnifyingglass",
                 description: Text("Try a different search.")
+            )
+            .frame(maxWidth: .infinity, minHeight: 360)
+        } else if isTrash {
+            ContentUnavailableView(
+                "Trash is Empty",
+                systemImage: "trash",
+                description: Text("Deleted notes stay here for 30 days before they are permanently removed.")
             )
             .frame(maxWidth: .infinity, minHeight: 360)
         } else if beanNotesTheme == .bean {
@@ -1335,6 +1661,30 @@ private struct NotesCardGridView: View {
                 description: Text("Create a note in this folder.")
             )
             .frame(maxWidth: .infinity, minHeight: 360)
+        }
+    }
+
+    private func toggleSelection(_ note: NoteDocument) {
+        if selectedNoteIDs.contains(note.id) {
+            selectedNoteIDs.remove(note.id)
+        } else {
+            selectedNoteIDs.insert(note.id)
+        }
+    }
+
+    private func endSelection() {
+        isSelecting = false
+        selectedNoteIDs.removeAll()
+    }
+
+    private func exportIcon(for format: ExportFormat) -> String {
+        switch format {
+        case .pdf:
+            "doc.richtext"
+        case .png:
+            "photo"
+        case .jpeg:
+            "photo.fill"
         }
     }
 }
@@ -1455,8 +1805,13 @@ private struct NoteCardView: View {
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
 
     var note: NoteDocument
+    var isTrash: Bool
+    var isSelecting: Bool
+    var isSelected: Bool
     var openNote: () -> Void
-    var deleteNote: () -> Void
+    var moveToTrash: () -> Void
+    var restore: () -> Void
+    var permanentlyDelete: () -> Void
     var thumbnailRefreshVersion: Int
 
     @State private var thumbnailImage: UIImage?
@@ -1481,7 +1836,11 @@ private struct NoteCardView: View {
                         .lineLimit(1)
 
                     HStack(spacing: 8) {
-                        Text(note.updatedAt, style: .date)
+                        if isTrash {
+                            Text(trashExpirationLabel)
+                        } else {
+                            Text(note.updatedAt, style: .date)
+                        }
                         Text("\(note.pages.count) \(note.pages.count == 1 ? "page" : "pages")")
                     }
                     .font(.subheadline)
@@ -1500,19 +1859,49 @@ private struct NoteCardView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                    .stroke(
+                        isSelected ? beanNotesTheme.accentColor : Color.secondary.opacity(0.12),
+                        lineWidth: isSelected ? 3 : 1
+                    )
+            }
+            .overlay(alignment: .topTrailing) {
+                if isSelecting {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(isSelected ? beanNotesTheme.accentColor : .secondary)
+                        .background(beanNotesTheme.cardBackground, in: Circle())
+                        .padding(12)
+                        .accessibilityHidden(true)
+                }
             }
             .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 8)
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button(role: .destructive) {
-                deleteNote()
-            } label: {
-                Label("Delete", systemImage: "trash")
+            if !isSelecting {
+                if isTrash {
+                    Button {
+                        restore()
+                    } label: {
+                        Label("Restore", systemImage: "arrow.uturn.backward")
+                    }
+
+                    Button(role: .destructive) {
+                        permanentlyDelete()
+                    } label: {
+                        Label("Delete Permanently", systemImage: "trash.slash")
+                    }
+                } else {
+                    Button(role: .destructive) {
+                        moveToTrash()
+                    } label: {
+                        Label("Move to Trash", systemImage: "trash")
+                    }
+                }
             }
         }
         .accessibilityLabel("\(note.title), \(note.pages.count) pages")
+        .accessibilityValue(isSelecting ? (isSelected ? "Selected" : "Not selected") : "")
         .onAppear {
             loadThumbnail()
         }
@@ -1539,6 +1928,16 @@ private struct NoteCardView: View {
         } message: {
             Text(errorMessage ?? "")
         }
+    }
+
+    private var trashExpirationLabel: String {
+        guard let days = NoteTrashPolicy.remainingDays(trashedAt: note.trashedAt) else {
+            return "In Trash"
+        }
+        if days == 0 {
+            return "Deletes today"
+        }
+        return "Deletes in \(days)d"
     }
 
     private var thumbnail: some View {

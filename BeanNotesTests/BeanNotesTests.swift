@@ -194,6 +194,127 @@ struct BeanNotesTests {
         #expect(notes.sorted(by: NoteDocument.libraryOrder).map(\.id) == [newerNote.id, olderNote.id])
     }
 
+    @Test func trashPolicyExpiresNotesAtThirtyDays() {
+        let trashedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let justBeforeExpiration = trashedAt.addingTimeInterval(NoteTrashPolicy.retentionInterval - 1)
+        let expiration = trashedAt.addingTimeInterval(NoteTrashPolicy.retentionInterval)
+
+        #expect(NoteTrashPolicy.retentionDays == 30)
+        #expect(!NoteTrashPolicy.shouldPurge(trashedAt: nil, now: expiration))
+        #expect(!NoteTrashPolicy.shouldPurge(trashedAt: trashedAt, now: justBeforeExpiration))
+        #expect(NoteTrashPolicy.shouldPurge(trashedAt: trashedAt, now: expiration))
+        #expect(NoteTrashPolicy.remainingDays(trashedAt: trashedAt, now: trashedAt) == 30)
+    }
+
+    @Test func trashServiceMovesAndRestoresNotesWithoutLosingFolder() throws {
+        let context = try makeInMemoryModelContext()
+        let folder = NotebookFolder(name: "Inbox")
+        let firstNote = NoteDocument(title: "First")
+        let secondNote = NoteDocument(title: "Second")
+        folder.notes.append(contentsOf: [firstNote, secondNote])
+        context.insert(folder)
+        try context.save()
+
+        let trashedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let movedIDs = try NoteTrashService().moveToTrash(
+            [firstNote, firstNote],
+            at: trashedAt,
+            in: context
+        )
+
+        #expect(movedIDs == [firstNote.id])
+        #expect(firstNote.trashedAt == trashedAt)
+        #expect(firstNote.folder?.id == folder.id)
+        #expect(folder.activeSortedNotes.map(\.id) == [secondNote.id])
+        #expect(folder.activeNoteCount == 1)
+
+        let restoredIDs = try NoteTrashService().restore([firstNote], in: context)
+
+        #expect(restoredIDs == [firstNote.id])
+        #expect(firstNote.trashedAt == nil)
+        #expect(firstNote.folder?.id == folder.id)
+        #expect(folder.activeNoteCount == 2)
+    }
+
+    @Test func trashServicePurgesOnlyExpiredNotes() throws {
+        let context = try makeInMemoryModelContext()
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let folder = NotebookFolder(name: "Inbox")
+        let expiredNote = NoteDocument(
+            title: "Expired",
+            trashedAt: now.addingTimeInterval(-NoteTrashPolicy.retentionInterval)
+        )
+        let recentTrashNote = NoteDocument(
+            title: "Recent",
+            trashedAt: now.addingTimeInterval(-NoteTrashPolicy.retentionInterval + 1)
+        )
+        let activeNote = NoteDocument(title: "Active")
+        let expiredNoteID = expiredNote.id
+        let recentTrashNoteID = recentTrashNote.id
+        let activeNoteID = activeNote.id
+        folder.notes.append(contentsOf: [expiredNote, recentTrashNote, activeNote])
+        context.insert(folder)
+        try context.save()
+
+        let result = try NoteTrashService().purgeExpiredNotes(in: context, now: now)
+        let remainingNotes = try context.fetch(FetchDescriptor<NoteDocument>())
+
+        #expect(result.deletedNoteIDs == [expiredNoteID])
+        #expect(result.cleanupReport.failedRelativePaths.isEmpty)
+        #expect(Set(remainingNotes.map(\.id)) == [recentTrashNoteID, activeNoteID])
+    }
+
+    @Test func permanentTrashDeletionRemovesLocalFilesOnlyAtFinalDelete() throws {
+        let context = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesTrashCleanup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let folder = NotebookFolder(name: "Inbox")
+        let note = NoteDocument(title: "Recoverable")
+        let page = NotePage(pageOrder: 0)
+        let drawing = try storage.saveData(
+            Data("drawing".utf8),
+            fileName: page.drawingFileName,
+            contentType: .data,
+            to: .drawings,
+            replacingExisting: true
+        )
+        let imported = try storage.saveData(
+            Data("attachment".utf8),
+            preferredName: "Attachment.pdf",
+            contentType: .pdf,
+            to: .imports
+        )
+        let attachment = Attachment(
+            kind: .pdf,
+            displayName: "Attachment",
+            originalFileName: "Attachment.pdf",
+            storedFileName: imported.relativePath,
+            contentTypeIdentifier: UTType.pdf.identifier,
+            fileExtension: "pdf"
+        )
+        folder.notes.append(note)
+        note.pages.append(page)
+        page.attachments.append(attachment)
+        context.insert(folder)
+        try context.save()
+
+        let service = NoteTrashService(storage: storage)
+        try service.moveToTrash([note], in: context)
+
+        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: drawing.relativePath).path))
+        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: imported.relativePath).path))
+
+        let result = try service.permanentlyDelete([note], in: context)
+
+        #expect(result.cleanupReport.failedRelativePaths.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: storage.url(forRelativePath: drawing.relativePath).path))
+        #expect(!FileManager.default.fileExists(atPath: storage.url(forRelativePath: imported.relativePath).path))
+    }
+
     @Test func noteSearchMatchesIndexedPageTextAndAttachmentMetadata() throws {
         let context = try makeInMemoryModelContext()
         let note = NoteDocument(title: "CMPT 310")

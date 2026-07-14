@@ -223,6 +223,12 @@ struct LocalStorageCleanupTarget: Equatable {
         insert(note)
     }
 
+    init(notes: [NoteDocument]) {
+        for note in notes {
+            insert(note)
+        }
+    }
+
     init(page: NotePage) {
         insert(page)
     }

@@ -239,12 +239,12 @@ struct ExportView: View {
     }
 }
 
-private struct ExportSharePayload: Identifiable {
+struct ExportSharePayload: Identifiable {
     let id = UUID()
     var urls: [URL]
 }
 
-private struct ActivityView: UIViewControllerRepresentable {
+struct ActivityView: UIViewControllerRepresentable {
     var activityItems: [URL]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {

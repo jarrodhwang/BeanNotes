@@ -36,4 +36,12 @@ final class NotebookFolder {
     var sortedNotes: [NoteDocument] {
         notes.sorted(by: NoteDocument.libraryOrder)
     }
+
+    var activeSortedNotes: [NoteDocument] {
+        notes.filter { !$0.isInTrash }.sorted(by: NoteDocument.libraryOrder)
+    }
+
+    var activeNoteCount: Int {
+        notes.lazy.filter { !$0.isInTrash }.count
+    }
 }

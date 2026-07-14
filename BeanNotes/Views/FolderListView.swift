@@ -11,7 +11,9 @@ struct FolderListView: View {
 
     var folders: [NotebookFolder]
     @Binding var selectedFolderID: UUID?
+    @Binding var isTrashSelected: Bool
     @Binding var searchText: String
+    var trashNoteCount: Int
     var createFolder: () -> Void
     var renameFolder: (NotebookFolder) -> Void
     var deleteFolder: (NotebookFolder) -> Void
@@ -65,6 +67,11 @@ struct FolderListView: View {
                     ForEach(folders) { folder in
                         folderRow(folder)
                     }
+
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    trashRow
                 }
                 .padding(.bottom, 20)
             }
@@ -140,11 +147,12 @@ struct FolderListView: View {
     }
 
     private func folderRow(_ folder: NotebookFolder) -> some View {
-        let isSelected = selectedFolderID == folder.id
+        let isSelected = !isTrashSelected && selectedFolderID == folder.id
         let folderColor = Color(hex: folder.colorHex)
 
         return Button {
             selectedFolderID = folder.id
+            isTrashSelected = false
         } label: {
             HStack(spacing: 12) {
                 FolderProjectMarker(
@@ -160,7 +168,7 @@ struct FolderListView: View {
 
                 Spacer()
 
-                Text("\(folder.notes.count)")
+                Text("\(folder.activeNoteCount)")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
@@ -197,7 +205,53 @@ struct FolderListView: View {
                 Label("Delete", systemImage: "trash")
             }
         }
-        .accessibilityLabel("\(folder.name), \(folder.notes.count) notes")
+        .accessibilityLabel("\(folder.name), \(folder.activeNoteCount) notes")
+    }
+
+    private var trashRow: some View {
+        Button {
+            isTrashSelected = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: isTrashSelected ? "trash.fill" : "trash")
+                    .font(.headline)
+                    .foregroundStyle(isTrashSelected ? beanNotesTheme.accentColor : .secondary)
+                    .frame(width: 20)
+
+                Text("Trash")
+                    .font(.headline)
+                    .foregroundStyle(isTrashSelected ? .primary : .secondary)
+
+                Spacer()
+
+                Text("\(trashNoteCount)")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            .background(
+                beanNotesTheme.accentColor.opacity(isTrashSelected ? 0.16 : 0.06),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .overlay(alignment: .leading) {
+                if isTrashSelected {
+                    Rectangle()
+                        .fill(beanNotesTheme.accentColor)
+                        .frame(width: 4)
+                        .padding(.vertical, 7)
+                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(
+                        isTrashSelected ? beanNotesTheme.accentColor.opacity(0.55) : Color.clear,
+                        lineWidth: 2
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Trash, \(trashNoteCount) notes")
     }
 }
 

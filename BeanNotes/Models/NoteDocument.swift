@@ -14,6 +14,7 @@ final class NoteDocument {
     var searchIndexUpdatedAt: Date?
     var createdAt: Date
     var updatedAt: Date
+    var trashedAt: Date? = nil
     var folder: NotebookFolder?
 
     @Relationship(deleteRule: .cascade, inverse: \NotePage.note)
@@ -26,6 +27,7 @@ final class NoteDocument {
         searchIndexUpdatedAt: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
+        trashedAt: Date? = nil,
         folder: NotebookFolder? = nil,
         pages: [NotePage] = []
     ) {
@@ -35,6 +37,7 @@ final class NoteDocument {
         self.searchIndexUpdatedAt = searchIndexUpdatedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.trashedAt = trashedAt
         self.folder = folder
         self.pages = pages
     }
@@ -46,6 +49,14 @@ final class NoteDocument {
             }
             return lhs.pageOrder < rhs.pageOrder
         }
+    }
+
+    var isInTrash: Bool {
+        trashedAt != nil
+    }
+
+    var trashExpirationDate: Date? {
+        trashedAt.map(NoteTrashPolicy.expirationDate(for:))
     }
 
     static func libraryOrder(_ lhs: NoteDocument, _ rhs: NoteDocument) -> Bool {
@@ -76,5 +87,25 @@ final class NoteDocument {
 
     func matchesSearch(_ rawQuery: String) -> Bool {
         NoteSearchText.matches(rawQuery, in: NoteSearchText.join([title, searchableText]))
+    }
+}
+
+enum NoteTrashPolicy {
+    nonisolated static let retentionDays = 30
+    nonisolated static let retentionInterval: TimeInterval = TimeInterval(retentionDays * 24 * 60 * 60)
+
+    nonisolated static func expirationDate(for trashedAt: Date) -> Date {
+        trashedAt.addingTimeInterval(retentionInterval)
+    }
+
+    nonisolated static func shouldPurge(trashedAt: Date?, now: Date = Date()) -> Bool {
+        guard let trashedAt else { return false }
+        return expirationDate(for: trashedAt) <= now
+    }
+
+    nonisolated static func remainingDays(trashedAt: Date?, now: Date = Date()) -> Int? {
+        guard let trashedAt else { return nil }
+        let remaining = expirationDate(for: trashedAt).timeIntervalSince(now)
+        return max(0, Int(ceil(remaining / (24 * 60 * 60))))
     }
 }
