@@ -3562,6 +3562,17 @@ struct BeanNotesTests {
         fixture.pageView.updateEraserScope(at: nil)
         #expect(fixture.pageView.eraserScopeView.isHidden)
 
+        fixture.pageView.updateEraserScope(at: location)
+        #expect(!fixture.pageView.eraserScopeView.isHidden)
+        #expect(fixture.pageView.eraserScopeView.center == location)
+        #expect(
+            fixture.pageView.eraserScopeView.bounds.size
+                == CGSize(
+                    width: DrawingCanvasView.EraserScopeView.objectEraserDiameter,
+                    height: DrawingCanvasView.EraserScopeView.objectEraserDiameter
+                )
+        )
+
         fixture.pageView.setLiveDrawingActive(false)
         fixture.pageView.updateEraserScope(at: location)
         #expect(fixture.pageView.eraserScopeView.isHidden)

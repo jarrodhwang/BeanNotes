@@ -1568,6 +1568,10 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class EraserScopeView: UIView {
+        // Vector erasers report zero width because they remove whole strokes.
+        // Keep a visible point target so object erasing still provides feedback.
+        static let objectEraserDiameter: CGFloat = 12
+
         override init(frame: CGRect) {
             super.init(frame: frame)
             configureView()
@@ -2214,7 +2218,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
-            eraserScopeView.show(at: location, diameter: eraserTool.width)
+            let diameter = eraserTool.eraserType == .vector
+                ? EraserScopeView.objectEraserDiameter
+                : eraserTool.width
+            eraserScopeView.show(at: location, diameter: diameter)
             bringSubviewToFront(eraserScopeView)
         }
 
