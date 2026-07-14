@@ -294,14 +294,10 @@ struct NoteEditorView: View {
                             updatePageBackground(page, colorHex: $0)
                         }
                     ),
-                    paperSize: Binding(
-                        get: { page.standardPaperSize },
-                        set: { paperSize in
-                            guard let paperSize else { return }
-                            updatePagePaperSize(page, to: paperSize)
-                        }
+                    pageSize: Binding(
+                        get: { page.pageSize },
+                        set: { updatePageSize(page, to: $0) }
                     ),
-                    currentPageSize: page.pageSize,
                     applyToAllPages: {
                         applyPageAppearanceToAllPages(from: page)
                     }
@@ -1860,12 +1856,16 @@ struct NoteEditorView: View {
         }
     }
 
-    private func updatePagePaperSize(_ page: NotePage, to paperSize: PaperSize) {
+    private func updatePageSize(_ page: NotePage, to pageSize: CGSize) {
         let previousWidth = page.width
         let previousHeight = page.height
+        let normalizedSize = CustomPaperSize.dimensions(
+            width: pageSize.width,
+            height: pageSize.height
+        )
 
-        page.width = paperSize.dimensions.width
-        page.height = paperSize.dimensions.height
+        page.width = normalizedSize.width
+        page.height = normalizedSize.height
         page.touch()
 
         if !saveEditorChanges("save the page size") {
@@ -1982,9 +1982,30 @@ private struct PageBackgroundEditorSheet: View {
 
     @Binding var styleRaw: String
     @Binding var colorHex: String
-    @Binding var paperSize: PaperSize?
-    var currentPageSize: CGSize
+    @Binding var pageSize: CGSize
     var applyToAllPages: () -> Void
+
+    @State private var customWidth: Double
+    @State private var customHeight: Double
+    @State private var selectedPaperSizeRaw: String
+
+    init(
+        styleRaw: Binding<String>,
+        colorHex: Binding<String>,
+        pageSize: Binding<CGSize>,
+        applyToAllPages: @escaping () -> Void
+    ) {
+        _styleRaw = styleRaw
+        _colorHex = colorHex
+        _pageSize = pageSize
+        self.applyToAllPages = applyToAllPages
+        _customWidth = State(initialValue: pageSize.wrappedValue.width)
+        _customHeight = State(initialValue: pageSize.wrappedValue.height)
+        _selectedPaperSizeRaw = State(
+            initialValue: PaperSize.matching(pageSize.wrappedValue)?.rawValue
+                ?? CustomPaperSize.selectionRawValue
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -1995,18 +2016,43 @@ private struct PageBackgroundEditorSheet: View {
                 }
 
                 Section("Paper Size") {
-                    Picker("Paper Size", selection: $paperSize) {
-                        if paperSize == nil {
-                            Text(customPaperSizeLabel)
-                                .tag(Optional<PaperSize>.none)
-                        }
-
+                    Picker("Paper Size", selection: $selectedPaperSizeRaw) {
                         ForEach(PaperSize.allCases) { size in
                             Text("\(size.label) (\(size.dimensionsLabel))")
-                                .tag(Optional(size))
+                                .tag(size.rawValue)
                         }
+
+                        Text(customPaperSizeLabel).tag(CustomPaperSize.selectionRawValue)
                     }
                     .accessibilityIdentifier("pageAppearance.paperSizePicker")
+                    .onChange(of: selectedPaperSizeRaw) { _, selection in
+                        guard let paperSize = PaperSize(rawValue: selection) else { return }
+                        customWidth = paperSize.dimensions.width
+                        customHeight = paperSize.dimensions.height
+                        pageSize = paperSize.dimensions
+                    }
+
+                    if selectedPaperSizeRaw == CustomPaperSize.selectionRawValue {
+                        TextField("Width (pt)", value: $customWidth, format: .number.precision(.fractionLength(0...2)))
+                            .keyboardType(.decimalPad)
+                            .accessibilityIdentifier("pageAppearance.customPaperWidth")
+
+                        TextField("Height (pt)", value: $customHeight, format: .number.precision(.fractionLength(0...2)))
+                            .keyboardType(.decimalPad)
+                            .accessibilityIdentifier("pageAppearance.customPaperHeight")
+
+                        Button("Apply Custom Size") {
+                            pageSize = CGSize(width: customWidth, height: customHeight)
+                        }
+                        .disabled(!CustomPaperSize.isValid(width: customWidth, height: customHeight))
+                        .accessibilityIdentifier("pageAppearance.applyCustomPaperSize")
+
+                        if !CustomPaperSize.isValid(width: customWidth, height: customHeight) {
+                            Text("Width and height must each be between 1 and 4096 points.")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
 
                     Text("Existing ink and attachments keep their size when the page dimensions change.")
                         .font(.caption)
@@ -2044,7 +2090,7 @@ private struct PageBackgroundEditorSheet: View {
     }
 
     private var customPaperSizeLabel: String {
-        "Custom (\(Int(currentPageSize.width.rounded())) × \(Int(currentPageSize.height.rounded())) pt)"
+        "Custom (\(Int(pageSize.width.rounded())) × \(Int(pageSize.height.rounded())) pt)"
     }
 }
 

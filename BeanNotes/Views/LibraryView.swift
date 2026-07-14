@@ -24,6 +24,8 @@ struct LibraryView: View {
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(PaperSize.storageKey) private var paperSizeRaw = PaperSize.defaultPaperSize.rawValue
+    @AppStorage(CustomPaperSize.widthStorageKey) private var customPaperWidth = Double(CustomPaperSize.defaultDimensions.width)
+    @AppStorage(CustomPaperSize.heightStorageKey) private var customPaperHeight = Double(CustomPaperSize.defaultDimensions.height)
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
     @AppStorage(BeanVisitPolicy.allowsInterruptionsKey) private var beanVisitsMayInterrupt = false
@@ -123,8 +125,12 @@ struct LibraryView: View {
         NoteBackground.fromDefaults(styleRaw: defaultBackgroundStyleRaw, colorHex: defaultBackgroundColorHex)
     }
 
-    private var defaultPaperSize: PaperSize {
-        PaperSize(rawValue: paperSizeRaw) ?? PaperSize.defaultPaperSize
+    private var defaultPageSize: CGSize {
+        if paperSizeRaw == CustomPaperSize.selectionRawValue {
+            return CustomPaperSize.dimensions(width: customPaperWidth, height: customPaperHeight)
+        }
+
+        return (PaperSize(rawValue: paperSizeRaw) ?? PaperSize.defaultPaperSize).dimensions
     }
 
     private var appTheme: AppTheme {
@@ -606,8 +612,8 @@ struct LibraryView: View {
             let page = NotePage(
                 pageOrder: 0,
                 background: defaultNoteBackground,
-                width: defaultPaperSize.dimensions.width,
-                height: defaultPaperSize.dimensions.height,
+                width: defaultPageSize.width,
+                height: defaultPageSize.height,
                 createdAt: now,
                 updatedAt: now
             )

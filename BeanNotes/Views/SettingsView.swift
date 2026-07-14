@@ -25,6 +25,8 @@ struct SettingsView: View {
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
     @AppStorage(PaperSize.storageKey) private var paperSizeRaw = PaperSize.defaultPaperSize.rawValue
+    @AppStorage(CustomPaperSize.widthStorageKey) private var customPaperWidth = Double(CustomPaperSize.defaultDimensions.width)
+    @AppStorage(CustomPaperSize.heightStorageKey) private var customPaperHeight = Double(CustomPaperSize.defaultDimensions.height)
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
@@ -181,8 +183,15 @@ struct SettingsView: View {
                 Section("Default Paper Size") {
                     Picker("Paper Size", selection: $paperSizeRaw) {
                         ForEach(PaperSize.allCases) { paperSize in
-                            Text(paperSize.label).tag(paperSize.rawValue)
+                            Text("\(paperSize.label) (\(paperSize.dimensionsLabel))")
+                                .tag(paperSize.rawValue)
                         }
+
+                        Text("Custom").tag(CustomPaperSize.selectionRawValue)
+                    }
+
+                    if paperSizeRaw == CustomPaperSize.selectionRawValue {
+                        customPaperSizeFields
                     }
 
                     Text("Applies to new notes. Existing pages keep their current size.")
@@ -375,6 +384,24 @@ struct SettingsView: View {
         .environment(\.beanNotesTheme, selectedMoodTheme)
         .preferredColorScheme(selectedAppTheme.colorScheme)
         .presentationBackground(selectedMoodTheme.appBackground)
+    }
+
+    private var customPaperSizeFields: some View {
+        Group {
+            TextField("Width (pt)", value: $customPaperWidth, format: .number.precision(.fractionLength(0...2)))
+                .keyboardType(.decimalPad)
+                .accessibilityIdentifier("settings.customPaperWidth")
+
+            TextField("Height (pt)", value: $customPaperHeight, format: .number.precision(.fractionLength(0...2)))
+                .keyboardType(.decimalPad)
+                .accessibilityIdentifier("settings.customPaperHeight")
+
+            if !CustomPaperSize.isValid(width: customPaperWidth, height: customPaperHeight) {
+                Text("Width and height must each be between 1 and 4096 points.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
     }
 
     private var beanVisitPreviewAnimation: Animation {

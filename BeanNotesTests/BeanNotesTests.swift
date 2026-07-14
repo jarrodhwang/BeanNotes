@@ -404,6 +404,20 @@ struct BeanNotesTests {
         #expect(PaperSize.matching(CGSize(width: 640, height: 900)) == nil)
     }
 
+    @Test func customPaperSizeValidatesAndNormalizesDimensions() {
+        #expect(CustomPaperSize.isValid(width: 640, height: 900))
+        #expect(!CustomPaperSize.isValid(width: 0, height: 900))
+        #expect(!CustomPaperSize.isValid(width: 640, height: .infinity))
+        #expect(!CustomPaperSize.isValid(width: 640, height: NotePage.maximumPageDimension + 1))
+
+        #expect(CustomPaperSize.dimensions(width: 640, height: 900) == CGSize(width: 640, height: 900))
+        #expect(CustomPaperSize.dimensions(width: 0, height: .nan) == CustomPaperSize.defaultDimensions)
+        #expect(CustomPaperSize.dimensions(width: 5_000, height: 6_000) == CGSize(
+            width: NotePage.maximumPageDimension,
+            height: NotePage.maximumPageDimension
+        ))
+    }
+
     @Test func followingPageInheritsPaperAndBackground() {
         let background = NoteBackground(style: .grid, colorHex: "#F5E8C8")
         let page = NotePage(

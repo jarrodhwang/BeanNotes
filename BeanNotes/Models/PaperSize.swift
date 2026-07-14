@@ -71,3 +71,30 @@ enum PaperSize: String, CaseIterable, Identifiable {
         }
     }
 }
+
+enum CustomPaperSize {
+    static let selectionRawValue = "custom"
+    static let widthStorageKey = "defaultCustomPaperWidth"
+    static let heightStorageKey = "defaultCustomPaperHeight"
+    static let defaultDimensions = PaperSize.defaultPaperSize.dimensions
+
+    static func dimensions(width: Double, height: Double) -> CGSize {
+        CGSize(
+            width: NotePage.normalizedPageDimension(
+                width,
+                fallback: defaultDimensions.width
+            ),
+            height: NotePage.normalizedPageDimension(
+                height,
+                fallback: defaultDimensions.height
+            )
+        )
+    }
+
+    static func isValid(width: Double, height: Double) -> Bool {
+        width.isFinite
+            && height.isFinite
+            && (NotePage.minimumPageDimension...NotePage.maximumPageDimension).contains(width)
+            && (NotePage.minimumPageDimension...NotePage.maximumPageDimension).contains(height)
+    }
+}
