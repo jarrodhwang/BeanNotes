@@ -3050,6 +3050,33 @@ struct BeanNotesTests {
         DrawingCanvasView.dismantleUIView(restored, coordinator: restoredCoordinator)
     }
 
+    @Test @MainActor func staleSelectionUpdateDoesNotInterruptScrollingToNextPage() {
+        let firstPage = NotePage(pageOrder: 0)
+        let secondPage = NotePage(pageOrder: 1)
+        let parent = makeDrawingCanvasView(
+            page: firstPage,
+            drawingStorage: DrawingStorageService(),
+            pages: [firstPage, secondPage]
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+
+        coordinator.selectVisiblePage(secondPage.id)
+
+        let staleUpdate = coordinator.reconcileSelectedPageID(firstPage.id)
+        #expect(staleUpdate.effectivePageID == secondPage.id)
+        #expect(!staleUpdate.shouldScroll)
+        #expect(coordinator.pendingVisiblePageID == secondPage.id)
+
+        let publishedUpdate = coordinator.reconcileSelectedPageID(secondPage.id)
+        #expect(publishedUpdate.effectivePageID == secondPage.id)
+        #expect(!publishedUpdate.shouldScroll)
+        #expect(coordinator.pendingVisiblePageID == nil)
+
+        let externalUpdate = coordinator.reconcileSelectedPageID(firstPage.id)
+        #expect(externalUpdate.effectivePageID == firstPage.id)
+        #expect(externalUpdate.shouldScroll)
+    }
+
     @Test @MainActor func canvasDismantlePublishesFinalReadingState() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesFinalViewport-\(UUID().uuidString)", isDirectory: true)

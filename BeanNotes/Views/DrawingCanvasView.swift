@@ -246,10 +246,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.observeToolState(toolState)
         containerView.setTopContentView(context.coordinator.updateTopContent(topContent))
+        let selectionUpdate = context.coordinator.reconcileSelectedPageID(selectedPageID)
 
         containerView.configure(
             pages: pages,
-            selectedPageID: selectedPageID,
+            selectedPageID: selectionUpdate.effectivePageID,
             pageFlowMode: pageFlowMode,
             inputMode: inputMode,
             renderQuality: renderQuality,
@@ -259,9 +260,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             showsBeanArtwork: showsBeanArtwork
         )
 
-        if context.coordinator.selectedPageID != selectedPageID,
-           let selectedPageID {
-            context.coordinator.selectedPageID = selectedPageID
+        if selectionUpdate.shouldScroll,
+           let selectedPageID = selectionUpdate.effectivePageID {
             containerView.scrollToPage(id: selectedPageID, animated: true)
         }
 
@@ -2984,6 +2984,11 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
+        struct SelectionUpdate {
+            var effectivePageID: UUID?
+            var shouldScroll: Bool
+        }
+
         private final class WeakPageCanvasView {
             weak var value: PageCanvasView?
 
@@ -2994,6 +2999,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         var parent: DrawingCanvasView
         var selectedPageID: UUID?
+        private(set) var pendingVisiblePageID: UUID?
         var saveNowSignal: Int
         var exportPreparationSignal: Int
         var fitToPageSignal: Int
@@ -3280,11 +3286,35 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func selectVisiblePage(_ pageID: UUID) {
             selectedPageID = pageID
+            pendingVisiblePageID = pageID
             notifyVisiblePageChanged(pageID)
             activeCanvasView?.becomeFirstResponder()
             applyCustomToolIfNeeded()
             configureToolPicker(mode: parent.paletteMode)
             publishUndoRedoAvailability()
+        }
+
+        /// Keeps an asynchronously published visible-page change from being undone by
+        /// an intervening SwiftUI update that still contains the previous selection.
+        func reconcileSelectedPageID(_ proposedPageID: UUID?) -> SelectionUpdate {
+            if let pendingVisiblePageID {
+                if proposedPageID == pendingVisiblePageID {
+                    self.pendingVisiblePageID = nil
+                    selectedPageID = proposedPageID
+                }
+
+                return SelectionUpdate(
+                    effectivePageID: pendingVisiblePageID,
+                    shouldScroll: false
+                )
+            }
+
+            guard selectedPageID != proposedPageID else {
+                return SelectionUpdate(effectivePageID: proposedPageID, shouldScroll: false)
+            }
+
+            selectedPageID = proposedPageID
+            return SelectionUpdate(effectivePageID: proposedPageID, shouldScroll: proposedPageID != nil)
         }
 
         func configureToolPicker(mode: PenPaletteMode) {
