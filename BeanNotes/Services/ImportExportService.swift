@@ -1518,6 +1518,9 @@ struct ImportExportService {
         try Task.checkCancellation()
         let worker = Task.detached(priority: .userInitiated) { () throws -> Void in
             try autoreleasepool {
+                let stagedURL = stagedExportURL(for: exportURL)
+                defer { try? FileManager.default.removeItem(at: stagedURL) }
+
                 try Task.checkCancellation()
                 let drawing = try ThumbnailService.loadDrawingForExport(
                     fileName: snapshot.drawingFileName,
@@ -1536,14 +1539,19 @@ struct ImportExportService {
                 case .png:
                     guard let data = image.pngData() else { throw ImportExportError.exportFailed }
                     try Task.checkCancellation()
-                    try data.write(to: exportURL, options: [.atomic])
+                    try data.write(to: stagedURL, options: [.atomic])
+                    try validateImage(at: stagedURL, expectedType: .png, expectedImage: image)
                 case .jpeg:
                     guard let data = image.jpegData(compressionQuality: 0.9) else { throw ImportExportError.exportFailed }
                     try Task.checkCancellation()
-                    try data.write(to: exportURL, options: [.atomic])
+                    try data.write(to: stagedURL, options: [.atomic])
+                    try validateImage(at: stagedURL, expectedType: .jpeg, expectedImage: image)
                 case .pdf:
-                    try writePDFImage(image, pageSize: snapshot.pageSize, exportURL: exportURL)
+                    try writePDFImage(image, pageSize: snapshot.pageSize, exportURL: stagedURL)
+                    try validatePDF(at: stagedURL, expectedPageSizes: [snapshot.pageSize])
                 }
+                try Task.checkCancellation()
+                try commitStagedExport(at: stagedURL, to: exportURL)
                 try Task.checkCancellation()
             }
         }
@@ -1567,6 +1575,8 @@ struct ImportExportService {
             guard let firstSnapshot = snapshots.first else {
                 throw ImportExportError.exportFailed
             }
+            let stagedURL = stagedExportURL(for: exportURL)
+            defer { try? FileManager.default.removeItem(at: stagedURL) }
 
             let format = UIGraphicsPDFRendererFormat()
             format.documentInfo = [
@@ -1585,7 +1595,7 @@ struct ImportExportService {
             }
 
             var renderError: Error?
-            try renderer.writePDF(to: exportURL) { context in
+            try renderer.writePDF(to: stagedURL) { context in
                 for snapshot in snapshots {
                     if Task.isCancelled || renderError != nil { return }
 
@@ -1615,6 +1625,13 @@ struct ImportExportService {
                 throw renderError
             }
             try Task.checkCancellation()
+            try validatePDF(
+                at: stagedURL,
+                expectedPageSizes: snapshots.map(\.pageSize)
+            )
+            try Task.checkCancellation()
+            try commitStagedExport(at: stagedURL, to: exportURL)
+            try Task.checkCancellation()
 
             await MainActor.run {
                 progress?(1, "Export ready.")
@@ -1638,6 +1655,70 @@ struct ImportExportService {
         try renderer.writePDF(to: exportURL) { context in
             context.beginPage()
             image.draw(in: CGRect(origin: .zero, size: pageSize))
+        }
+    }
+
+    nonisolated private static func stagedExportURL(for exportURL: URL) -> URL {
+        let fileExtension = exportURL.pathExtension
+        let baseName = exportURL.deletingPathExtension().lastPathComponent
+        return exportURL.deletingLastPathComponent().appendingPathComponent(
+            ".\(baseName)-\(UUID().uuidString).partial.\(fileExtension)"
+        )
+    }
+
+    nonisolated private static func commitStagedExport(at stagedURL: URL, to exportURL: URL) throws {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: stagedURL.path),
+              !fileManager.fileExists(atPath: exportURL.path) else {
+            throw ImportExportError.exportFailed
+        }
+        try fileManager.moveItem(at: stagedURL, to: exportURL)
+    }
+
+    nonisolated private static func validateImage(
+        at url: URL,
+        expectedType: UTType,
+        expectedImage: UIImage
+    ) throws {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, options),
+              CGImageSourceGetCount(source) == 1,
+              CGImageSourceGetStatus(source) == .statusComplete,
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+              let typeIdentifier = CGImageSourceGetType(source) as String?,
+              let actualType = UTType(typeIdentifier),
+              actualType.conforms(to: expectedType),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, options) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
+              let cgImage = expectedImage.cgImage,
+              width.intValue == cgImage.width,
+              height.intValue == cgImage.height else {
+            throw ImportExportError.exportFailed
+        }
+    }
+
+    nonisolated private static func validatePDF(
+        at url: URL,
+        expectedPageSizes: [CGSize]
+    ) throws {
+        guard !expectedPageSizes.isEmpty,
+              let document = CGPDFDocument(url as CFURL),
+              document.numberOfPages == expectedPageSizes.count else {
+            throw ImportExportError.exportFailed
+        }
+
+        for (index, expectedSize) in expectedPageSizes.enumerated() {
+            guard let page = document.page(at: index + 1) else {
+                throw ImportExportError.exportFailed
+            }
+            let actualSize = page.getBoxRect(.mediaBox).size
+            guard actualSize.width.isFinite,
+                  actualSize.height.isFinite,
+                  abs(actualSize.width - expectedSize.width) < 0.5,
+                  abs(actualSize.height - expectedSize.height) < 0.5 else {
+                throw ImportExportError.exportFailed
+            }
         }
     }
 

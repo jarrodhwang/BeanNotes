@@ -114,6 +114,7 @@ struct ThumbnailService {
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
     nonisolated private static let minimumPageRenderScale: CGFloat = 0.25
     nonisolated private static let maximumPageRenderPixelSize: CGFloat = 6_144
+    nonisolated private static let maximumPageRenderPixelCount: CGFloat = 8_000_000
     nonisolated private static let maximumAttachmentThumbnailPixelSize = 16_384
 
     var storage = LocalStorageService()
@@ -546,12 +547,32 @@ struct ThumbnailService {
     nonisolated private static func normalizedPageRenderScale(_ value: CGFloat, pageSize: CGSize) -> CGFloat {
         guard value.isFinite, value > 0 else { return defaultPageRenderScale }
 
-        let longestSide = max(pageSize.width, pageSize.height)
-        guard longestSide.isFinite, longestSide > 0 else {
+        let width = pageSize.width
+        let height = pageSize.height
+        let longestSide = max(width, height)
+        guard width.isFinite,
+              height.isFinite,
+              width > 0,
+              height > 0,
+              longestSide.isFinite else {
             return min(max(value, minimumPageRenderScale), defaultPageRenderScale)
         }
 
-        let maximumScale = max(minimumPageRenderScale, maximumPageRenderPixelSize / longestSide)
+        // Compositing a page briefly holds both the PencilKit raster and the finished page.
+        // A side-only cap still allows square legacy pages to allocate hundreds of MB.
+        let dimensionScale = maximumPageRenderPixelSize / longestSide
+        let pixelCount = width * height
+        var areaScale = sqrt(maximumPageRenderPixelCount / pixelCount)
+        // UIGraphicsImageRenderer rounds each pixel edge up independently. Pull the
+        // computed scale back until that rounding still fits within the area budget.
+        let roundedPixelCount = ceil(width * areaScale) * ceil(height * areaScale)
+        if roundedPixelCount > maximumPageRenderPixelCount {
+            areaScale *= sqrt(maximumPageRenderPixelCount / roundedPixelCount)
+        }
+        let maximumScale = max(
+            minimumPageRenderScale,
+            min(dimensionScale, areaScale)
+        )
         return min(max(value, minimumPageRenderScale), maximumScale)
     }
 

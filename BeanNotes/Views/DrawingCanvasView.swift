@@ -3817,7 +3817,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             deferredExportPreparationRequestID = nil
 
             let requests = canvasSaveRequests(
-                force: false,
+                // PencilKit can deliver its final change callback just after the user taps
+                // Export. Snapshot every materialized canvas so that timing cannot produce
+                // a clean-looking export with the newest ink missing.
+                force: true,
                 trackInFlight: false,
                 invalidateInFlight: true
             )

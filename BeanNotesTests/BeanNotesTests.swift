@@ -2154,6 +2154,19 @@ struct BeanNotesTests {
 
         #expect(max(extremeCGImage.width, extremeCGImage.height) <= 6_144)
         #expect(min(extremeCGImage.width, extremeCGImage.height) > 0)
+
+        let squarePage = NotePage(pageOrder: 0, width: 4_096, height: 4_096)
+        let squareImage = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: squarePage),
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: 100
+        )
+        let squareCGImage = try #require(squareImage.cgImage)
+
+        #expect(squareCGImage.width * squareCGImage.height <= 8_000_000)
+        #expect(squareCGImage.width > 2_000)
+        #expect(squareCGImage.height > 2_000)
     }
 
     @Test @MainActor func thumbnailRenderingPreservesInkColorInDarkMode() throws {
@@ -2696,6 +2709,62 @@ struct BeanNotesTests {
         try completedResult.get()
         #expect(coordinator.pendingSaves[page.id] == nil)
         #expect(!coordinator.dirtyPageIDs.contains(page.id))
+    }
+
+    @Test func exportPreparationSnapshotsCanvasBeforeChangeCallbackArrives() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesImmediateExport-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "immediate-export.drawing")
+        let drawing = makeTestDrawing(color: .systemRed, xOffset: 44)
+        var completionContinuation: CheckedContinuation<Result<Void, Error>, Never>?
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            exportPreparationCompleted: { _, result in
+                completionContinuation?.resume(returning: result)
+                completionContinuation = nil
+            }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        canvasView.drawing = drawing
+        coordinator.pendingSaves[page.id]?.cancel()
+        coordinator.pendingSaves[page.id] = nil
+        coordinator.pendingSaveTokens[page.id] = nil
+        coordinator.dirtyPageIDs.remove(page.id)
+
+        let completionResult = await withCheckedContinuation { continuation in
+            completionContinuation = continuation
+            coordinator.prepareForExport(requestID: 91)
+        }
+        try completionResult.get()
+
+        let savedData = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        let savedDrawing = try PKDrawing(data: savedData)
+        #expect(savedDrawing.strokes.count == drawing.strokes.count)
+        #expect(abs(savedDrawing.bounds.midX - drawing.bounds.midX) < 0.5)
     }
 
     @Test func exportPreparationWaitsForLivePencilStrokeToEnd() async throws {
@@ -4502,6 +4571,7 @@ struct BeanNotesTests {
         let pdfURLs = try await service.exportNote(note, format: .pdf)
         let pngURLs = try await service.exportNote(note, format: .png)
         let jpegURLs = try await service.exportNote(note, format: .jpeg)
+        let pagePDFURL = try await service.exportPage(pages[0], format: .pdf)
 
         #expect(pdfURLs.count == 1)
         #expect(pdfURLs.first?.pathExtension == "pdf")
@@ -4515,6 +4585,13 @@ struct BeanNotesTests {
             for: .mediaBox
         )
         #expect(imageContainsDominantRedInk(pdfPageImage))
+        let pagePDFDocument = try #require(PDFDocument(url: pagePDFURL))
+        #expect(pagePDFDocument.pageCount == 1)
+        let exportedPageImage = try #require(pagePDFDocument.page(at: 0)).thumbnail(
+            of: CGSize(width: 320, height: 420),
+            for: .mediaBox
+        )
+        #expect(imageContainsDominantRedInk(exportedPageImage))
 
         #expect(pngURLs.count == 2)
         #expect(pngURLs.allSatisfy { $0.pathExtension == "png" })
@@ -4529,6 +4606,10 @@ struct BeanNotesTests {
         let jpegURL = try #require(jpegURLs.first)
         let jpegImage = try #require(UIImage(contentsOfFile: jpegURL.path))
         #expect(imageContainsDominantRedInk(jpegImage))
+
+        let exportDirectory = try storage.directoryURL(for: .exports)
+        let exportFileNames = try FileManager.default.contentsOfDirectory(atPath: exportDirectory.path)
+        #expect(!exportFileNames.contains { $0.contains(".partial.") })
     }
 
     @Test @MainActor func pageExportRejectsCorruptDrawingDataWhilePreviewStaysBestEffort() async throws {
