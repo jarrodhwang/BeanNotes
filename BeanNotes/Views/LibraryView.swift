@@ -1586,28 +1586,12 @@ private struct NoteCardView: View {
         }
 
         let requestedTheme = beanNotesTheme
-
-        if !forceRefresh,
-           let relativePath = page.thumbnailFileName,
-           ThumbnailService.isCurrentThumbnailPath(
-               relativePath,
-               pageID: page.id,
-               theme: requestedTheme,
-               showsBeanArtwork: showsBeanArtwork
-           ),
-           let thumbnailURL = try? storage.validatedURL(forRelativePath: relativePath),
-           let image = ImageMemoryCache.shared.image(
-                at: thumbnailURL,
-                maxPixelSize: 620
-           ) {
-            thumbnailImage = image
-            return
-        }
-
-        if !forceRefresh,
-           let image = fallbackFirstPageImage(for: page) {
-            thumbnailImage = image
-        }
+        let storedThumbnailURL = currentThumbnailURL(
+            for: page,
+            theme: requestedTheme,
+            forceRefresh: forceRefresh
+        )
+        let fallbackImageURL = forceRefresh ? nil : fallbackFirstPageImageURL(for: page)
 
         let requestID = UUID()
         thumbnailLoadRequestID = requestID
@@ -1623,6 +1607,31 @@ private struct NoteCardView: View {
             }
 
             do {
+                if let storedThumbnailURL {
+                    let image = await ImageMemoryCache.shared.imageInBackground(
+                        at: storedThumbnailURL,
+                        maxPixelSize: 620
+                    )
+                    try Task.checkCancellation()
+                    guard thumbnailLoadRequestID == requestID else { return }
+                    if let image {
+                        thumbnailImage = image
+                        return
+                    }
+                }
+
+                if let fallbackImageURL {
+                    let image = await ImageMemoryCache.shared.imageInBackground(
+                        at: fallbackImageURL,
+                        maxPixelSize: 620
+                    )
+                    try Task.checkCancellation()
+                    guard thumbnailLoadRequestID == requestID else { return }
+                    if let image {
+                        thumbnailImage = image
+                    }
+                }
+
                 let url = try await thumbnailService.generateThumbnailInBackground(
                     for: page,
                     theme: requestedTheme,
@@ -1631,7 +1640,13 @@ private struct NoteCardView: View {
                 )
                 try Task.checkCancellation()
                 guard thumbnailLoadRequestID == requestID else { return }
-                thumbnailImage = ImageMemoryCache.shared.image(at: url, maxPixelSize: 620)
+                let generatedImage = await ImageMemoryCache.shared.imageInBackground(
+                    at: url,
+                    maxPixelSize: 620
+                )
+                try Task.checkCancellation()
+                guard thumbnailLoadRequestID == requestID else { return }
+                thumbnailImage = generatedImage
                 try modelContext.save()
             } catch is CancellationError {
                 return
@@ -1650,14 +1665,27 @@ private struct NoteCardView: View {
         isLoadingThumbnail = false
     }
 
-    private func fallbackFirstPageImage(for page: NotePage) -> UIImage? {
-        guard let attachment = page.lockedImageAttachments.first,
-              let imageURL = try? storage.validatedURL(forRelativePath: attachment.storedFileName) else {
+    private func currentThumbnailURL(
+        for page: NotePage,
+        theme: BeanNotesTheme,
+        forceRefresh: Bool
+    ) -> URL? {
+        guard !forceRefresh,
+              let relativePath = page.thumbnailFileName,
+              ThumbnailService.isCurrentThumbnailPath(
+                  relativePath,
+                  pageID: page.id,
+                  theme: theme,
+                  showsBeanArtwork: showsBeanArtwork
+              ) else {
             return nil
         }
-        return ImageMemoryCache.shared.image(
-            at: imageURL,
-            maxPixelSize: 620
-        )
+
+        return try? storage.validatedURL(forRelativePath: relativePath)
+    }
+
+    private func fallbackFirstPageImageURL(for page: NotePage) -> URL? {
+        guard let attachment = page.lockedImageAttachments.first else { return nil }
+        return try? storage.validatedURL(forRelativePath: attachment.storedFileName)
     }
 }

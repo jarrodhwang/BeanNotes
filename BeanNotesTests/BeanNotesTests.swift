@@ -2142,6 +2142,63 @@ struct BeanNotesTests {
         #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
     }
 
+    @Test func imageMemoryCacheLoadsThumbnailsInBackground() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesBackgroundImageCache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let imageURL = rootURL.appendingPathComponent("note-preview.jpg")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 720, height: 360)).image { context in
+            UIColor.systemMint.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 720, height: 360))
+        }
+        try #require(image.jpegData(compressionQuality: 0.9)).write(to: imageURL)
+
+        ImageMemoryCache.shared.removeAllImages()
+        let decodedImage = try #require(
+            await ImageMemoryCache.shared.imageInBackground(at: imageURL, maxPixelSize: 120)
+        )
+        let cgImage = try #require(decodedImage.cgImage)
+
+        #expect(max(cgImage.width, cgImage.height) <= 120)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
+    }
+
+    @Test func imageMemoryCacheSkipsCancelledQueuedDecode() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCancelledImageCache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let imageURL = rootURL.appendingPathComponent("cancelled-preview.jpg")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 180)).image { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+        }
+        try #require(image.jpegData(compressionQuality: 0.9)).write(to: imageURL)
+
+        ImageMemoryCache.shared.removeAllImages()
+        let decodedImage = await Task {
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+            return await ImageMemoryCache.shared.imageInBackground(
+                at: imageURL,
+                maxPixelSize: 120
+            )
+        }.value
+
+        #expect(decodedImage == nil)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 0)
+    }
+
     @Test func thumbnailAttachmentRenderingUsesBoundedRaster() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesThumbnailAttachmentRaster-\(UUID().uuidString)", isDirectory: true)
@@ -3354,6 +3411,31 @@ struct BeanNotesTests {
         DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
     }
 
+    @Test @MainActor func documentTraversalStaysActiveThroughDecelerationAndZoom() {
+        let container = DrawingCanvasView.CanvasContainerView()
+
+        #expect(!container.isDocumentTraversalActive)
+
+        container.scrollViewWillBeginDragging(container.scrollView)
+        #expect(container.isDocumentTraversalActive)
+
+        container.scrollViewDidEndDragging(container.scrollView, willDecelerate: true)
+        #expect(container.isDocumentTraversalActive)
+
+        container.scrollViewDidEndDecelerating(container.scrollView)
+        #expect(!container.isDocumentTraversalActive)
+
+        container.scrollViewWillBeginZooming(container.scrollView, with: nil)
+        #expect(container.isDocumentTraversalActive)
+
+        container.scrollViewDidEndZooming(container.scrollView, with: nil, atScale: 1)
+        #expect(!container.isDocumentTraversalActive)
+
+        container.scrollViewWillBeginDragging(container.scrollView)
+        container.cancelPendingRenderingWork()
+        #expect(!container.isDocumentTraversalActive)
+    }
+
     private struct PageCanvasFixture {
         let rootURL: URL
         let storage: LocalStorageService
@@ -4333,7 +4415,8 @@ struct BeanNotesTests {
         #expect(imported.pages.allSatisfy { $0.lockedImageAttachments.allSatisfy(\.rendersBehindDrawing) })
         #expect(imported.pages.compactMap { $0.lockedImageAttachments.first?.vectorSourcePageIndex }.sorted() == [0, 1])
 
-        let lockedImage = try #require(imported.pages.first?.lockedImageAttachments.first)
+        let firstPage = try #require(imported.pages.first)
+        let lockedImage = try #require(firstPage.lockedImageAttachments.first)
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: lockedImage.storedFileName).path))
         let vectorSource = try #require(lockedImage.vectorSourceStoredFileName)
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: vectorSource).path))
@@ -4345,6 +4428,26 @@ struct BeanNotesTests {
         tiledPage.updateRenderScale(12)
         #expect(tiledPage.layer.contentsScale == stableContentsScale)
         #expect(DrawingCanvasView.ImmediatePDFTiledLayer.fadeDuration() == 0)
+
+        let imageContainer = DrawingCanvasView.AttachmentImageContainerView()
+        defer {
+            imageContainer.releaseImage(evictCachedVariants: true)
+        }
+        imageContainer.updateRasterScale(2)
+        imageContainer.configure(
+            attachment: lockedImage,
+            storage: storage,
+            pageSize: firstPage.pageSize,
+            changed: {}
+        )
+        try await waitForRasterImage(in: imageContainer)
+        #expect(imageContainer.isVectorPDFVisible)
+
+        imageContainer.setDocumentTraversalActive(true)
+        #expect(!imageContainer.isVectorPDFVisible)
+
+        imageContainer.setDocumentTraversalActive(false)
+        #expect(imageContainer.isVectorPDFVisible)
     }
 
     @Test @MainActor func rotatedPDFImportUsesDisplayedPageAspect() async throws {
@@ -4413,6 +4516,16 @@ struct BeanNotesTests {
 
         #expect(coordinator.url == nil)
         #expect(pdfView.document == nil)
+    }
+
+    @Test func quickLookPreviewReloadsOnlyWhenItsURLChanges() {
+        let firstURL = URL(fileURLWithPath: "/tmp/BeanNotes-Preview.docx")
+        let secondURL = URL(fileURLWithPath: "/tmp/BeanNotes-Slides.pptx")
+        let coordinator = QuickLookPreview.Coordinator(url: firstURL)
+
+        #expect(!coordinator.updateURLIfNeeded(firstURL))
+        #expect(coordinator.updateURLIfNeeded(secondURL))
+        #expect(coordinator.url == secondURL)
     }
 
     @Test @MainActor func stagedPDFImportRollbackRemovesCopiedFilesBeforeCommit() async throws {

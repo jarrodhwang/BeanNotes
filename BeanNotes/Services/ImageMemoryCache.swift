@@ -9,6 +9,28 @@ import UIKit
 final class ImageMemoryCache: NSObject, NSCacheDelegate {
     static let shared = ImageMemoryCache()
 
+    private nonisolated final class BackgroundDecodeToken: @unchecked Sendable {
+        private let lock = NSLock()
+        private var isCancelledStorage = false
+
+        var isCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return isCancelledStorage
+        }
+
+        func cancel() {
+            lock.lock()
+            isCancelledStorage = true
+            lock.unlock()
+        }
+    }
+
+    private static let backgroundDecodeQueue = DispatchQueue(
+        label: "com.snowfox.BeanNotes.thumbnail-image-decode",
+        qos: .utility
+    )
+
     private let cache = NSCache<NSString, CachedImage>()
     private let fileManager = FileManager.default
     private let keyIndexLock = NSLock()
@@ -52,6 +74,26 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
         }
 
         return image
+    }
+
+    func imageInBackground(at url: URL, maxPixelSize: CGFloat? = nil) async -> UIImage? {
+        let token = BackgroundDecodeToken()
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                Self.backgroundDecodeQueue.async { [weak self] in
+                    guard !token.isCancelled else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+
+                    let image = self?.image(at: url, maxPixelSize: maxPixelSize)
+                    continuation.resume(returning: token.isCancelled ? nil : image)
+                }
+            }
+        } onCancel: {
+            token.cancel()
+        }
     }
 
     func removeImages(for url: URL) {

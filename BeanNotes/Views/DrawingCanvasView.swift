@@ -386,7 +386,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let minimumImageBackwardPreloadPadding: CGFloat = 140
         private let drawingPrefetchForwardScreenPadding: CGFloat = 2_400
         private let drawingPrefetchBackwardScreenPadding: CGFloat = 520
-        private let drawingViewportOverscan: CGFloat = 64
+        private let minimumDrawingViewportOverscan: CGFloat = 256
+        private let drawingViewportOverscanFraction: CGFloat = 0.5
         private let topContentHeight: CGFloat = 96
         private let zoomOutMultiplier: CGFloat = 0.46
         private let absoluteMinimumZoomScale: CGFloat = 0.12
@@ -414,6 +415,10 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         var defersViewStatePublishing: Bool {
             pendingViewport != nil || isRestoringViewport
+        }
+
+        var isDocumentTraversalActive: Bool {
+            isUserScrolling
         }
 
         override init(frame: CGRect) {
@@ -518,7 +523,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             updateZoomScalesIfNeeded(force: qualityChanged || selectionChanged)
-            materializePagesNearViewport()
+            materializePagesNearViewport(refreshesExistingPages: true)
 
             if inputModeChanged {
                 applyInputModeToMaterializedPages()
@@ -704,6 +709,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             isProgrammaticZooming = false
             programmaticZoomEarliestFinishTime = 0
             lastZoomEndTime = CACurrentMediaTime()
+            setUserScrolling(false)
             centerDocument()
             updateRasterScale(force: true)
             materializePagesNearViewport(updatesRenderScale: false)
@@ -770,6 +776,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            if scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
+                setUserScrolling(true)
+            }
             let offsetDelta = scrollView.contentOffset.y - lastObservedContentOffsetY
             if abs(offsetDelta) > 0.5 {
                 isScrollingTowardLaterPages = offsetDelta > 0
@@ -787,13 +796,14 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-            isUserScrolling = true
+            setUserScrolling(true)
         }
 
         func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
             settledZoomWorkItem?.cancel()
             settledZoomWorkItem = nil
             isPinchZooming = true
+            setUserScrolling(true)
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -823,19 +833,23 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             guard !decelerate else { return }
-            isUserScrolling = false
+            setUserScrolling(false)
+            materializePagesNearViewport()
             updateNativeDrawingViewports(force: true)
             publishViewport(force: true)
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            isUserScrolling = false
+            setUserScrolling(false)
+            materializePagesNearViewport()
             updateNativeDrawingViewports(force: true)
             publishViewport(force: true)
         }
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
             guard !isProgrammaticZooming else { return }
+            setUserScrolling(false)
+            materializePagesNearViewport()
             updateNativeDrawingViewports(force: true)
             publishViewport(force: true)
         }
@@ -1075,7 +1089,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        private func materializePagesNearViewport(updatesRenderScale: Bool = true) {
+        private func materializePagesNearViewport(
+            updatesRenderScale: Bool = true,
+            refreshesExistingPages: Bool = false
+        ) {
             guard !orderedPageIDs.isEmpty, let drawingStorage, let coordinator else { return }
 
             let visibleRect = visibleContentRect()
@@ -1115,7 +1132,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                     drawingStorage: drawingStorage,
                     coordinator: coordinator,
                     shouldLoadImages: shouldLoadImages,
-                    updatesImageLoadingState: !defersHeavyImageWork
+                    updatesImageLoadingState: !defersHeavyImageWork,
+                    refreshesExistingPage: refreshesExistingPages
                 ) {
                     didChangeMaterializedPages = true
                 }
@@ -1124,6 +1142,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             if !defersHeavyImageWork {
                 let retiredIDs = pageViews.keys.filter { !neededIDs.contains($0) }
                 for id in retiredIDs {
+                    if isUserScrolling, coordinator.hasPendingDrawingWork(for: id) {
+                        continue
+                    }
                     if let pageView = pageViews[id] {
                         retirePageView(id: id, pageView: pageView)
                         didChangeMaterializedPages = true
@@ -1151,7 +1172,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             drawingStorage: DrawingStorageService,
             coordinator: Coordinator,
             shouldLoadImages: Bool,
-            updatesImageLoadingState: Bool
+            updatesImageLoadingState: Bool,
+            refreshesExistingPage: Bool
         ) -> Bool {
             guard let page = pagesByID[id], let frame = pageFrames[id] else { return false }
             let existingPageView = pageViews[id]
@@ -1170,21 +1192,24 @@ struct DrawingCanvasView: UIViewRepresentable {
             } else if didCreatePageView {
                 pageView.setImageLoadingEnabled(false)
             }
-            pageView.configure(
-                page: page,
-                storage: drawingStorage.storage,
-                drawingStorage: drawingStorage,
-                inputMode: inputMode,
-                theme: theme,
-                showsBeanArtwork: showsBeanArtwork,
-                coordinator: coordinator,
-                attachmentChanged: { [weak coordinator] in
-                    coordinator?.notifyAttachmentChanged()
-                },
-                deleteAttachment: { [weak coordinator] attachment in
-                    coordinator?.requestAttachmentDeletion(attachment)
-                }
-            )
+            if didCreatePageView || refreshesExistingPage {
+                pageView.configure(
+                    page: page,
+                    storage: drawingStorage.storage,
+                    drawingStorage: drawingStorage,
+                    inputMode: inputMode,
+                    theme: theme,
+                    showsBeanArtwork: showsBeanArtwork,
+                    coordinator: coordinator,
+                    attachmentChanged: { [weak coordinator] in
+                        coordinator?.notifyAttachmentChanged()
+                    },
+                    deleteAttachment: { [weak coordinator] attachment in
+                        coordinator?.requestAttachmentDeletion(attachment)
+                    }
+                )
+            }
+            pageView.setDocumentTraversalActive(isUserScrolling)
 
             return didCreatePageView
         }
@@ -1251,6 +1276,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             isPinchZooming = false
             isProgrammaticZooming = false
             programmaticZoomEarliestFinishTime = 0
+            setUserScrolling(false)
 
             for pageView in pageViews.values {
                 pageView.cancelPendingNativeViewportUpdate()
@@ -1325,7 +1351,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
             let zoomScale = max(scrollView.zoomScale, 0.01)
             let settledNativeZoomScale = Self.preparedNativeDrawingScale(for: zoomScale)
-            let overscan = drawingViewportOverscan / zoomScale
+            // Keep enough prepared PencilKit content above and below the viewport that
+            // normal scrolling does not repeatedly resize its tiled backing surface.
+            let overscanScreenPadding = max(
+                minimumDrawingViewportOverscan,
+                scrollView.bounds.height * drawingViewportOverscanFraction
+            )
+            let overscan = overscanScreenPadding / zoomScale
             let visibleRect = visibleContentRect()
 
             for (id, pageView) in pageViews {
@@ -1368,6 +1400,14 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func updateImageLoading(in rect: CGRect) {
             for (id, pageView) in pageViews {
                 pageView.setImageLoadingEnabled(pageFrame(id: id, intersects: rect))
+            }
+        }
+
+        private func setUserScrolling(_ isScrolling: Bool) {
+            guard isUserScrolling != isScrolling else { return }
+            isUserScrolling = isScrolling
+            for pageView in pageViews.values {
+                pageView.setDocumentTraversalActive(isScrolling)
             }
         }
 
@@ -1645,6 +1685,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastBackgroundScale: CGFloat = 0
         private var lastImageScale: CGFloat = 0
         private var isImageLoadingEnabled = true
+        private var isDocumentTraversalActive = false
+        private var appliedInputMode: DrawingInputMode?
         private var isUsingDrawingTool = false
         private var laidOutPageBounds: CGRect = .null
         private var activeDrawingViewportRect: CGRect = .null
@@ -1718,6 +1760,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func applyInputMode(_ inputMode: DrawingInputMode) {
+            guard appliedInputMode != inputMode else { return }
+            appliedInputMode = inputMode
             eraserScopeGesture.allowedTouchTypes = inputMode == .pencilOnly
                 ? [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
                 : [
@@ -1735,6 +1779,14 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             for view in imageViews.values {
                 view.setImageLoadingEnabled(enabled)
+            }
+        }
+
+        func setDocumentTraversalActive(_ active: Bool) {
+            guard isDocumentTraversalActive != active else { return }
+            isDocumentTraversalActive = active
+            for view in imageViews.values {
+                view.setDocumentTraversalActive(active)
             }
         }
 
@@ -2049,6 +2101,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
 
                 imageView.setImageLoadingEnabled(isImageLoadingEnabled)
+                imageView.setDocumentTraversalActive(isDocumentTraversalActive)
                 let vectorSource = resolvedVectorSource(for: attachment, storage: storage)
                 imageView.configure(
                     attachment: attachment,
@@ -2330,7 +2383,11 @@ struct DrawingCanvasView: UIViewRepresentable {
     final class PDFPageTiledView: UIView {
         override class var layerClass: AnyClass { ImmediatePDFTiledLayer.self }
 
-        private let drawingLock = NSLock()
+        // Main-thread lifecycle changes must never wait for a potentially expensive
+        // PDF tile draw. State access stays brief, while background tile draws retain
+        // their own document snapshot and serialize through a render-only lock.
+        private let stateLock = NSLock()
+        private let renderLock = NSLock()
         private var document: CGPDFDocument?
         private var sourceURL: URL?
         private var pageNumber = 0
@@ -2353,14 +2410,17 @@ struct DrawingCanvasView: UIViewRepresentable {
         func configure(url: URL, pageIndex: Int) {
             let nextPageNumber = pageIndex + 1
             let nextIdentity = "\(url.standardizedFileURL.path)|\(nextPageNumber)"
-            guard sourceIdentity != nextIdentity else { return }
 
-            drawingLock.lock()
+            stateLock.lock()
+            guard sourceIdentity != nextIdentity else {
+                stateLock.unlock()
+                return
+            }
             document = nil
             sourceURL = url
             pageNumber = nextPageNumber
             sourceIdentity = nextIdentity
-            drawingLock.unlock()
+            stateLock.unlock()
             tiledLayer.setNeedsDisplay()
         }
 
@@ -2376,24 +2436,48 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func releaseDocument() {
-            drawingLock.lock()
+            stateLock.lock()
             document = nil
             sourceURL = nil
             pageNumber = 0
             sourceIdentity = nil
-            drawingLock.unlock()
+            stateLock.unlock()
             tiledLayer.setNeedsDisplay()
         }
 
         override func draw(_ rect: CGRect) {
             guard let context = UIGraphicsGetCurrentContext(), !bounds.isEmpty else { return }
 
-            drawingLock.lock()
-            defer { drawingLock.unlock() }
-            if document == nil, let sourceURL {
-                document = CGPDFDocument(sourceURL as CFURL)
+            renderLock.lock()
+            defer { renderLock.unlock() }
+
+            stateLock.lock()
+            let requestedIdentity = sourceIdentity
+            let requestedURL = sourceURL
+            let requestedPageNumber = pageNumber
+            var renderDocument = document
+            stateLock.unlock()
+
+            if renderDocument == nil, let requestedURL {
+                let loadedDocument = CGPDFDocument(requestedURL as CFURL)
+
+                stateLock.lock()
+                if sourceIdentity == requestedIdentity {
+                    if document == nil {
+                        document = loadedDocument
+                    }
+                    renderDocument = document
+                } else {
+                    renderDocument = nil
+                }
+                stateLock.unlock()
             }
-            guard let page = document?.page(at: pageNumber) else { return }
+
+            guard let renderDocument,
+                  requestedIdentity != nil,
+                  let page = renderDocument.page(at: requestedPageNumber) else {
+                return
+            }
 
             context.saveGState()
             context.setFillColor(UIColor.white.cgColor)
@@ -2813,9 +2897,14 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var imageLoadToken: ImageLoadToken?
         private var currentRenderScale: CGFloat = 0
         private var isImageLoadingEnabled = true
+        private var isDocumentTraversalActive = false
 
         var isRasterImageLoaded: Bool {
             imageView.image != nil
+        }
+
+        var isVectorPDFVisible: Bool {
+            !pdfPageView.isHidden
         }
 
         override init(frame: CGRect) {
@@ -2864,7 +2953,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                let pageIndex = vectorPageIndex ?? attachment.vectorSourcePageIndex {
                 vectorPDFURL = vectorURL
                 vectorPDFPageIndex = pageIndex
-                pdfPageView.isHidden = false
                 if isImageLoadingEnabled {
                     pdfPageView.configure(url: vectorURL, pageIndex: pageIndex)
                 }
@@ -2874,6 +2962,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pdfPageView.isHidden = true
                 pdfPageView.releaseDocument()
             }
+            updateVectorPDFVisibility()
 
             frame = attachment.normalizedFrame(for: pageSize)
             // Image pixels are document content only. Selection chrome and editing
@@ -2921,12 +3010,20 @@ struct DrawingCanvasView: UIViewRepresentable {
                 if let vectorPDFURL, let vectorPDFPageIndex {
                     pdfPageView.configure(url: vectorPDFURL, pageIndex: vectorPDFPageIndex)
                 }
-                guard let imageURL, let attachment else { return }
-                loadImageIfNeeded(from: imageURL, attachment: attachment)
+                if let imageURL, let attachment {
+                    loadImageIfNeeded(from: imageURL, attachment: attachment)
+                }
             } else {
                 releaseRasterImage()
                 pdfPageView.releaseDocument()
             }
+            updateVectorPDFVisibility()
+        }
+
+        func setDocumentTraversalActive(_ active: Bool) {
+            guard isDocumentTraversalActive != active else { return }
+            isDocumentTraversalActive = active
+            updateVectorPDFVisibility()
         }
 
         private func loadImageIfNeeded(from imageURL: URL, attachment: Attachment) {
@@ -3005,6 +3102,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                         self.loadedFileIdentity = fileIdentity
                         self.loadedRasterBudget = budget
                     }
+                    self.updateVectorPDFVisibility()
                 }
             }
         }
@@ -3023,6 +3121,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             loadedStoredFileName = nil
             loadedFileIdentity = nil
             loadedRasterBudget = nil
+            updateVectorPDFVisibility()
+        }
+
+        private func updateVectorPDFVisibility() {
+            let hasVectorSource = vectorPDFURL != nil && vectorPDFPageIndex != nil
+            let usesRasterWhileTraversing = isDocumentTraversalActive && imageView.image != nil
+            pdfPageView.isHidden = !hasVectorSource
+                || !isImageLoadingEnabled
+                || usesRasterWhileTraversing
         }
 
         private func cancelPendingImageLoad(evictCachedVariantsAfterDecode: Bool = false) {
@@ -3361,6 +3468,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        func hasPendingDrawingWork(for pageID: UUID) -> Bool {
+            dirtyPageIDs.contains(pageID)
+                || pendingSaves[pageID] != nil
+                || pendingSaveTokens[pageID] != nil
+                || hasInFlightSave(for: pageID)
+        }
+
         func selectVisiblePage(_ pageID: UUID) {
             selectedPageID = pageID
             pendingVisiblePageID = pageID
@@ -3587,9 +3701,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func flushDrawingBeforeCanvasRelease(_ canvasView: PKCanvasView, for page: NotePage) {
-            guard dirtyPageIDs.contains(page.id)
-                    || pendingSaves[page.id] != nil
-                    || hasInFlightSave(for: page.id) else { return }
+            guard hasPendingDrawingWork(for: page.id) else { return }
 
             pendingSaves[page.id]?.cancel()
             pendingSaves[page.id] = nil

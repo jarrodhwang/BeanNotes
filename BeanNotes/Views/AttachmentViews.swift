@@ -276,6 +276,7 @@ struct PDFPreviewView: UIViewRepresentable {
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
+        pdfView.pageShadowsEnabled = false
         context.coordinator.load(url: url, into: pdfView)
         return pdfView
     }
@@ -339,7 +340,7 @@ struct QuickLookPreview: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: QLPreviewController, context: Context) {
-        context.coordinator.url = url
+        guard context.coordinator.updateURLIfNeeded(url) else { return }
         controller.reloadData()
     }
 
@@ -348,6 +349,13 @@ struct QuickLookPreview: UIViewControllerRepresentable {
 
         init(url: URL) {
             self.url = url
+        }
+
+        @discardableResult
+        func updateURLIfNeeded(_ url: URL) -> Bool {
+            guard self.url != url else { return false }
+            self.url = url
+            return true
         }
 
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
