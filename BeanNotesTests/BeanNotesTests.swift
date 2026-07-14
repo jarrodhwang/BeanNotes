@@ -3712,6 +3712,9 @@ struct BeanNotesTests {
         restoredSession.selectEraserMode(.object)
         let objectEraser = try #require(restoredSession.makePKTool() as? PKEraserTool)
         #expect(objectEraser.eraserType == .vector)
+
+        restoredSession.applyEraserWidth(31)
+        #expect(restoredSession.eraserWidth == 32)
     }
 
     @Test @MainActor func eraserScopeTracksTheActivePencilKitEraserWidth() throws {
@@ -3735,6 +3738,7 @@ struct BeanNotesTests {
         #expect(fixture.pageView.eraserScopeView.isHidden)
 
         fixture.pageView.canvasView.tool = PKEraserTool(.vector)
+        fixture.pageView.setEraserPreviewEnabled(true, diameter: 26)
         fixture.pageView.updateEraserScope(at: nil)
         #expect(fixture.pageView.eraserScopeView.isHidden)
 
@@ -3742,11 +3746,7 @@ struct BeanNotesTests {
         #expect(!fixture.pageView.eraserScopeView.isHidden)
         #expect(fixture.pageView.eraserScopeView.center == location)
         #expect(
-            fixture.pageView.eraserScopeView.bounds.size
-                == CGSize(
-                    width: DrawingCanvasView.EraserScopeView.objectEraserDiameter,
-                    height: DrawingCanvasView.EraserScopeView.objectEraserDiameter
-                )
+            fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 26, height: 26)
         )
 
         fixture.pageView.setLiveDrawingActive(false)

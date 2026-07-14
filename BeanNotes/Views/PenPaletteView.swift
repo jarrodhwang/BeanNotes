@@ -276,17 +276,15 @@ struct PenPaletteView: View {
         HStack(spacing: 6) {
             eraserModePicker
 
-            if toolState.eraserMode == .pixel {
-                Divider()
-                    .frame(height: 30)
+            Divider()
+                .frame(height: 30)
 
-                eraserWidthPresetControls
-                customEraserWidthButton
+            eraserWidthPresetControls
+            customEraserWidthButton
 
-                if isShowingCustomEraserWidth {
-                    customEraserWidthSlider
-                        .transition(.opacity.combined(with: .move(edge: .trailing)))
-                }
+            if isShowingCustomEraserWidth {
+                customEraserWidthSlider
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
         }
         .accessibilityElement(children: .contain)
@@ -297,16 +295,14 @@ struct PenPaletteView: View {
         VStack(alignment: .leading, spacing: 6) {
             eraserModePicker
 
-            if toolState.eraserMode == .pixel {
-                HStack(spacing: 6) {
-                    eraserWidthPresetControls
-                    customEraserWidthButton
-                }
+            HStack(spacing: 6) {
+                eraserWidthPresetControls
+                customEraserWidthButton
+            }
 
-                if isShowingCustomEraserWidth {
-                    customEraserWidthSlider
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
+            if isShowingCustomEraserWidth {
+                customEraserWidthSlider
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .accessibilityElement(children: .contain)
@@ -320,7 +316,7 @@ struct PenPaletteView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Pixel eraser size")
+        .accessibilityLabel("Eraser size")
         .accessibilityValue("\(eraserWidthText) points")
     }
 
@@ -736,15 +732,11 @@ struct PenPaletteView: View {
     }
 
     private var collapsedEraserSummary: String {
-        toolState.eraserMode == .pixel
-            ? "Pixel · \(eraserWidthText) pt"
-            : toolState.eraserMode.label
+        "\(toolState.eraserMode.label) · \(eraserWidthText) pt"
     }
 
     private var collapsedEraserAccessibilityLabel: String {
-        toolState.eraserMode == .pixel
-            ? "Pixel eraser, \(eraserWidthText) points"
-            : "Object eraser, whole stroke"
+        "\(toolState.eraserMode.label) eraser, \(eraserWidthText) points"
     }
 
     private var activeWidthRange: ClosedRange<Double> {

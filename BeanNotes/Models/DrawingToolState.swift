@@ -1070,12 +1070,7 @@ final class DrawingToolState: ObservableObject {
                 )
             )
         case .eraser:
-            switch eraserMode {
-            case .pixel:
-                PKEraserTool(eraserMode.eraserType, width: eraserWidth)
-            case .object:
-                PKEraserTool(eraserMode.eraserType)
-            }
+            PKEraserTool(eraserMode.eraserType, width: eraserWidth)
         case .lasso:
             PKLassoTool()
         }

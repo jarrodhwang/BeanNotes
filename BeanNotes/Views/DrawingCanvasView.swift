@@ -1608,8 +1608,6 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class EraserScopeView: UIView {
-        // Vector erasers report zero width because they remove whole strokes.
-        // Keep a visible point target so object erasing still provides feedback.
         static let objectEraserDiameter: CGFloat = 12
 
         override init(frame: CGRect) {
@@ -1688,6 +1686,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var isDocumentTraversalActive = false
         private var appliedInputMode: DrawingInputMode?
         private var isUsingDrawingTool = false
+        private var eraserPreviewDiameter: CGFloat?
         private var laidOutPageBounds: CGRect = .null
         private var activeDrawingViewportRect: CGRect = .null
         private var nativeZoomScale: CGFloat = 1
@@ -2271,14 +2270,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
-            let diameter = eraserTool.eraserType == .vector
-                ? EraserScopeView.objectEraserDiameter
-                : eraserTool.width
+            let diameter = eraserTool.width > 0
+                ? eraserTool.width
+                : eraserPreviewDiameter ?? EraserScopeView.objectEraserDiameter
             eraserScopeView.show(at: location, diameter: diameter)
             bringSubviewToFront(eraserScopeView)
         }
 
-        func setEraserPreviewEnabled(_ enabled: Bool) {
+        func setEraserPreviewEnabled(_ enabled: Bool, diameter: CGFloat? = nil) {
+            eraserPreviewDiameter = diameter
             guard eraserScopeGesture.isEnabled != enabled else { return }
             eraserScopeGesture.isEnabled = enabled
             if !enabled {
@@ -3614,7 +3614,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard force || canvasToolSignatures[id] != signature else { return }
             canvasView.tool = tool
             canvasToolSignatures[id] = signature
-            canvasPageViews[id]?.value?.setEraserPreviewEnabled(tool is PKEraserTool)
+            let previewDiameter = (tool as? PKEraserTool).map { eraserTool in
+                eraserTool.width > 0 ? eraserTool.width : parent.toolState.eraserWidth
+            }
+            canvasPageViews[id]?.value?.setEraserPreviewEnabled(
+                tool is PKEraserTool,
+                diameter: previewDiameter
+            )
         }
 
         private var currentCustomToolZoomScale: CGFloat {
