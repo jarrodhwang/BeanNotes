@@ -582,6 +582,7 @@ final class DrawingToolState: ObservableObject {
         static let penWidth = "drawingToolState.penWidth"
         static let highlighterWidth = "drawingToolState.highlighterWidth"
         static let eraserMode = "drawingToolState.eraserMode"
+        static let eraserWidth = "drawingToolState.eraserWidth"
         static let penPaletteColors = "drawingToolState.penPaletteColors"
         static let pencilPaletteColors = "drawingToolState.pencilPaletteColors"
         static let highlighterPaletteColors = "drawingToolState.highlighterPaletteColors"
@@ -634,6 +635,10 @@ final class DrawingToolState: ObservableObject {
         didSet { defaults.set(eraserMode.rawValue, forKey: DefaultsKey.eraserMode) }
     }
 
+    @Published private(set) var eraserWidth: CGFloat = 16 {
+        didSet { defaults.set(Double(eraserWidth), forKey: DefaultsKey.eraserWidth) }
+    }
+
     @Published private var penPaletteColorHexes: [String] = [] {
         didSet { defaults.set(Self.serializedPalette(penPaletteColorHexes), forKey: DefaultsKey.penPaletteColors) }
     }
@@ -682,6 +687,12 @@ final class DrawingToolState: ObservableObject {
             for: .highlighter
         )
         eraserMode = Self.storedEraserMode(defaults, key: DefaultsKey.eraserMode, fallback: .pixel)
+        eraserWidth = Self.storedWidth(
+            defaults,
+            key: DefaultsKey.eraserWidth,
+            fallback: Self.defaultStrokeWidth(for: .eraser),
+            for: .eraser
+        )
         penPaletteColorHexes = Self.storedPalette(
             defaults,
             key: DefaultsKey.penPaletteColors,
@@ -731,6 +742,14 @@ final class DrawingToolState: ObservableObject {
 
     var selectedToolUsesInkColor: Bool {
         selectedTool.usesInkColor
+    }
+
+    var eraserWidthCalibration: DrawingStrokeWidthCalibration {
+        Self.widthCalibration(for: .eraser)
+    }
+
+    var eraserWidthPresets: [CGFloat] {
+        eraserWidthCalibration.presets
     }
 
     func inkColor(for tool: DrawingTool) -> Color {
@@ -850,7 +869,7 @@ final class DrawingToolState: ObservableObject {
             let width = effectiveStrokeWidth(for: .highlighter, zoomScale: zoomScale, zoomBehavior: zoomBehavior)
             return "highlighter:\(highlighterColor.hexRGB):\(widthSignatureValue(width)):\(zoomBehavior.rawValue)"
         case .eraser:
-            return "eraser:\(eraserMode.rawValue)"
+            return "eraser:\(eraserMode.rawValue):\(widthSignatureValue(eraserWidth))"
         case .lasso:
             return "lasso"
         }
@@ -990,6 +1009,11 @@ final class DrawingToolState: ObservableObject {
         select(.eraser)
     }
 
+    func applyEraserWidth(_ width: CGFloat) {
+        eraserWidth = eraserWidthCalibration.clamped(width)
+        select(.eraser)
+    }
+
     func activateTemporaryEraser() {
         guard selectedTool != .eraser else { return }
         previousTool = selectedTool
@@ -1046,7 +1070,12 @@ final class DrawingToolState: ObservableObject {
                 )
             )
         case .eraser:
-            PKEraserTool(eraserMode.eraserType)
+            switch eraserMode {
+            case .pixel:
+                PKEraserTool(eraserMode.eraserType, width: eraserWidth)
+            case .object:
+                PKEraserTool(eraserMode.eraserType)
+            }
         case .lasso:
             PKLassoTool()
         }
@@ -1116,7 +1145,14 @@ final class DrawingToolState: ObservableObject {
                 step: 1,
                 presets: [8, 14, 22, 32]
             )
-        case .pen, .eraser, .lasso:
+        case .eraser:
+            DrawingStrokeWidthCalibration(
+                minimumWidth: 4,
+                maximumWidth: 64,
+                step: 2,
+                presets: [8, 16, 32, 48]
+            )
+        case .pen, .lasso:
             DrawingStrokeWidthCalibration(
                 minimumWidth: 0.5,
                 maximumWidth: 24,
@@ -1156,7 +1192,9 @@ final class DrawingToolState: ObservableObject {
                 step: 0.5,
                 presets: [4, 6, 10, 14]
             )
-        case .pen, .eraser, .lasso:
+        case .eraser:
+            widthCalibration(for: .eraser)
+        case .pen, .lasso:
             DrawingStrokeWidthCalibration(
                 minimumWidth: 0.25,
                 maximumWidth: 12,
@@ -1170,8 +1208,10 @@ final class DrawingToolState: ObservableObject {
         switch tool {
         case .highlighter:
             0.5
-        case .pen, .pencil, .eraser, .lasso:
+        case .pen, .pencil, .lasso:
             0.1
+        case .eraser:
+            widthCalibration(for: .eraser).step
         }
     }
 
@@ -1198,7 +1238,9 @@ final class DrawingToolState: ObservableObject {
             0.5...widthCalibration(for: .pencil).maximumWidth
         case .highlighter:
             3...widthCalibration(for: .highlighter).maximumWidth
-        case .pen, .eraser, .lasso:
+        case .eraser:
+            widthCalibration(for: .eraser).range
+        case .pen, .lasso:
             0.25...widthCalibration(for: .pen).maximumWidth
         }
     }
@@ -1211,7 +1253,9 @@ final class DrawingToolState: ObservableObject {
             3.5
         case .highlighter:
             10
-        case .eraser, .lasso:
+        case .eraser:
+            16
+        case .lasso:
             defaultStrokeWidth(for: .pen)
         }
     }

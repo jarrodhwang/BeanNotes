@@ -3538,6 +3538,39 @@ struct BeanNotesTests {
         #expect(!toolState.temporaryEraserActive)
     }
 
+    @Test @MainActor func pixelEraserSizeClampsPersistsAndUpdatesThePencilKitTool() throws {
+        let suiteName = "BeanNotesEraserWidth-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let firstSession = DrawingToolState(defaults: defaults)
+        firstSession.select(.eraser)
+
+        #expect(firstSession.eraserWidth == 16)
+        #expect(firstSession.eraserWidthPresets == [8, 16, 32, 48])
+
+        let initialSignature = firstSession.pkToolSignature
+        firstSession.applyEraserWidth(31)
+        #expect(firstSession.eraserWidth == 32)
+        #expect(firstSession.pkToolSignature != initialSignature)
+
+        let pixelEraser = try #require(firstSession.makePKTool() as? PKEraserTool)
+        #expect(pixelEraser.eraserType != .vector)
+        #expect(pixelEraser.width == 32)
+
+        let restoredSession = DrawingToolState(defaults: defaults)
+        #expect(restoredSession.eraserWidth == 32)
+
+        restoredSession.applyEraserWidth(.infinity)
+        #expect(restoredSession.eraserWidth == 4)
+
+        restoredSession.selectEraserMode(.object)
+        let objectEraser = try #require(restoredSession.makePKTool() as? PKEraserTool)
+        #expect(objectEraser.eraserType == .vector)
+    }
+
     @Test @MainActor func eraserScopeTracksTheActivePencilKitEraserWidth() throws {
         let fixture = try makePageCanvasFixture(name: "EraserScope")
         defer { fixture.cleanup() }

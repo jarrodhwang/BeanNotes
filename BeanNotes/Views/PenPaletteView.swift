@@ -20,6 +20,7 @@ struct PenPaletteView: View {
     @State private var selectedPaletteIndex = 0
     @State private var isShowingWidthControls = false
     @State private var isShowingCustomWidth = false
+    @State private var isShowingCustomEraserWidth = false
     @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
     @State private var hasLoadedCommittedOffset = false
@@ -76,6 +77,7 @@ struct PenPaletteView: View {
             .onChange(of: toolState.selectedTool) { _, _ in
                 isShowingWidthControls = false
                 isShowingCustomWidth = false
+                isShowingCustomEraserWidth = false
                 isShowingEraserModes = false
             }
             .accessibilityElement(children: .contain)
@@ -108,7 +110,7 @@ struct PenPaletteView: View {
             toolButtons
 
             if toolState.selectedTool == .eraser, isShowingEraserModes {
-                eraserModePicker
+                regularEraserControls
                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
             }
 
@@ -140,7 +142,7 @@ struct PenPaletteView: View {
             }
 
             if toolState.selectedTool == .eraser, isShowingEraserModes {
-                eraserModePicker
+                compactEraserControls
                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
             }
 
@@ -270,6 +272,106 @@ struct PenPaletteView: View {
         .accessibilityLabel("Eraser mode")
     }
 
+    private var regularEraserControls: some View {
+        HStack(spacing: 6) {
+            eraserModePicker
+
+            if toolState.eraserMode == .pixel {
+                Divider()
+                    .frame(height: 30)
+
+                eraserWidthPresetControls
+                customEraserWidthButton
+
+                if isShowingCustomEraserWidth {
+                    customEraserWidthSlider
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Eraser controls")
+    }
+
+    private var compactEraserControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            eraserModePicker
+
+            if toolState.eraserMode == .pixel {
+                HStack(spacing: 6) {
+                    eraserWidthPresetControls
+                    customEraserWidthButton
+                }
+
+                if isShowingCustomEraserWidth {
+                    customEraserWidthSlider
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Eraser controls")
+    }
+
+    private var eraserWidthPresetControls: some View {
+        HStack(spacing: 6) {
+            ForEach(toolState.eraserWidthPresets, id: \.self) { width in
+                eraserWidthButton(width)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Pixel eraser size")
+        .accessibilityValue("\(eraserWidthText) points")
+    }
+
+    private var customEraserWidthButton: some View {
+        Button {
+            performSelectionFeedback()
+            withAnimation(.snappy(duration: 0.16)) {
+                isShowingCustomEraserWidth.toggle()
+            }
+        } label: {
+            Text("Custom")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(isShowingCustomEraserWidth ? .primary : .secondary)
+                .frame(minWidth: 48, minHeight: 26)
+                .background(isShowingCustomEraserWidth ? Color.blue.opacity(0.12) : Color.clear, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(
+                            isShowingCustomEraserWidth ? Color.blue : Color.secondary.opacity(0.24),
+                            lineWidth: 1.4
+                        )
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Custom eraser size")
+        .accessibilityValue("\(eraserWidthText) points")
+    }
+
+    private var customEraserWidthSlider: some View {
+        HStack(spacing: 7) {
+            Slider(
+                value: eraserWidthBinding,
+                in: eraserWidthRange,
+                step: Double(toolState.eraserWidthCalibration.step)
+            ) {
+                Text("Custom eraser size")
+            }
+            .labelsHidden()
+            .frame(width: usesCompactLayout ? 150 : 120)
+
+            Text(eraserWidthText)
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 38, alignment: .trailing)
+        }
+        .frame(height: 30)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Custom eraser size")
+        .accessibilityValue("\(eraserWidthText) points")
+    }
+
     private var collapsedPalette: some View {
         HStack(spacing: 10) {
             dragHandle
@@ -289,10 +391,10 @@ struct PenPaletteView: View {
                     }
                     .accessibilityLabel("Current color")
             } else if toolState.selectedTool == .eraser {
-                Text(toolState.eraserMode.label)
+                Text(collapsedEraserSummary)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel("\(toolState.eraserMode.label) eraser")
+                    .accessibilityLabel(collapsedEraserAccessibilityLabel)
             }
         }
         .padding(.leading, 12)
@@ -436,8 +538,8 @@ struct PenPaletteView: View {
         return Button {
             performSelectionFeedback()
             toolState.selectEraserMode(mode)
-            withAnimation(.snappy(duration: 0.16)) {
-                isShowingEraserModes = false
+            if mode == .object {
+                isShowingCustomEraserWidth = false
             }
         } label: {
             Text(mode.label)
@@ -460,6 +562,11 @@ struct PenPaletteView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(mode.label) eraser")
+        .accessibilityHint(
+            mode == .pixel
+                ? "Erases within the selected size"
+                : "Removes a whole stroke"
+        )
     }
 
     private func selectTool(_ tool: DrawingTool) {
@@ -469,6 +576,9 @@ struct PenPaletteView: View {
             if tool == .eraser {
                 withAnimation(.snappy(duration: 0.16)) {
                     isShowingEraserModes.toggle()
+                    if !isShowingEraserModes {
+                        isShowingCustomEraserWidth = false
+                    }
                 }
             } else if toolState.selectedToolUsesInkColor {
                 withAnimation(.snappy(duration: 0.16)) {
@@ -485,6 +595,7 @@ struct PenPaletteView: View {
         isShowingEraserModes = false
         isShowingWidthControls = false
         isShowingCustomWidth = false
+        isShowingCustomEraserWidth = false
     }
 
     private var selectedPaletteColorBinding: Binding<Color> {
@@ -572,6 +683,32 @@ struct PenPaletteView: View {
         .accessibilityLabel("\(widthLabel(for: width)) point stroke")
     }
 
+    private func eraserWidthButton(_ width: CGFloat) -> some View {
+        Button {
+            performSelectionFeedback()
+            toolState.applyEraserWidth(width)
+        } label: {
+            Circle()
+                .fill(.secondary)
+                .frame(width: eraserWidthButtonDiameter(for: width), height: eraserWidthButtonDiameter(for: width))
+                .frame(width: 26, height: 26)
+                .background {
+                    if isActiveEraserWidthPreset(width) {
+                        Circle()
+                            .fill(.blue.opacity(0.12))
+                    }
+                }
+                .overlay {
+                    if isActiveEraserWidthPreset(width) {
+                        Circle()
+                            .stroke(.blue, lineWidth: 2)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(widthLabel(for: width)) point eraser")
+    }
+
     private var activeWidthBinding: Binding<Double> {
         Binding {
             Double(toolState.activeStrokeWidth)
@@ -579,6 +716,35 @@ struct PenPaletteView: View {
             isShowingEraserModes = false
             toolState.applyActiveWidth(CGFloat(newValue))
         }
+    }
+
+    private var eraserWidthBinding: Binding<Double> {
+        Binding {
+            Double(toolState.eraserWidth)
+        } set: { newValue in
+            toolState.applyEraserWidth(CGFloat(newValue))
+        }
+    }
+
+    private var eraserWidthRange: ClosedRange<Double> {
+        let range = toolState.eraserWidthCalibration.range
+        return Double(range.lowerBound)...Double(range.upperBound)
+    }
+
+    private var eraserWidthText: String {
+        DrawingStrokeWidthReadout.pointsText(for: toolState.eraserWidth)
+    }
+
+    private var collapsedEraserSummary: String {
+        toolState.eraserMode == .pixel
+            ? "Pixel · \(eraserWidthText) pt"
+            : toolState.eraserMode.label
+    }
+
+    private var collapsedEraserAccessibilityLabel: String {
+        toolState.eraserMode == .pixel
+            ? "Pixel eraser, \(eraserWidthText) points"
+            : "Object eraser, whole stroke"
     }
 
     private var activeWidthRange: ClosedRange<Double> {
@@ -609,9 +775,21 @@ struct PenPaletteView: View {
         return min(max(7 + progress * 14, 7), 21)
     }
 
+    private func eraserWidthButtonDiameter(for width: CGFloat) -> CGFloat {
+        let calibration = toolState.eraserWidthCalibration
+        let span = max(calibration.maximumWidth - calibration.minimumWidth, 0.1)
+        let progress = (width - calibration.minimumWidth) / span
+        return min(max(7 + progress * 14, 7), 21)
+    }
+
     private func isActiveWidthPreset(_ width: CGFloat) -> Bool {
         let tolerance = max(toolState.activeWidthStep / 2, 0.05)
         return abs(toolState.activeStrokeWidth - width) <= tolerance
+    }
+
+    private func isActiveEraserWidthPreset(_ width: CGFloat) -> Bool {
+        let tolerance = max(toolState.eraserWidthCalibration.step / 2, 0.05)
+        return abs(toolState.eraserWidth - width) <= tolerance
     }
 
     private func widthLabel(for width: CGFloat) -> String {
