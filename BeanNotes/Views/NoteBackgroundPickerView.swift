@@ -28,32 +28,34 @@ struct NoteBackgroundPickerView: View {
 
             templateControls
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Color")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            if background.style.supportsCustomColor {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Color")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
 
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
-                    ForEach(NoteBackground.colorPresets) { preset in
-                        Button {
-                            colorHex = preset.colorHex
-                        } label: {
-                            colorSwatch(preset)
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                        ForEach(NoteBackground.colorPresets) { preset in
+                            Button {
+                                colorHex = preset.colorHex
+                            } label: {
+                                colorSwatch(preset)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(preset.name)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(preset.name)
                     }
                 }
-            }
 
-            ColorPicker(
-                "More Colors",
-                selection: Binding(
-                    get: { Color(hex: colorHex) },
-                    set: { colorHex = $0.hexRGB }
-                ),
-                supportsOpacity: false
-            )
+                ColorPicker(
+                    "More Colors",
+                    selection: Binding(
+                        get: { Color(hex: colorHex) },
+                        set: { colorHex = $0.hexRGB }
+                    ),
+                    supportsOpacity: false
+                )
+            }
         }
     }
 

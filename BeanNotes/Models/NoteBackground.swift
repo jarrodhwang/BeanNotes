@@ -14,6 +14,7 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
     case cornell
     case musicStaff
     case planner
+    case chalkboard
 
     nonisolated var id: String { rawValue }
 
@@ -33,12 +34,18 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
             "Music Staff"
         case .planner:
             "Planner"
+        case .chalkboard:
+            "Chalkboard"
         }
+    }
+
+    nonisolated var supportsCustomColor: Bool {
+        self != .chalkboard
     }
 
     nonisolated var supportsSpacing: Bool {
         switch self {
-        case .plain:
+        case .plain, .chalkboard:
             false
         case .grid, .dotted, .lined, .cornell, .musicStaff, .planner:
             true
@@ -47,7 +54,7 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
 
     nonisolated var supportsMargin: Bool {
         switch self {
-        case .plain, .musicStaff:
+        case .plain, .musicStaff, .chalkboard:
             false
         case .grid, .dotted, .lined, .cornell, .planner:
             true
@@ -56,7 +63,7 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
 
     nonisolated var defaultSpacing: Double {
         switch self {
-        case .plain:
+        case .plain, .chalkboard:
             0
         case .grid:
             32
@@ -77,7 +84,7 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
             7...16
         case .planner:
             32...72
-        case .plain:
+        case .plain, .chalkboard:
             0...0
         case .grid, .dotted, .lined, .cornell:
             18...64
@@ -86,7 +93,7 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
 
     nonisolated var defaultMarginWidth: Double {
         switch self {
-        case .plain, .grid, .dotted, .musicStaff:
+        case .plain, .grid, .dotted, .musicStaff, .chalkboard:
             0
         case .lined:
             72
@@ -105,7 +112,7 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
             64...140
         case .grid, .dotted, .lined:
             0...160
-        case .plain, .musicStaff:
+        case .plain, .musicStaff, .chalkboard:
             0...0
         }
     }
@@ -124,6 +131,7 @@ struct NoteBackground: Codable, Equatable, Sendable {
     nonisolated static let showsBeanArtworkKey = "showsBeanArtworkOnNoteBackgrounds"
     nonisolated static let legacyThemePaperMigrationKey = "migratedThemeControlledNotePaperDefaults"
     nonisolated static let defaultColorHex = "#FFFFFF"
+    nonisolated static let chalkboardColorHex = "#243A32"
 
     static let colorPresets: [NoteBackgroundColorPreset] = [
         NoteBackgroundColorPreset(name: "White", colorHex: "#FFFFFF"),
@@ -204,6 +212,10 @@ struct NoteBackground: Codable, Equatable, Sendable {
         }
 
         return components.joined(separator: ";")
+    }
+
+    nonisolated var renderedColorHex: String {
+        style == .chalkboard ? Self.chalkboardColorHex : colorHex
     }
 
     nonisolated var resolvedSpacing: Double {

@@ -971,6 +971,29 @@ struct BeanNotesTests {
         #expect(NoteBackgroundStyle.allCases.contains(.cornell))
         #expect(NoteBackgroundStyle.allCases.contains(.musicStaff))
         #expect(NoteBackgroundStyle.allCases.contains(.planner))
+        #expect(NoteBackgroundStyle.allCases.contains(.chalkboard))
+    }
+
+    @Test func chalkboardTemplateUsesItsBoardSurfaceAndPreservesPaperColor() {
+        let chalkboard = NoteBackground(
+            style: .chalkboard,
+            colorHex: "#FFF7BF",
+            spacing: 42,
+            marginWidth: 120
+        )
+        let restored = NoteBackground.fromDefaults(
+            styleRaw: chalkboard.storageStyleRaw,
+            colorHex: chalkboard.colorHex
+        )
+
+        #expect(chalkboard.storageStyleRaw == "chalkboard")
+        #expect(chalkboard.renderedColorHex == NoteBackground.chalkboardColorHex)
+        #expect(!NoteBackgroundStyle.chalkboard.supportsCustomColor)
+        #expect(restored.style == .chalkboard)
+        #expect(restored.colorHex == "#FFF7BF")
+        #expect(restored.resolvedSpacing == 0)
+        #expect(restored.resolvedMarginWidth == 0)
+        #expect(restored.changingStyle(to: .plain).renderedColorHex == "#FFF7BF")
     }
 
     @Test func noteBackgroundTemplatesRoundTripSpacingAndMargins() {
@@ -3827,8 +3850,8 @@ struct BeanNotesTests {
 
         #expect(beanFileName != standardFileName)
         #expect(beanFileName != beanArtworkFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-v5.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-v5.jpg"))
+        #expect(beanFileName.hasSuffix("-bean-off-v6.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-v6.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,

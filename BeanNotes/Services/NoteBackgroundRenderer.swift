@@ -25,7 +25,7 @@ enum NoteBackgroundRenderer {
         in rect: CGRect,
         context: inout GraphicsContext
     ) {
-        context.fill(Path(rect), with: .color(Color(hex: background.colorHex)))
+        context.fill(Path(rect), with: .color(Color(hex: background.renderedColorHex)))
         drawBeanArtworkIfNeeded(
             theme: theme,
             showsBeanArtwork: showsBeanArtwork,
@@ -50,6 +50,8 @@ enum NoteBackgroundRenderer {
             drawMusicStaff(background: background, in: rect, context: &context)
         case .planner:
             drawPlanner(background: background, in: rect, context: &context)
+        case .chalkboard:
+            drawChalkboard(in: rect, context: &context)
         }
     }
 
@@ -66,7 +68,7 @@ enum NoteBackgroundRenderer {
             context.restoreGState()
         }
 
-        UIColor(hex: background.colorHex).setFill()
+        UIColor(hex: background.renderedColorHex).setFill()
         context.fill(rect)
         drawBeanArtworkIfNeeded(
             theme: theme,
@@ -92,6 +94,8 @@ enum NoteBackgroundRenderer {
             drawMusicStaff(background: background, in: rect, context: context)
         case .planner:
             drawPlanner(background: background, in: rect, context: context)
+        case .chalkboard:
+            drawChalkboard(in: rect, context: context)
         }
     }
 
@@ -155,6 +159,10 @@ private extension NoteBackgroundRenderer {
     nonisolated static var uiStrongLineColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.34) }
     nonisolated static var uiDotColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.34) }
     nonisolated static var uiCheckboxColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.2) }
+    static var chalkSmudgeColor: Color { Color.white.opacity(0.035) }
+    static var chalkDustColor: Color { Color.white.opacity(0.07) }
+    nonisolated static var uiChalkSmudgeColor: UIColor { UIColor.white.withAlphaComponent(0.035) }
+    nonisolated static var uiChalkDustColor: UIColor { UIColor.white.withAlphaComponent(0.07) }
 
     static var lightSecondaryColor: Color { Color(uiColor: lightSecondaryLabel) }
 
@@ -206,6 +214,78 @@ private extension NoteBackgroundRenderer {
             image.draw(in: artworkRect, blendMode: .normal, alpha: artwork.opacity)
             context.restoreGState()
         }
+    }
+
+    static func drawChalkboard(in rect: CGRect, context: inout GraphicsContext) {
+        var smudges = Path()
+        for index in 0..<24 {
+            let start = chalkSmudgeStart(index: index, in: rect)
+            let end = chalkSmudgeEnd(index: index, start: start, in: rect)
+            smudges.move(to: start)
+            smudges.addLine(to: end)
+        }
+        context.stroke(
+            smudges,
+            with: .color(chalkSmudgeColor),
+            lineWidth: chalkSmudgeWidth(in: rect)
+        )
+
+        var dust = Path()
+        for index in 0..<72 {
+            dust.addEllipse(in: chalkDustRect(index: index, in: rect))
+        }
+        context.fill(dust, with: .color(chalkDustColor))
+    }
+
+    nonisolated static func drawChalkboard(in rect: CGRect, context: CGContext) {
+        context.beginPath()
+        for index in 0..<24 {
+            let start = chalkSmudgeStart(index: index, in: rect)
+            let end = chalkSmudgeEnd(index: index, start: start, in: rect)
+            context.move(to: start)
+            context.addLine(to: end)
+        }
+        context.setStrokeColor(uiChalkSmudgeColor.cgColor)
+        context.setLineWidth(chalkSmudgeWidth(in: rect))
+        context.setLineCap(.round)
+        context.strokePath()
+
+        context.setFillColor(uiChalkDustColor.cgColor)
+        for index in 0..<72 {
+            context.fillEllipse(in: chalkDustRect(index: index, in: rect))
+        }
+    }
+
+    nonisolated static func chalkSmudgeStart(index: Int, in rect: CGRect) -> CGPoint {
+        CGPoint(
+            x: rect.minX + rect.width * chalkUnitValue(index: index, salt: 17),
+            y: rect.minY + rect.height * chalkUnitValue(index: index, salt: 43)
+        )
+    }
+
+    nonisolated static func chalkSmudgeEnd(index: Int, start: CGPoint, in rect: CGRect) -> CGPoint {
+        let length = rect.width * (0.08 + chalkUnitValue(index: index, salt: 71) * 0.18)
+        let rise = rect.height * (chalkUnitValue(index: index, salt: 97) - 0.5) * 0.018
+        return CGPoint(x: min(start.x + length, rect.maxX), y: start.y + rise)
+    }
+
+    nonisolated static func chalkDustRect(index: Int, in rect: CGRect) -> CGRect {
+        let diameter = max(0.7, min(rect.width, rect.height) * 0.0018)
+        return CGRect(
+            x: rect.minX + rect.width * chalkUnitValue(index: index, salt: 131),
+            y: rect.minY + rect.height * chalkUnitValue(index: index, salt: 173),
+            width: diameter,
+            height: diameter
+        )
+    }
+
+    nonisolated static func chalkSmudgeWidth(in rect: CGRect) -> CGFloat {
+        max(1, min(rect.width, rect.height) * 0.006)
+    }
+
+    nonisolated static func chalkUnitValue(index: Int, salt: Int) -> CGFloat {
+        let value = (index * 73 + salt * 37 + index * index * 19) % 997
+        return CGFloat(value) / 996
     }
 
     static func drawGrid(background: NoteBackground, in rect: CGRect, context: inout GraphicsContext) {
