@@ -110,6 +110,7 @@ struct NoteEditorView: View {
     @State private var isEditingTitle = false
     @State private var draftTitle = ""
     @State private var autoAddedPlaceholderPageID: UUID?
+    @State private var attachmentPendingDeletion: Attachment?
     @State private var pagePendingDeletion: NotePage?
     @State private var pagePendingMove: NotePage?
     @State private var isShowingPageReorder = false
@@ -322,6 +323,21 @@ struct NoteEditorView: View {
                 ContentUnavailableView("Missing file", systemImage: "exclamationmark.triangle")
             }
         }
+        .alert("Delete Image?", isPresented: Binding(
+            get: { attachmentPendingDeletion != nil },
+            set: { if !$0 { attachmentPendingDeletion = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                guard let attachment = attachmentPendingDeletion else { return }
+                attachmentPendingDeletion = nil
+                deleteAttachment(attachment)
+            }
+            Button("Cancel", role: .cancel) {
+                attachmentPendingDeletion = nil
+            }
+        } message: {
+            Text("This removes the image and its local file if no other note is using it.")
+        }
         .alert("Delete Page?", isPresented: Binding(
             get: { pagePendingDeletion != nil },
             set: { if !$0 { pagePendingDeletion = nil } }
@@ -375,6 +391,7 @@ struct NoteEditorView: View {
                             autoAddedPlaceholderPageID = nil
                             saveEditorChanges("save attachment changes")
                         },
+                        deleteAttachment: { attachmentPendingDeletion = $0 },
                         drawingChanged: handleDrawingChanged(pageID:),
                         saveStarted: markDrawingSaveStarted,
                         saveSucceeded: markDrawingSaveSucceeded,

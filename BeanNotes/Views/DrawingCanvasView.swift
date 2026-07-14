@@ -146,6 +146,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var toolShortcutSignal: Int
     var drawingStorage = DrawingStorageService()
     var attachmentChanged: () -> Void
+    var deleteAttachment: (Attachment) -> Void
     var drawingChanged: (UUID) -> Void
     var saveStarted: () -> Void = {}
     var saveSucceeded: () -> Void = {}
@@ -1172,6 +1173,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 coordinator: coordinator,
                 attachmentChanged: { [weak coordinator] in
                     coordinator?.notifyAttachmentChanged()
+                },
+                deleteAttachment: { [weak coordinator] attachment in
+                    coordinator?.requestAttachmentDeletion(attachment)
                 }
             )
 
@@ -1624,6 +1628,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private(set) var selectedAttachmentID: UUID?
         private var configurationSignature: String?
         private var attachmentChanged: (() -> Void)?
+        private var deleteAttachment: ((Attachment) -> Void)?
         private var hasConfiguredImageAttachments = false
         private var lastBackgroundScale: CGFloat = 0
         private var lastImageScale: CGFloat = 0
@@ -1656,7 +1661,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             theme: BeanNotesTheme = .defaultTheme,
             showsBeanArtwork: Bool = false,
             coordinator: Coordinator,
-            attachmentChanged: @escaping () -> Void
+            attachmentChanged: @escaping () -> Void,
+            deleteAttachment: @escaping (Attachment) -> Void
         ) {
             let isNewPage = self.page?.id != page.id
             let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)#beanArtwork=\(showsBeanArtwork)"
@@ -1668,6 +1674,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
             self.page = page
             self.attachmentChanged = attachmentChanged
+            self.deleteAttachment = deleteAttachment
 
             applyInputMode(inputMode)
             if !isNewPage, !needsStaticRefresh, !pageSizeChanged {
@@ -2132,6 +2139,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                 interactionChanged: { [weak self] isInteracting in
                     self?.setDocumentPanningEnabled(!isInteracting)
                 },
+                deleteRequested: { [weak self] in
+                    guard let self,
+                          self.selectedAttachmentID == attachmentID else {
+                        return
+                    }
+
+                    self.clearAttachmentSelection()
+                    self.deleteAttachment?(attachment)
+                },
                 dismiss: { [weak self] in
                     self?.clearAttachmentSelection()
                 }
@@ -2400,6 +2416,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let innerBorderView = UIView()
         private let moveHandle = UIButton(type: .custom)
         private let resizeHandle = UIButton(type: .custom)
+        private let deleteButton = UIButton(type: .custom)
         private let doneButton = UIButton(type: .custom)
         private weak var attachment: Attachment?
         private var pageSize: CGSize = .zero
@@ -2408,6 +2425,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var frameChanged: ((CGRect) -> Void)?
         private var changeCommitted: (() -> Void)?
         private var interactionChanged: ((Bool) -> Void)?
+        private var deleteRequested: (() -> Void)?
         private var dismiss: (() -> Void)?
 
         override init(frame: CGRect) {
@@ -2426,12 +2444,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             frameChanged: @escaping (CGRect) -> Void,
             changeCommitted: @escaping () -> Void,
             interactionChanged: @escaping (Bool) -> Void,
+            deleteRequested: @escaping () -> Void,
             dismiss: @escaping () -> Void
         ) {
             self.attachment = attachment
             self.frameChanged = frameChanged
             self.changeCommitted = changeCommitted
             self.interactionChanged = interactionChanged
+            self.deleteRequested = deleteRequested
             self.dismiss = dismiss
             updateFrame(attachment.normalizedFrame(for: pageSize), pageSize: pageSize)
 
@@ -2439,6 +2459,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             moveHandle.accessibilityHint = "Drag to reposition the image on the page"
             resizeHandle.accessibilityLabel = "Resize \(attachment.displayName)"
             resizeHandle.accessibilityHint = "Drag to resize the image proportionally"
+            deleteButton.accessibilityLabel = "Delete \(attachment.displayName)"
+            deleteButton.accessibilityHint = "Removes the image after confirmation"
             doneButton.accessibilityLabel = "Finish editing \(attachment.displayName)"
         }
 
@@ -2452,13 +2474,34 @@ struct DrawingCanvasView: UIViewRepresentable {
             super.layoutSubviews()
             outerBorderView.frame = bounds
             innerBorderView.frame = bounds.insetBy(dx: 1, dy: 1)
-            moveHandle.frame = CGRect(x: 4, y: 4, width: 44, height: 44)
-            doneButton.frame = CGRect(x: bounds.maxX - 48, y: 4, width: 44, height: 44)
+            let controlSize: CGFloat = 44
+            let horizontalInset = min(4, max((bounds.width - controlSize * 2) / 2, 0))
+            let verticalInset = min(4, max((bounds.height - controlSize * 2) / 2, 0))
+            let trailingX = bounds.maxX - horizontalInset - controlSize
+            let bottomY = bounds.maxY - verticalInset - controlSize
+            moveHandle.frame = CGRect(
+                x: horizontalInset,
+                y: verticalInset,
+                width: controlSize,
+                height: controlSize
+            )
+            doneButton.frame = CGRect(
+                x: trailingX,
+                y: verticalInset,
+                width: controlSize,
+                height: controlSize
+            )
+            deleteButton.frame = CGRect(
+                x: horizontalInset,
+                y: bottomY,
+                width: controlSize,
+                height: controlSize
+            )
             resizeHandle.frame = CGRect(
-                x: bounds.maxX - 48,
-                y: bounds.maxY - 48,
-                width: 44,
-                height: 44
+                x: trailingX,
+                y: bottomY,
+                width: controlSize,
+                height: controlSize
             )
         }
 
@@ -2467,7 +2510,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return nil
             }
 
-            let interactiveControls = [moveHandle, resizeHandle, doneButton]
+            let interactiveControls = [moveHandle, resizeHandle, deleteButton, doneButton]
             guard interactiveControls.contains(where: {
                 $0.frame.contains(point) && !$0.isHidden && $0.alpha > 0.01
             }) else {
@@ -2532,6 +2575,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             addSubview(resizeHandle)
 
             configureHandle(
+                deleteButton,
+                systemImage: "trash",
+                backgroundColor: UIColor.systemRed.withAlphaComponent(0.94)
+            )
+            deleteButton.addTarget(self, action: #selector(requestDeletion), for: .touchUpInside)
+            addSubview(deleteButton)
+
+            configureHandle(
                 doneButton,
                 systemImage: "checkmark",
                 backgroundColor: UIColor.systemGreen.withAlphaComponent(0.94)
@@ -2592,6 +2643,10 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         @objc private func finishEditing() {
             dismiss?()
+        }
+
+        @objc private func requestDeletion() {
+            deleteRequested?()
         }
 
         @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
@@ -3067,6 +3122,13 @@ struct DrawingCanvasView: UIViewRepresentable {
         func notifyAttachmentChanged() {
             let attachmentChanged = parent.attachmentChanged
             dispatchToSwiftUI(attachmentChanged)
+        }
+
+        func requestAttachmentDeletion(_ attachment: Attachment) {
+            let deleteAttachment = parent.deleteAttachment
+            dispatchToSwiftUI {
+                deleteAttachment(attachment)
+            }
         }
 
         private func notifyVisiblePageChanged(_ pageID: UUID) {

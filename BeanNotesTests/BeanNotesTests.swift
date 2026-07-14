@@ -1194,7 +1194,8 @@ struct BeanNotesTests {
             drawingStorage: drawingStorage,
             inputMode: .pencilOnly,
             coordinator: coordinator,
-            attachmentChanged: {}
+            attachmentChanged: {},
+            deleteAttachment: { _ in }
         )
 
         let retainedOffset = CGPoint(x: 17, y: 23)
@@ -1210,7 +1211,8 @@ struct BeanNotesTests {
             drawingStorage: drawingStorage,
             inputMode: .pencilOnly,
             coordinator: coordinator,
-            attachmentChanged: {}
+            attachmentChanged: {},
+            deleteAttachment: { _ in }
         )
 
         #expect(pageView.canvasView.contentSize == page.pageSize)
@@ -1264,6 +1266,7 @@ struct BeanNotesTests {
         let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
         let coordinator = DrawingCanvasView.Coordinator(parent: parent)
         let pageView = DrawingCanvasView.PageCanvasView()
+        var deletedAttachmentID: UUID?
         defer {
             pageView.releaseHeavyResources()
             DrawingStorageService.clearCache()
@@ -1276,7 +1279,8 @@ struct BeanNotesTests {
             drawingStorage: drawingStorage,
             inputMode: .pencilOnly,
             coordinator: coordinator,
-            attachmentChanged: {}
+            attachmentChanged: {},
+            deleteAttachment: { deletedAttachmentID = $0.id }
         )
 
         let behindIndex = try #require(pageView.subviews.firstIndex {
@@ -1318,6 +1322,24 @@ struct BeanNotesTests {
             CGPoint(x: overlay.bounds.maxX - 26, y: overlay.bounds.maxY - 26),
             with: nil
         ) is UIControl)
+        #expect(overlay.hitTest(
+            CGPoint(x: 26, y: overlay.bounds.maxY - 26),
+            with: nil
+        ) is UIControl)
+
+        let deleteButton = try #require(overlay.subviews
+            .compactMap { $0 as? UIButton }
+            .first { $0.accessibilityLabel == "Delete Behind" })
+        #expect(deleteButton.accessibilityHint == "Removes the image after confirmation")
+        deleteButton.sendActions(for: .touchUpInside)
+
+        #expect(deletedAttachmentID == behindImage.id)
+        #expect(pageView.selectedAttachmentID == nil)
+        #expect(!pageView.subviews.contains {
+            $0 is DrawingCanvasView.AttachmentEditingOverlayView
+        })
+
+        pageView.beginEditingAttachment(id: behindImage.id)
 
         pageView.setLiveDrawingActive(true)
 
@@ -3242,7 +3264,8 @@ struct BeanNotesTests {
             drawingStorage: drawingStorage,
             inputMode: .pencilOnly,
             coordinator: coordinator,
-            attachmentChanged: {}
+            attachmentChanged: {},
+            deleteAttachment: { _ in }
         )
         return PageCanvasFixture(
             rootURL: rootURL,
@@ -3282,6 +3305,7 @@ struct BeanNotesTests {
             toolShortcutSignal: 0,
             drawingStorage: drawingStorage,
             attachmentChanged: {},
+            deleteAttachment: { _ in },
             drawingChanged: { _ in },
             saveStarted: {},
             saveSucceeded: {},
