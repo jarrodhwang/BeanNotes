@@ -756,6 +756,7 @@ struct BeanNotesTests {
         #expect(fallback.style == .plain)
         #expect(fallback.colorHex == NoteBackground.defaultColorHex)
         #expect(NoteBackground.colorPresets.contains { $0.name == "Beige" })
+        #expect(NoteBackground.colorPresets.contains { $0.name == "Wood Paper" && $0.colorHex == "#FFF9EC" })
         #expect(NoteBackgroundStyle.allCases.contains(.cornell))
         #expect(NoteBackgroundStyle.allCases.contains(.musicStaff))
         #expect(NoteBackgroundStyle.allCases.contains(.planner))
@@ -779,6 +780,25 @@ struct BeanNotesTests {
         let clampedGrid = NoteBackground.fromDefaults(styleRaw: "grid;spacing=4;margin=999", colorHex: "#FFFFFF")
         #expect(clampedGrid.resolvedSpacing == NoteBackgroundStyle.grid.spacingRange.lowerBound)
         #expect(clampedGrid.resolvedMarginWidth == NoteBackgroundStyle.grid.marginRange.upperBound)
+    }
+
+    @Test func legacyThemePaperDefaultsMigrateToPlainWhiteWithoutOverwritingCustomColors() throws {
+        let suiteName = "BeanNotesThemePaperMigration-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(NoteBackgroundStyle.plain.rawValue, forKey: NoteBackground.defaultStyleRawKey)
+        defaults.set("#FFF9EC", forKey: NoteBackground.defaultColorHexKey)
+        NoteBackground.migrateLegacyThemeControlledDefaultsIfNeeded(in: defaults)
+
+        #expect(defaults.string(forKey: NoteBackground.defaultColorHexKey) == NoteBackground.defaultColorHex)
+        #expect(defaults.bool(forKey: NoteBackground.legacyThemePaperMigrationKey))
+
+        defaults.removeObject(forKey: NoteBackground.legacyThemePaperMigrationKey)
+        defaults.set("#FFE1E8", forKey: NoteBackground.defaultColorHexKey)
+        NoteBackground.migrateLegacyThemeControlledDefaultsIfNeeded(in: defaults)
+
+        #expect(defaults.string(forKey: NoteBackground.defaultColorHexKey) == "#FFE1E8")
     }
 
     @Test func noteBackgroundRejectsNonFiniteSpacingAndMargins() {
@@ -1166,15 +1186,14 @@ struct BeanNotesTests {
         #expect(BeanNotesTheme.bean.brandImageName == "BeanBadge")
         #expect(BeanNotesTheme.bean.paperTextureImageName == "BeanPaperTexture")
         #expect(BeanNotesTheme.bean.notificationAttachmentName == "BeanNotesNotificationIcon")
-        #expect(BeanNotesTheme.bean.defaultNoteBackgroundHex == "#FFF9EC")
-        #expect(BeanNotesTheme.bean.defaultNoteBackground == .plain(colorHex: "#FFF9EC"))
+        #expect(BeanNotesTheme.bean.notePaperPreviewHex == "#FFF9EC")
         #expect(BeanNotesTheme.bean.folderCreatedBody(folderName: "Projects").contains("Bean"))
 
         #expect(BeanNotesTheme.standard.brandImageName == nil)
         #expect(BeanNotesTheme.standard.paperTextureImageName == nil)
-        #expect(BeanNotesTheme.standard.defaultNoteBackground == .plain(colorHex: "#FFFFFF"))
+        #expect(BeanNotesTheme.standard.notePaperPreviewHex == "#FFFFFF")
         #expect(BeanNotesTheme.blueberry.brandImageName == nil)
-        #expect(BeanNotesTheme.blueberry.defaultNoteBackground == .plain(colorHex: "#EAF3FF"))
+        #expect(BeanNotesTheme.blueberry.notePaperPreviewHex == "#EAF3FF")
         #expect(BeanNotesTheme.bean.alternateAppIconName == nil)
         #expect(BeanNotesTheme.blueberry.alternateAppIconName == "BlueberryAppIcon")
     }
@@ -1722,15 +1741,22 @@ struct BeanNotesTests {
             rootURL: rootURL,
             scale: 1
         )
-        let beanImage = ThumbnailService.renderPageImage(
-            snapshot: NotePageRenderSnapshot(page: page, theme: .bean),
+        let beanImageWithoutArtwork = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: page, theme: .bean, showsBeanArtwork: false),
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: 1
+        )
+        let beanImageWithArtwork = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: page, theme: .bean, showsBeanArtwork: true),
             drawing: PKDrawing(),
             rootURL: rootURL,
             scale: 1
         )
 
-        #expect(standardImage.size == beanImage.size)
-        #expect(standardImage.pngData() != beanImage.pngData())
+        #expect(standardImage.size == beanImageWithArtwork.size)
+        #expect(standardImage.pngData() == beanImageWithoutArtwork.pngData())
+        #expect(standardImage.pngData() != beanImageWithArtwork.pngData())
     }
 
     @Test func beanPaperArtworkSelectionIsDeterministicPerPage() throws {
@@ -1790,13 +1816,13 @@ struct BeanNotesTests {
         )
 
         let firstImage = ThumbnailService.renderPageImage(
-            snapshot: NotePageRenderSnapshot(page: firstPage, theme: .bean),
+            snapshot: NotePageRenderSnapshot(page: firstPage, theme: .bean, showsBeanArtwork: true),
             drawing: PKDrawing(),
             rootURL: rootURL,
             scale: 1
         )
         let secondImage = ThumbnailService.renderPageImage(
-            snapshot: NotePageRenderSnapshot(page: secondPage, theme: .bean),
+            snapshot: NotePageRenderSnapshot(page: secondPage, theme: .bean, showsBeanArtwork: true),
             drawing: PKDrawing(),
             rootURL: rootURL,
             scale: 1
@@ -3151,9 +3177,19 @@ struct BeanNotesTests {
         page.attachments.append(attachment)
         context.insert(page)
         try context.save()
-        let thumbnailURL = try service.generateThumbnail(for: page, theme: .bean, maxDimension: 120)
+        let thumbnailURL = try service.generateThumbnail(
+            for: page,
+            theme: .bean,
+            showsBeanArtwork: false,
+            maxDimension: 120
+        )
         let thumbnail = try #require(UIImage(contentsOfFile: thumbnailURL.path))
-        let refreshedThumbnailURL = try service.generateThumbnail(for: page, theme: .bean, maxDimension: 120)
+        let refreshedThumbnailURL = try service.generateThumbnail(
+            for: page,
+            theme: .bean,
+            showsBeanArtwork: false,
+            maxDimension: 120
+        )
 
         #expect(page.thumbnailFileName?.hasPrefix("Thumbnails/") == true)
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
@@ -3161,7 +3197,11 @@ struct BeanNotesTests {
         #expect(thumbnailURL.lastPathComponent == refreshedThumbnailURL.lastPathComponent)
         #expect(
             refreshedThumbnailURL.lastPathComponent
-                == ThumbnailService.thumbnailFileName(pageID: page.id, theme: .bean)
+                == ThumbnailService.thumbnailFileName(
+                    pageID: page.id,
+                    theme: .bean,
+                    showsBeanArtwork: false
+                )
         )
         #expect(refreshedThumbnailURL.lastPathComponent.hasPrefix("Thumbnails-") == false)
         #expect(page.thumbnailFileName?.components(separatedBy: "/").count == 2)
@@ -3171,15 +3211,38 @@ struct BeanNotesTests {
 
     @Test func thumbnailCacheIdentityIncludesThemeAndRendererVersion() {
         let pageID = UUID()
-        let beanFileName = ThumbnailService.thumbnailFileName(pageID: pageID, theme: .bean)
+        let beanFileName = ThumbnailService.thumbnailFileName(
+            pageID: pageID,
+            theme: .bean,
+            showsBeanArtwork: false
+        )
+        let beanArtworkFileName = ThumbnailService.thumbnailFileName(
+            pageID: pageID,
+            theme: .bean,
+            showsBeanArtwork: true
+        )
         let standardFileName = ThumbnailService.thumbnailFileName(pageID: pageID, theme: .standard)
 
         #expect(beanFileName != standardFileName)
-        #expect(beanFileName.hasSuffix("-bean-v3.jpg"))
+        #expect(beanFileName != beanArtworkFileName)
+        #expect(beanFileName.hasSuffix("-bean-off-v4.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-v4.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,
             theme: .bean
+        ))
+        #expect(!ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(beanArtworkFileName)",
+            pageID: pageID,
+            theme: .bean,
+            showsBeanArtwork: false
+        ))
+        #expect(ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(beanArtworkFileName)",
+            pageID: pageID,
+            theme: .bean,
+            showsBeanArtwork: true
         ))
         #expect(!ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(pageID.uuidString).jpg",

@@ -120,25 +120,24 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
-    func testThemePaperUsesSingleBeanConfirmation() throws {
+    func testBeanArtworkToggleDoesNotChangeNotePaper() throws {
         app.launch()
 
         let settingsButton = app.buttons["Settings"]
         XCTAssertTrue(settingsButton.waitForExistence(timeout: 8))
         settingsButton.tap()
 
-        let themePaperButton = app.buttons["settings.themePaperBackgroundButton"]
-        XCTAssertTrue(themePaperButton.waitForExistence(timeout: 8))
+        let beanArtworkToggle = app.switches["settings.beanArtworkToggle"]
+        XCTAssertTrue(beanArtworkToggle.waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["Use Theme Paper for New Notes"].exists)
         XCTAssertFalse(app.buttons["Apply Theme Icon"].exists)
-        themePaperButton.tap()
+        XCTAssertFalse(app.buttons["Use Theme Paper Background"].exists)
+        XCTAssertEqual(beanArtworkToggle.value as? String, "0")
 
-        XCTAssertTrue(app.staticTexts["Use Bean paper background?"].waitForExistence(timeout: 4))
-        XCTAssertTrue(
-            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Bean says")).firstMatch.exists
-        )
-        XCTAssertTrue(app.buttons["Use Bean Paper"].exists)
-        XCTAssertTrue(app.buttons["Cancel"].exists)
+        beanArtworkToggle.tap()
+
+        XCTAssertTrue(beanArtworkToggle.exists)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
     }
 
     private func makeCleanApp(skipWelcome: Bool = true) -> XCUIApplication {

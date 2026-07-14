@@ -31,6 +31,7 @@ struct ContentView: View {
             .background(beanNotesTheme.appBackground.ignoresSafeArea())
             .preferredColorScheme((AppTheme(rawValue: appThemeRaw) ?? .system).colorScheme)
             .onAppear {
+                NoteBackground.migrateLegacyThemeControlledDefaultsIfNeeded()
                 AppIconService.applyIcon(for: beanNotesTheme)
 
                 guard Self.shouldShowWelcome(

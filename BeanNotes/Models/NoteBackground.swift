@@ -121,6 +121,8 @@ struct NoteBackgroundColorPreset: Identifiable, Equatable, Sendable {
 struct NoteBackground: Codable, Equatable, Sendable {
     nonisolated static let defaultStyleRawKey = "defaultNoteBackgroundStyle"
     nonisolated static let defaultColorHexKey = "defaultNoteBackgroundColorHex"
+    nonisolated static let showsBeanArtworkKey = "showsBeanArtworkOnNoteBackgrounds"
+    nonisolated static let legacyThemePaperMigrationKey = "migratedThemeControlledNotePaperDefaults"
     nonisolated static let defaultColorHex = "#FFFFFF"
 
     static let colorPresets: [NoteBackgroundColorPreset] = [
@@ -128,6 +130,7 @@ struct NoteBackground: Codable, Equatable, Sendable {
         NoteBackgroundColorPreset(name: "Yellow", colorHex: "#FFF7BF"),
         NoteBackgroundColorPreset(name: "Beige", colorHex: "#F3E7CF"),
         NoteBackgroundColorPreset(name: "Cream", colorHex: "#FFF4DF"),
+        NoteBackgroundColorPreset(name: "Wood Paper", colorHex: "#FFF9EC"),
         NoteBackgroundColorPreset(name: "Pink", colorHex: "#FFE1E8"),
         NoteBackgroundColorPreset(name: "Blue", colorHex: "#DDEBFF"),
         NoteBackgroundColorPreset(name: "Green", colorHex: "#DFF3E4"),
@@ -153,6 +156,30 @@ struct NoteBackground: Codable, Equatable, Sendable {
 
     nonisolated static func plain(colorHex: String = "#FFFFFF") -> NoteBackground {
         NoteBackground(style: .plain, colorHex: colorHex)
+    }
+
+    nonisolated static func showsBeanArtwork(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: showsBeanArtworkKey)
+    }
+
+    nonisolated static func migrateLegacyThemeControlledDefaultsIfNeeded(
+        in defaults: UserDefaults = .standard
+    ) {
+        guard !defaults.bool(forKey: legacyThemePaperMigrationKey) else { return }
+        defer { defaults.set(true, forKey: legacyThemePaperMigrationKey) }
+
+        let background = fromDefaults(
+            styleRaw: defaults.string(forKey: defaultStyleRawKey) ?? NoteBackgroundStyle.plain.rawValue,
+            colorHex: defaults.string(forKey: defaultColorHexKey) ?? defaultColorHex
+        )
+        let legacyThemeColors = ["#FFF9EC", "#EAF3FF"]
+
+        guard background.style == .plain,
+              legacyThemeColors.contains(background.colorHex.uppercased()) else {
+            return
+        }
+
+        defaults.set(defaultColorHex, forKey: defaultColorHexKey)
     }
 
     nonisolated static func fromDefaults(styleRaw: String, colorHex: String) -> NoteBackground {

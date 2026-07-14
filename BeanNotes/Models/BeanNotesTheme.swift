@@ -157,7 +157,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         }
     }
 
-    var defaultNoteBackgroundHex: String {
+    var notePaperPreviewHex: String {
         switch self {
         case .standard:
             "#FFFFFF"
@@ -166,10 +166,6 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .blueberry:
             "#EAF3FF"
         }
-    }
-
-    var defaultNoteBackground: NoteBackground {
-        .plain(colorHex: defaultNoteBackgroundHex)
     }
 
     var brandImageName: String? {

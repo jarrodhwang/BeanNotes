@@ -137,6 +137,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var addPageAtBottom: () -> Void
     var topContent: AnyView?
     var theme: BeanNotesTheme = .defaultTheme
+    var showsBeanArtwork = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -199,7 +200,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             renderQuality: renderQuality,
             drawingStorage: drawingStorage,
             coordinator: context.coordinator,
-            theme: theme
+            theme: theme,
+            showsBeanArtwork: showsBeanArtwork
         )
         context.coordinator.configureToolPicker(mode: paletteMode)
 
@@ -225,7 +227,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             renderQuality: renderQuality,
             drawingStorage: drawingStorage,
             coordinator: context.coordinator,
-            theme: theme
+            theme: theme,
+            showsBeanArtwork: showsBeanArtwork
         )
 
         if context.coordinator.selectedPageID != selectedPageID,
@@ -320,6 +323,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private weak var coordinator: Coordinator?
         private var inputMode: DrawingInputMode = DrawingInputMode.defaultMode
         private var theme: BeanNotesTheme = .defaultTheme
+        private var showsBeanArtwork = false
         private var lastFitScale: CGFloat = 1
         private var lastBackgroundRenderScale: CGFloat = 0
         private var lastImageRenderScale: CGFloat = 0
@@ -426,7 +430,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             renderQuality: DrawingRenderQuality,
             drawingStorage: DrawingStorageService,
             coordinator: Coordinator,
-            theme: BeanNotesTheme = .defaultTheme
+            theme: BeanNotesTheme = .defaultTheme,
+            showsBeanArtwork: Bool = false
         ) {
             applyWorkspaceTheme(theme)
 
@@ -437,6 +442,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.inputMode = inputMode
             self.renderQuality = renderQuality
             self.theme = theme
+            self.showsBeanArtwork = showsBeanArtwork
             self.selectedPageID = selectedPageID ?? pages.first?.id
             self.drawingStorage = drawingStorage
             self.coordinator = coordinator
@@ -1081,6 +1087,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 drawingStorage: drawingStorage,
                 inputMode: inputMode,
                 theme: theme,
+                showsBeanArtwork: showsBeanArtwork,
                 coordinator: coordinator,
                 attachmentChanged: { [weak coordinator] in
                     coordinator?.notifyAttachmentChanged()
@@ -1441,11 +1448,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             drawingStorage: DrawingStorageService,
             inputMode: DrawingInputMode,
             theme: BeanNotesTheme = .defaultTheme,
+            showsBeanArtwork: Bool = false,
             coordinator: Coordinator,
             attachmentChanged: @escaping () -> Void
         ) {
             let isNewPage = self.page?.id != page.id
-            let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)"
+            let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)#beanArtwork=\(showsBeanArtwork)"
             let needsStaticRefresh = isNewPage || signature != configurationSignature
             let pageSizeChanged = laidOutPageBounds.size != page.pageSize
             self.page = page
@@ -1458,6 +1466,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             if needsStaticRefresh {
                 backgroundView.background = page.background
                 backgroundView.theme = theme
+                backgroundView.showsBeanArtwork = showsBeanArtwork
                 backgroundView.pageID = page.id
                 backgroundView.setNeedsDisplay()
                 configureImages(page.imageAttachments, storage: storage, attachmentChanged: attachmentChanged)
@@ -1828,6 +1837,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     final class PageBackgroundUIView: UIView {
         var background: NoteBackground = .plain()
         var theme: BeanNotesTheme = .defaultTheme
+        var showsBeanArtwork = false
         var pageID: UUID?
 
         override init(frame: CGRect) {
@@ -1865,6 +1875,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             NoteBackgroundRenderer.draw(
                 background: background,
                 theme: theme,
+                showsBeanArtwork: showsBeanArtwork,
                 pageID: pageID,
                 in: bounds,
                 context: context

@@ -22,7 +22,7 @@ struct LibraryView: View {
     ]) private var recentNotes: [NoteDocument]
 
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
-    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = BeanNotesTheme.defaultTheme.defaultNoteBackgroundHex
+    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
 
@@ -1336,6 +1336,7 @@ private enum NoteCardLayout {
 private struct NoteCardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.beanNotesTheme) private var beanNotesTheme
+    @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
 
     var note: NoteDocument
     var openNote: () -> Void
@@ -1399,6 +1400,10 @@ private struct NoteCardView: View {
             loadThumbnail()
         }
         .onChange(of: beanNotesTheme) { _, _ in
+            thumbnailImage = nil
+            loadThumbnail(forceRefresh: true)
+        }
+        .onChange(of: showsBeanArtwork) { _, _ in
             thumbnailImage = nil
             loadThumbnail(forceRefresh: true)
         }
@@ -1466,7 +1471,8 @@ private struct NoteCardView: View {
            ThumbnailService.isCurrentThumbnailPath(
                relativePath,
                pageID: page.id,
-               theme: requestedTheme
+               theme: requestedTheme,
+               showsBeanArtwork: showsBeanArtwork
            ),
            let thumbnailURL = try? storage.validatedURL(forRelativePath: relativePath),
            let image = ImageMemoryCache.shared.image(
@@ -1500,6 +1506,7 @@ private struct NoteCardView: View {
                 let url = try await thumbnailService.generateThumbnailInBackground(
                     for: page,
                     theme: requestedTheme,
+                    showsBeanArtwork: showsBeanArtwork,
                     maxDimension: 360
                 )
                 try Task.checkCancellation()

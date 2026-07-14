@@ -20,12 +20,19 @@ enum NoteBackgroundRenderer {
     static func draw(
         background: NoteBackground,
         theme: BeanNotesTheme = .standard,
+        showsBeanArtwork: Bool = false,
         pageID: UUID? = nil,
         in rect: CGRect,
         context: inout GraphicsContext
     ) {
         context.fill(Path(rect), with: .color(Color(hex: background.colorHex)))
-        drawBeanPaperIfNeeded(theme: theme, pageID: pageID, in: rect, context: &context)
+        drawBeanArtworkIfNeeded(
+            theme: theme,
+            showsBeanArtwork: showsBeanArtwork,
+            pageID: pageID,
+            in: rect,
+            context: &context
+        )
 
         switch background.style {
         case .plain:
@@ -49,6 +56,7 @@ enum NoteBackgroundRenderer {
     nonisolated static func draw(
         background: NoteBackground,
         theme: BeanNotesTheme = .standard,
+        showsBeanArtwork: Bool = false,
         pageID: UUID? = nil,
         in rect: CGRect,
         context: CGContext
@@ -60,7 +68,13 @@ enum NoteBackgroundRenderer {
 
         UIColor(hex: background.colorHex).setFill()
         context.fill(rect)
-        drawBeanPaperIfNeeded(theme: theme, pageID: pageID, in: rect, context: context)
+        drawBeanArtworkIfNeeded(
+            theme: theme,
+            showsBeanArtwork: showsBeanArtwork,
+            pageID: pageID,
+            in: rect,
+            context: context
+        )
 
         switch background.style {
         case .plain:
@@ -113,9 +127,6 @@ enum NoteBackgroundRenderer {
 }
 
 private extension NoteBackgroundRenderer {
-    nonisolated static let beanPaperTextureImageName = "BeanPaperTexture"
-    nonisolated static let beanTextureTileSide: CGFloat = 256
-    nonisolated static let beanTextureOpacity: CGFloat = 0.11
     nonisolated static let beanPaperArtworks = [
         BeanPaperArtwork(
             imageName: "BeanWelcomeImage",
@@ -144,27 +155,14 @@ private extension NoteBackgroundRenderer {
     nonisolated static var uiDotColor: UIColor { UIColor.secondaryLabel.withAlphaComponent(0.34) }
 
     @MainActor
-    static func drawBeanPaperIfNeeded(
+    static func drawBeanArtworkIfNeeded(
         theme: BeanNotesTheme,
+        showsBeanArtwork: Bool,
         pageID: UUID?,
         in rect: CGRect,
         context: inout GraphicsContext
     ) {
-        guard theme == .bean else { return }
-
-        var textureContext = context
-        textureContext.opacity = beanTextureOpacity
-        textureContext.blendMode = .multiply
-        let texture = textureContext.resolve(Image(beanPaperTextureImageName))
-
-        stride(from: rect.minY, to: rect.maxY, by: beanTextureTileSide).forEach { y in
-            stride(from: rect.minX, to: rect.maxX, by: beanTextureTileSide).forEach { x in
-                textureContext.draw(
-                    texture,
-                    in: CGRect(x: x, y: y, width: beanTextureTileSide, height: beanTextureTileSide)
-                )
-            }
-        }
+        guard theme == .bean, showsBeanArtwork else { return }
 
         let artwork = beanPaperArtwork(for: pageID)
         let artworkRect = beanPaperArtworkRect(for: artwork, in: rect)
@@ -177,32 +175,14 @@ private extension NoteBackgroundRenderer {
         artworkContext.draw(image, in: artworkRect)
     }
 
-    nonisolated static func drawBeanPaperIfNeeded(
+    nonisolated static func drawBeanArtworkIfNeeded(
         theme: BeanNotesTheme,
+        showsBeanArtwork: Bool,
         pageID: UUID?,
         in rect: CGRect,
         context: CGContext
     ) {
-        guard theme == .bean else { return }
-
-        if let texture = UIImage(named: beanPaperTextureImageName) {
-            context.saveGState()
-            context.setAlpha(beanTextureOpacity)
-            context.setBlendMode(.multiply)
-            stride(from: rect.minY, to: rect.maxY, by: beanTextureTileSide).forEach { y in
-                stride(from: rect.minX, to: rect.maxX, by: beanTextureTileSide).forEach { x in
-                    texture.draw(
-                        in: CGRect(
-                            x: x,
-                            y: y,
-                            width: beanTextureTileSide,
-                            height: beanTextureTileSide
-                        )
-                    )
-                }
-            }
-            context.restoreGState()
-        }
+        guard theme == .bean, showsBeanArtwork else { return }
 
         let artwork = beanPaperArtwork(for: pageID)
         if let image = UIImage(named: artwork.imageName) {

@@ -25,7 +25,8 @@ struct NoteEditorView: View {
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
-    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = BeanNotesTheme.defaultTheme.defaultNoteBackgroundHex
+    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
+    @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
 
     @State private var selectedPageID: UUID?
     @State private var isShowingAttachmentPicker = false
@@ -310,7 +311,8 @@ struct NoteEditorView: View {
                         zoomScaleChanged: updateZoomScale(_:),
                         addPageAtBottom: addPageAtBottom,
                         topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page)),
-                        theme: beanNotesTheme
+                        theme: beanNotesTheme,
+                        showsBeanArtwork: showsBeanArtwork
                     )
                     .ignoresSafeArea(.container, edges: .bottom)
 

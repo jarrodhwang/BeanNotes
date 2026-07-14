@@ -43,15 +43,24 @@ struct NotePageRenderSnapshot: Sendable {
     var width: Double
     var height: Double
     var themeRaw: String
+    var showsBeanArtwork: Bool
     var imageAttachments: [NoteImageAttachmentRenderSnapshot]
 
     @MainActor
     init(page: NotePage) {
-        self.init(page: page, theme: .currentFromDefaults())
+        self.init(
+            page: page,
+            theme: .currentFromDefaults(),
+            showsBeanArtwork: NoteBackground.showsBeanArtwork()
+        )
     }
 
     @MainActor
-    init(page: NotePage, theme: BeanNotesTheme) {
+    init(
+        page: NotePage,
+        theme: BeanNotesTheme,
+        showsBeanArtwork: Bool = NoteBackground.showsBeanArtwork()
+    ) {
         let pageSize = page.pageSize
         self.id = page.id
         self.pageOrder = page.pageOrder
@@ -61,6 +70,7 @@ struct NotePageRenderSnapshot: Sendable {
         self.width = Double(pageSize.width)
         self.height = Double(pageSize.height)
         self.themeRaw = theme.rawValue
+        self.showsBeanArtwork = showsBeanArtwork
         self.imageAttachments = page.imageAttachments.map {
             NoteImageAttachmentRenderSnapshot(attachment: $0, pageSize: pageSize)
         }
@@ -76,7 +86,7 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
-    nonisolated private static let thumbnailRenderVersion = 3
+    nonisolated private static let thumbnailRenderVersion = 4
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
@@ -87,25 +97,40 @@ struct ThumbnailService {
     var storage = LocalStorageService()
     var drawingStorage = DrawingStorageService()
 
-    nonisolated static func thumbnailFileName(pageID: UUID, theme: BeanNotesTheme) -> String {
-        "\(pageID.uuidString)-\(theme.rawValue)-v\(thumbnailRenderVersion).jpg"
+    nonisolated static func thumbnailFileName(
+        pageID: UUID,
+        theme: BeanNotesTheme,
+        showsBeanArtwork: Bool = false
+    ) -> String {
+        let artwork = showsBeanArtwork ? "bean-on" : "bean-off"
+        return "\(pageID.uuidString)-\(theme.rawValue)-\(artwork)-v\(thumbnailRenderVersion).jpg"
     }
 
     nonisolated static func isCurrentThumbnailPath(
         _ relativePath: String,
         pageID: UUID,
-        theme: BeanNotesTheme
+        theme: BeanNotesTheme,
+        showsBeanArtwork: Bool = false
     ) -> Bool {
-        URL(fileURLWithPath: relativePath).lastPathComponent == thumbnailFileName(pageID: pageID, theme: theme)
+        URL(fileURLWithPath: relativePath).lastPathComponent == thumbnailFileName(
+            pageID: pageID,
+            theme: theme,
+            showsBeanArtwork: showsBeanArtwork
+        )
     }
 
     func generateThumbnail(
         for page: NotePage,
         theme: BeanNotesTheme? = nil,
+        showsBeanArtwork: Bool = NoteBackground.showsBeanArtwork(),
         maxDimension: CGFloat = 360
     ) throws -> URL {
         let resolvedTheme = theme ?? .currentFromDefaults()
-        let snapshot = NotePageRenderSnapshot(page: page, theme: resolvedTheme)
+        let snapshot = NotePageRenderSnapshot(
+            page: page,
+            theme: resolvedTheme,
+            showsBeanArtwork: showsBeanArtwork
+        )
         let drawing = drawingStorage.loadDrawing(for: page)
         let thumbnail = Self.renderThumbnailImage(
             snapshot: snapshot,
@@ -114,7 +139,11 @@ struct ThumbnailService {
             maxDimension: maxDimension
         )
         let data = thumbnail.jpegData(compressionQuality: 0.82) ?? Data()
-        let fileName = Self.thumbnailFileName(pageID: page.id, theme: resolvedTheme)
+        let fileName = Self.thumbnailFileName(
+            pageID: page.id,
+            theme: resolvedTheme,
+            showsBeanArtwork: snapshot.showsBeanArtwork
+        )
         let stored = try storage.saveData(
             data,
             fileName: fileName,
@@ -129,19 +158,29 @@ struct ThumbnailService {
     func generateThumbnailInBackground(
         for page: NotePage,
         theme: BeanNotesTheme? = nil,
+        showsBeanArtwork: Bool = NoteBackground.showsBeanArtwork(),
         maxDimension: CGFloat = 360
     ) async throws -> URL {
         let resolvedTheme = theme ?? .currentFromDefaults()
-        let snapshot = NotePageRenderSnapshot(page: page, theme: resolvedTheme)
+        let snapshot = NotePageRenderSnapshot(
+            page: page,
+            theme: resolvedTheme,
+            showsBeanArtwork: showsBeanArtwork
+        )
         let rootURL = storage.rootURL
-        let fileName = Self.thumbnailFileName(pageID: page.id, theme: resolvedTheme)
+        let fileName = Self.thumbnailFileName(
+            pageID: page.id,
+            theme: resolvedTheme,
+            showsBeanArtwork: snapshot.showsBeanArtwork
+        )
         let data = try await Self.renderThumbnailData(
             snapshot: snapshot,
             rootURL: rootURL,
             maxDimension: maxDimension
         )
         try Task.checkCancellation()
-        guard resolvedTheme == .currentFromDefaults() else {
+        guard resolvedTheme == .currentFromDefaults(),
+              showsBeanArtwork == NoteBackground.showsBeanArtwork() else {
             throw CancellationError()
         }
 
@@ -154,7 +193,8 @@ struct ThumbnailService {
         )
 
         guard !Task.isCancelled,
-              resolvedTheme == .currentFromDefaults() else {
+              resolvedTheme == .currentFromDefaults(),
+              showsBeanArtwork == NoteBackground.showsBeanArtwork() else {
             if page.thumbnailFileName != stored.relativePath {
                 try? storage.removeFile(relativePath: stored.relativePath)
             }
@@ -186,6 +226,7 @@ struct ThumbnailService {
     func drawBackground(
         _ background: NoteBackground,
         theme: BeanNotesTheme = .standard,
+        showsBeanArtwork: Bool = false,
         pageID: UUID? = nil,
         in rect: CGRect,
         context: CGContext
@@ -193,6 +234,7 @@ struct ThumbnailService {
         NoteBackgroundRenderer.draw(
             background: background,
             theme: theme,
+            showsBeanArtwork: showsBeanArtwork,
             pageID: pageID,
             in: rect,
             context: context
@@ -378,6 +420,7 @@ struct ThumbnailService {
         NoteBackgroundRenderer.draw(
             background: background,
             theme: snapshot.theme,
+            showsBeanArtwork: snapshot.showsBeanArtwork,
             pageID: snapshot.id,
             in: rect,
             context: context

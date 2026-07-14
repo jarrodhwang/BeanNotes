@@ -23,13 +23,13 @@ struct SettingsView: View {
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
-    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = BeanNotesTheme.defaultTheme.defaultNoteBackgroundHex
+    @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
+    @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
 
     @State private var storageUsage: LocalStorageUsageSnapshot?
     @State private var isLoadingStorageUsage = false
     @State private var isCleaningOldExports = false
     @State private var isConfirmingExportCleanup = false
-    @State private var isConfirmingThemePaperBackground = false
     @State private var storageMessage: String?
     @State private var storageErrorMessage: String?
     @State private var backupSharePayload: SettingsSharePayload?
@@ -86,10 +86,14 @@ struct SettingsView: View {
                     ThemePreviewCard(theme: selectedMoodTheme)
                         .padding(.vertical, 4)
 
-                    Button("Use Theme Paper Background") {
-                        isConfirmingThemePaperBackground = true
+                    if selectedMoodTheme == .bean {
+                        Toggle("Show Bean on Note Backgrounds", isOn: $showsBeanArtwork)
+                            .accessibilityIdentifier("settings.beanArtworkToggle")
+
+                        Text("Shows Bean as a subtle background image without changing your note template or color.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .accessibilityIdentifier("settings.themePaperBackgroundButton")
                 }
 
                 Section("Notifications") {
@@ -277,14 +281,16 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .tint(selectedMoodTheme.accentColor)
-            .onAppear(perform: migrateLegacyPaginationSettingIfNeeded)
+            .onAppear {
+                NoteBackground.migrateLegacyThemeControlledDefaultsIfNeeded()
+                migrateLegacyPaginationSettingIfNeeded()
+            }
             .task {
                 await refreshStorageUsage()
                 await refreshNotificationAuthorizationStatus()
             }
             .onChange(of: beanNotesThemeRaw) { _, rawValue in
                 let theme = BeanNotesTheme(rawValue: rawValue) ?? .defaultTheme
-                applyThemePaperBackground(for: theme)
                 if theme != .bean {
                     hideBeanVisitPreview(animated: false)
                 }
@@ -302,18 +308,6 @@ struct SettingsView: View {
                 Task {
                     await refreshNotificationAuthorizationStatus()
                 }
-            }
-            .alert(
-                "Use \(selectedMoodTheme.label) paper background?",
-                isPresented: $isConfirmingThemePaperBackground
-            ) {
-                Button("Cancel", role: .cancel) {}
-
-                Button("Use \(selectedMoodTheme.label) Paper") {
-                    applyThemePaperBackground(for: selectedMoodTheme)
-                }
-            } message: {
-                Text(themePaperConfirmationMessage)
             }
             .confirmationDialog(
                 "Clean up exports older than \(oldExportAgeDays) days?",
@@ -371,16 +365,6 @@ struct SettingsView: View {
         accessibilityReduceMotion
             ? .easeInOut(duration: 0.18)
             : .spring(response: 0.42, dampingFraction: 0.86)
-    }
-
-    private var themePaperConfirmationMessage: String {
-        "Bean says, “Fresh paper coming right up!” New notes will use \(selectedMoodTheme.label)’s plain paper background. Existing notes will stay as they are."
-    }
-
-    private func applyThemePaperBackground(for theme: BeanNotesTheme) {
-        let background = theme.defaultNoteBackground
-        defaultBackgroundStyleRaw = background.storageStyleRaw
-        defaultBackgroundColorHex = background.colorHex
     }
 
     @MainActor
@@ -674,7 +658,7 @@ private struct ThemePreviewCard: View {
                     ThemeSwatch(color: theme.appBackground)
                     ThemeSwatch(color: theme.sidebarBackground)
                     ThemeSwatch(color: theme.accentColor)
-                    ThemeSwatch(color: theme.defaultNoteBackgroundHex)
+                    ThemeSwatch(color: theme.notePaperPreviewHex)
                 }
                 .padding(.top, 2)
             }
