@@ -650,7 +650,7 @@ final class DrawingToolState: ObservableObject {
         didSet { defaults.set(widthMode.rawValue, forKey: DefaultsKey.widthMode) }
     }
 
-    @Published var temporaryEraserActive = false
+    @Published private(set) var temporaryEraserActive = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -857,6 +857,10 @@ final class DrawingToolState: ObservableObject {
     }
 
     func select(_ tool: DrawingTool) {
+        if temporaryEraserActive {
+            temporaryEraserActive = false
+        }
+
         if tool != .eraser, tool != selectedTool {
             previousTool = selectedTool == .eraser ? previousTool : selectedTool
         }

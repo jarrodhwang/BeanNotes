@@ -37,6 +37,8 @@ final class BeanNotesUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["Back to library"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.otherElements["Pen palette"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["1 point stroke"].exists)
+        app.buttons["Pen"].tap()
         XCTAssertTrue(app.buttons["1 point stroke"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["3 point stroke"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["5 point stroke"].waitForExistence(timeout: 8))

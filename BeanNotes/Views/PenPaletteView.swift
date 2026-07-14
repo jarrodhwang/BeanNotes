@@ -16,8 +16,9 @@ struct PenPaletteView: View {
     @AppStorage(PenPaletteLayoutMetrics.committedOffsetStorageKey) private var committedOffsetRaw = ""
     @State private var isShowingEraserModes = false
     @State private var committedOffset: CGSize = .zero
-    @State private var dragOffset: CGSize = .zero
+    @GestureState private var dragOffset: CGSize = .zero
     @State private var selectedPaletteIndex = 0
+    @State private var isShowingWidthControls = false
     @State private var isShowingCustomWidth = false
     @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
@@ -36,10 +37,10 @@ struct PenPaletteView: View {
             // PencilKit's Metal surface. An opaque system surface stays compositor-only.
             .background(
                 Color(uiColor: .secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(.secondary.opacity(0.18), lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.13), radius: 8, x: 0, y: 4)
@@ -72,6 +73,11 @@ struct PenPaletteView: View {
             .onChange(of: activePaletteSelectionSignature) { _, _ in
                 syncSelectedPaletteIndex()
             }
+            .onChange(of: toolState.selectedTool) { _, _ in
+                isShowingWidthControls = false
+                isShowingCustomWidth = false
+                isShowingEraserModes = false
+            }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Pen palette")
     }
@@ -96,7 +102,7 @@ struct PenPaletteView: View {
     }
 
     private var regularExpandedPalette: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             dragHandle
 
             toolButtons
@@ -112,20 +118,23 @@ struct PenPaletteView: View {
 
                 colorControls
 
-                Divider()
-                    .frame(height: 24)
+                if isShowingWidthControls {
+                    Divider()
+                        .frame(height: 30)
 
-                regularWidthControls
+                    regularWidthControls
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
             }
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 18)
-        .padding(.vertical, 6)
+        .padding(.leading, 12)
+        .padding(.trailing, 20)
+        .padding(.vertical, 9)
     }
 
     private var compactExpandedPalette: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
                 dragHandle
                 toolButtons
             }
@@ -137,16 +146,20 @@ struct PenPaletteView: View {
 
             if showsInkControls {
                 colorControls
-                compactWidthControls
+
+                if isShowingWidthControls {
+                    compactWidthControls
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 18)
-        .padding(.vertical, 7)
+        .padding(.leading, 12)
+        .padding(.trailing, 20)
+        .padding(.vertical, 10)
     }
 
     private var toolButtons: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 5) {
             ForEach(DrawingTool.allCases) { tool in
                 toolButton(tool)
             }
@@ -154,12 +167,10 @@ struct PenPaletteView: View {
     }
 
     private var colorControls: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             ForEach(toolState.paletteSwatches()) { swatch in
                 swatchButton(swatch)
             }
-
-            selectedPaletteColorPicker
         }
     }
 
@@ -260,18 +271,18 @@ struct PenPaletteView: View {
     }
 
     private var collapsedPalette: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             dragHandle
 
             Image(systemName: toolState.selectedTool.systemImage)
-                .font(.callout.weight(.semibold))
+                .font(.body.weight(.semibold))
                 .symbolVariant(.fill)
-                .frame(width: 26, height: 26)
+                .frame(width: 32, height: 32)
 
             if showsInkControls {
                 Circle()
                     .fill(toolState.activeInkColor)
-                    .frame(width: 18, height: 18)
+                    .frame(width: 24, height: 24)
                     .overlay {
                         Circle()
                             .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
@@ -284,16 +295,16 @@ struct PenPaletteView: View {
                     .accessibilityLabel("\(toolState.eraserMode.label) eraser")
             }
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 24)
-        .padding(.vertical, 7)
+        .padding(.leading, 12)
+        .padding(.trailing, 26)
+        .padding(.vertical, 9)
     }
 
     private var dragHandle: some View {
         Image(systemName: "line.3.horizontal")
-            .font(.caption.weight(.bold))
+            .font(.callout.weight(.bold))
             .foregroundStyle(.secondary)
-            .frame(width: 18, height: 28)
+            .frame(width: 28, height: 40)
             .contentShape(Rectangle())
             .gesture(moveGesture)
             .accessibilityHidden(true)
@@ -321,9 +332,10 @@ struct PenPaletteView: View {
     }
 
     private var moveGesture: some Gesture {
-        DragGesture(minimumDistance: 6)
-            .onChanged { value in
-                dragOffset = value.translation
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .updating($dragOffset) { value, state, transaction in
+                transaction.animation = nil
+                state = value.translation
             }
             .onEnded { value in
                 let proposedOffset = CGSize(
@@ -332,7 +344,6 @@ struct PenPaletteView: View {
                 )
                 committedOffset = clampedOffset(proposedOffset)
                 persistCommittedOffset()
-                dragOffset = .zero
             }
     }
 
@@ -398,10 +409,10 @@ struct PenPaletteView: View {
             selectTool(tool)
         } label: {
             Image(systemName: tool.systemImage)
-                .font(.callout.weight(.semibold))
+                .font(.body.weight(.semibold))
                 .symbolVariant(toolState.selectedTool == tool ? .fill : .none)
                 .foregroundStyle(toolState.selectedTool == tool ? .primary : .secondary)
-                .frame(width: 28, height: 28)
+                .frame(width: 38, height: 38)
                 .background {
                     if toolState.selectedTool == tool {
                         Circle()
@@ -454,33 +465,26 @@ struct PenPaletteView: View {
     private func selectTool(_ tool: DrawingTool) {
         performSelectionFeedback()
 
-        if tool == .eraser, toolState.selectedTool == .eraser {
-            withAnimation(.snappy(duration: 0.16)) {
-                isShowingEraserModes.toggle()
+        if toolState.selectedTool == tool {
+            if tool == .eraser {
+                withAnimation(.snappy(duration: 0.16)) {
+                    isShowingEraserModes.toggle()
+                }
+            } else if toolState.selectedToolUsesInkColor {
+                withAnimation(.snappy(duration: 0.16)) {
+                    isShowingWidthControls.toggle()
+                    if !isShowingWidthControls {
+                        isShowingCustomWidth = false
+                    }
+                }
             }
             return
         }
 
         toolState.select(tool)
-
-        if tool != .eraser {
-            withAnimation(.snappy(duration: 0.16)) {
-                isShowingEraserModes = false
-            }
-        }
-    }
-
-    private var selectedPaletteColorPicker: some View {
-        ColorPicker("", selection: selectedPaletteColorBinding, supportsOpacity: false)
-            .labelsHidden()
-            .frame(width: 24, height: 24)
-            .overlay {
-                Circle()
-                    .stroke(Color.secondary.opacity(0.28), lineWidth: 1)
-                    .frame(width: 29, height: 29)
-            }
-            .accessibilityLabel("Edit selected \(toolState.activeColorTool.label) color")
-            .accessibilityHint("Changes the highlighted palette swatch")
+        isShowingEraserModes = false
+        isShowingWidthControls = false
+        isShowingCustomWidth = false
     }
 
     private var selectedPaletteColorBinding: Binding<Color> {
@@ -492,27 +496,42 @@ struct PenPaletteView: View {
         }
     }
 
+    @ViewBuilder
     private func swatchButton(_ swatch: DrawingColorSwatch) -> some View {
-        Button {
-            selectPaletteSwatch(swatch)
-        } label: {
-            Circle()
-                .fill(swatch.color)
-                .frame(width: 21, height: 21)
+        if isSelectedPaletteSwatch(swatch) {
+            ColorPicker("", selection: selectedPaletteColorBinding, supportsOpacity: false)
+                .labelsHidden()
+                .scaleEffect(1.12)
+                .frame(width: 38, height: 38)
                 .overlay {
                     Circle()
-                        .stroke(isLightSwatch(swatch) ? Color.secondary.opacity(0.42) : Color.clear, lineWidth: 1)
+                        .stroke(.blue, lineWidth: 2.5)
+                        .frame(width: 35, height: 35)
+                        .allowsHitTesting(false)
                 }
-                .overlay {
-                    if isSelectedPaletteSwatch(swatch) {
-                        Circle()
-                            .stroke(.blue, lineWidth: 2)
-                            .frame(width: 27, height: 27)
-                    }
-                }
+                .accessibilityLabel("Edit \(swatch.name) \(toolState.activeColorTool.label) color")
+                .accessibilityHint("Opens the color picker for this selected swatch")
+        } else {
+            Button {
+                selectPaletteSwatch(swatch)
+            } label: {
+                swatchCircle(swatch)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(swatch.name) \(toolState.activeColorTool.label) color")
+            .accessibilityHint("Selects this color; tap it again to edit")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(swatch.name) \(toolState.activeColorTool.label) color")
+    }
+
+    private func swatchCircle(_ swatch: DrawingColorSwatch) -> some View {
+        Circle()
+            .fill(swatch.color)
+            .frame(width: 28, height: 28)
+            .overlay {
+                Circle()
+                    .stroke(isLightSwatch(swatch) ? Color.secondary.opacity(0.42) : Color.clear, lineWidth: 1)
+            }
+            .frame(width: 38, height: 38)
     }
 
     private func selectPaletteSwatch(_ swatch: DrawingColorSwatch) {
@@ -641,10 +660,10 @@ struct PenPaletteLayoutMetrics {
 
     static func estimatedPaletteSize(isCompact: Bool, showsInkControls: Bool) -> CGSize {
         if isCompact {
-            return CGSize(width: showsInkControls ? 296 : 212, height: showsInkControls ? 162 : 44)
+            return CGSize(width: showsInkControls ? 372 : 270, height: showsInkControls ? 118 : 58)
         }
 
-        return CGSize(width: showsInkControls ? 962 : 246, height: 44)
+        return CGSize(width: showsInkControls ? 650 : 306, height: 58)
     }
 
     static func clampedCommittedOffset(

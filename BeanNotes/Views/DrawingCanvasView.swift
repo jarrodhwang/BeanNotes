@@ -1343,11 +1343,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         static func preparedNativeDrawingScale(for documentZoomScale: CGFloat) -> CGFloat {
-            // Match the current screen requirement without preparing an oversized next
-            // tier. This keeps PencilKit's live surface smaller and lowers Pencil latency.
+            // Quarter-step preparation keeps live ink at or above screen resolution while
+            // avoiding the large offscreen surfaces caused by coarse zoom tiers.
+            guard documentZoomScale.isFinite else { return 1 }
             let requestedScale = max(documentZoomScale, 1)
-            let preparedScales: [CGFloat] = [1, 1.5, 2, 3, 4, 6]
-            return preparedScales.first(where: { $0 >= requestedScale }) ?? 6
+            return (requestedScale * 4).rounded(.up) / 4
         }
 
         private func pageFrame(id: UUID, intersects rect: CGRect) -> Bool {
@@ -2194,6 +2194,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             bringSubviewToFront(eraserScopeView)
         }
 
+        func setEraserPreviewEnabled(_ enabled: Bool) {
+            guard eraserScopeGesture.isEnabled != enabled else { return }
+            eraserScopeGesture.isEnabled = enabled
+            if !enabled {
+                eraserScopeView.hide()
+            }
+        }
+
         private func setDocumentPanningEnabled(_ enabled: Bool) {
             var ancestor = superview
             while let current = ancestor {
@@ -3017,6 +3025,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var canvasPageViews: [ObjectIdentifier: WeakPageCanvasView] = [:]
         private var pencilInteractions: [ObjectIdentifier: UIPencilInteraction] = [:]
         private var canvasToolSignatures: [ObjectIdentifier: String] = [:]
+        private var temporaryEraserCanvasIDs: Set<ObjectIdentifier> = []
         private var lastPublishedCanUndo: Bool?
         private var lastPublishedCanRedo: Bool?
         private var lastPublishedZoomScale: CGFloat?
@@ -3261,6 +3270,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasPages[id] = nil
             canvasPageViews[id] = nil
             canvasToolSignatures[id] = nil
+            temporaryEraserCanvasIDs.remove(id)
 
             if let pencilInteraction = pencilInteractions[id] {
                 canvasView.removeInteraction(pencilInteraction)
@@ -3383,6 +3393,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard force || canvasToolSignatures[id] != signature else { return }
             canvasView.tool = tool
             canvasToolSignatures[id] = signature
+            canvasPageViews[id]?.value?.setEraserPreviewEnabled(tool is PKEraserTool)
         }
 
         private var currentCustomToolZoomScale: CGFloat {
@@ -3621,6 +3632,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             let id = ObjectIdentifier(canvasView)
             activeToolCanvasIDs.insert(id)
+            if parent.toolState.temporaryEraserActive {
+                temporaryEraserCanvasIDs.insert(id)
+            }
             if let page = canvasPages[id] {
                 pendingSaves[page.id]?.cancel()
                 pendingSaves[page.id] = nil
@@ -3633,6 +3647,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             let id = ObjectIdentifier(canvasView)
             activeToolCanvasIDs.remove(id)
+            let completedTemporaryErase = temporaryEraserCanvasIDs.remove(id) != nil
             containerView?.setActiveDrawingPage(id: nil)
             canvasPageViews[id]?.value?.setLiveDrawingActive(false)
 
@@ -3653,7 +3668,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 prepareForExport(requestID: requestID)
             }
 
-            guard parent.toolState.temporaryEraserActive else { return }
+            guard completedTemporaryErase,
+                  parent.toolState.temporaryEraserActive else { return }
             parent.toolState.restoreAfterTemporaryEraser()
         }
 

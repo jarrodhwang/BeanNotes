@@ -1140,9 +1140,13 @@ struct BeanNotesTests {
     @Test func nativeDrawingScaleUsesCurrentResolutionWithoutOversizedHeadroom() {
         #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 0.75) == 1)
         #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 1) == 1)
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 1.01) == 1.25)
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 2.26) == 2.5)
         #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 2) == 2)
         #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 4) == 4)
         #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 6) == 6)
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: 6.1) == 6.25)
+        #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: .infinity) == 1)
     }
 
     @Test func pageCanvasAppliesSelectedDrawingInputMode() {
@@ -3261,6 +3265,30 @@ struct BeanNotesTests {
         toolState.select(.lasso)
         #expect(toolState.activeInkType == nil)
         _ = toolState.makePKTool()
+    }
+
+    @Test @MainActor func temporaryEraserRestoresOnlyAfterAnEraserStrokeEnds() throws {
+        let fixture = try makePageCanvasFixture(name: "TemporaryEraserLifecycle")
+        defer { fixture.cleanup() }
+        let toolState = fixture.coordinator.parent.toolState
+        let canvasView = fixture.pageView.canvasView
+
+        toolState.select(.pencil)
+        fixture.coordinator.applyCustomToolIfNeeded()
+        fixture.coordinator.canvasViewDidBeginUsingTool(canvasView)
+
+        toolState.handleDoubleTap(action: .switchToEraser)
+        fixture.coordinator.applyCustomToolIfNeeded()
+        fixture.coordinator.canvasViewDidEndUsingTool(canvasView)
+
+        #expect(toolState.selectedTool == .eraser)
+        #expect(toolState.temporaryEraserActive)
+
+        fixture.coordinator.canvasViewDidBeginUsingTool(canvasView)
+        fixture.coordinator.canvasViewDidEndUsingTool(canvasView)
+
+        #expect(toolState.selectedTool == .pencil)
+        #expect(!toolState.temporaryEraserActive)
     }
 
     @Test @MainActor func eraserScopeTracksTheActivePencilKitEraserWidth() throws {
