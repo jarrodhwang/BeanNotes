@@ -1630,6 +1630,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func configureView() {
+            // Paper and PencilKit ink stay visually stable while the workspace chrome follows dark mode.
+            overrideUserInterfaceStyle = .light
             clipsToBounds = false
             contentScaleFactor = UIScreen.main.scale
             layer.contentsScale = UIScreen.main.scale

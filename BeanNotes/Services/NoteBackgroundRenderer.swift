@@ -146,13 +146,24 @@ private extension NoteBackgroundRenderer {
         )
     ]
 
-    static var lineColor: Color { Color.secondary.opacity(0.24) }
-    static var strongLineColor: Color { Color.secondary.opacity(0.34) }
-    static var dotColor: Color { Color.secondary.opacity(0.36) }
+    static var lineColor: Color { lightSecondaryColor.opacity(0.24) }
+    static var strongLineColor: Color { lightSecondaryColor.opacity(0.34) }
+    static var dotColor: Color { lightSecondaryColor.opacity(0.36) }
+    static var checkboxColor: Color { lightSecondaryColor.opacity(0.2) }
 
-    nonisolated static var uiLineColor: UIColor { UIColor.secondaryLabel.withAlphaComponent(0.24) }
-    nonisolated static var uiStrongLineColor: UIColor { UIColor.secondaryLabel.withAlphaComponent(0.34) }
-    nonisolated static var uiDotColor: UIColor { UIColor.secondaryLabel.withAlphaComponent(0.34) }
+    nonisolated static var uiLineColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.24) }
+    nonisolated static var uiStrongLineColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.34) }
+    nonisolated static var uiDotColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.34) }
+    nonisolated static var uiCheckboxColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.2) }
+
+    static var lightSecondaryColor: Color { Color(uiColor: lightSecondaryLabel) }
+
+    /// Note paper intentionally keeps its light appearance even when the surrounding app is dark.
+    nonisolated static var lightSecondaryLabel: UIColor {
+        UIColor.secondaryLabel.resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: .light)
+        )
+    }
 
     @MainActor
     static func drawBeanArtworkIfNeeded(
@@ -398,7 +409,7 @@ private extension NoteBackgroundRenderer {
         stride(from: rect.minY + headerHeight + rowSpacing * 0.42, through: rect.maxY, by: rowSpacing).forEach { y in
             checkboxPath.addRect(CGRect(x: rect.maxX - 52, y: y - checkboxSize / 2, width: checkboxSize, height: checkboxSize))
         }
-        context.stroke(checkboxPath, with: .color(Color.secondary.opacity(0.2)), lineWidth: 1)
+        context.stroke(checkboxPath, with: .color(checkboxColor), lineWidth: 1)
     }
 
     nonisolated static func drawPlanner(background: NoteBackground, in rect: CGRect, context: CGContext) {
@@ -426,7 +437,7 @@ private extension NoteBackgroundRenderer {
         stride(from: rect.minY + headerHeight + rowSpacing * 0.42, through: rect.maxY, by: rowSpacing).forEach { y in
             context.addRect(CGRect(x: rect.maxX - 52, y: y - checkboxSize / 2, width: checkboxSize, height: checkboxSize))
         }
-        context.setStrokeColor(UIColor.secondaryLabel.withAlphaComponent(0.2).cgColor)
+        context.setStrokeColor(uiCheckboxColor.cgColor)
         context.setLineWidth(1)
         context.strokePath()
     }

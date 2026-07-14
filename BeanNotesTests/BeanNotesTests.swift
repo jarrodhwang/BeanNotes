@@ -1520,6 +1520,40 @@ struct BeanNotesTests {
         #expect(BeanNotesTheme.blueberry.alternateAppIconName == "BlueberryAppIcon")
     }
 
+    @Test func noteTemplateRenderingStaysLightInDarkMode() throws {
+        let background = NoteBackground(style: .planner, colorHex: "#FFFFFF")
+        let size = CGSize(width: 320, height: 420)
+
+        func renderedData(for interfaceStyle: UIUserInterfaceStyle) -> Data? {
+            var data: Data?
+            UITraitCollection(userInterfaceStyle: interfaceStyle).performAsCurrent {
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = 1
+                format.opaque = true
+                let renderer = UIGraphicsImageRenderer(size: size, format: format)
+                data = renderer.image { context in
+                    NoteBackgroundRenderer.draw(
+                        background: background,
+                        in: CGRect(origin: .zero, size: size),
+                        context: context.cgContext
+                    )
+                }.pngData()
+            }
+            return data
+        }
+
+        let lightRendering = try #require(renderedData(for: .light))
+        let darkRendering = try #require(renderedData(for: .dark))
+
+        #expect(lightRendering == darkRendering)
+    }
+
+    @Test func drawingPagesKeepLightAppearanceInDarkMode() {
+        let pageView = DrawingCanvasView.PageCanvasView()
+
+        #expect(pageView.overrideUserInterfaceStyle == .light)
+    }
+
     @Test func beanVisitPolicyRequiresAnIdleHealthyBeanLibrary() {
         let eligible = BeanVisitPolicy.canSchedule(
             theme: .bean,
