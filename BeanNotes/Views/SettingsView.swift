@@ -93,7 +93,7 @@ struct SettingsView: View {
                         Toggle("Show Bean on Note Backgrounds", isOn: $showsBeanArtwork)
                             .accessibilityIdentifier("settings.beanArtworkToggle")
 
-                        Text("Shows Bean as a subtle background image without changing your note template or color.")
+                        Text("Adds a subtle, randomly selected Bean paper design without changing your note template or color.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

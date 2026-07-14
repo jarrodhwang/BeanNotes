@@ -108,7 +108,7 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
-    nonisolated private static let thumbnailRenderVersion = 7
+    nonisolated private static let thumbnailRenderVersion = 8
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1

@@ -6,6 +6,13 @@
 import SwiftUI
 import UIKit
 
+enum BeanPaperArtworkLayout: Hashable, Sendable {
+    case centered
+    case tiled
+    case scattered
+    case border
+}
+
 struct BeanPaperArtwork: Equatable, Sendable {
     let imageName: String
     let aspectRatio: CGFloat
@@ -13,6 +20,7 @@ struct BeanPaperArtwork: Equatable, Sendable {
     let maximumHeightRatio: CGFloat
     let opacity: CGFloat
     let clipsToEllipse: Bool
+    let layout: BeanPaperArtworkLayout
 }
 
 enum NoteBackgroundRenderer {
@@ -128,6 +136,24 @@ enum NoteBackgroundRenderer {
             height: height
         )
     }
+
+    nonisolated static func beanPaperArtworkRects(
+        for artwork: BeanPaperArtwork,
+        in rect: CGRect
+    ) -> [CGRect] {
+        guard rect.width > 0, rect.height > 0 else { return [] }
+
+        switch artwork.layout {
+        case .centered:
+            return [beanPaperArtworkRect(for: artwork, in: rect)]
+        case .tiled:
+            return tiledBeanRects(for: artwork, in: rect)
+        case .scattered:
+            return scatteredBeanRects(for: artwork, in: rect)
+        case .border:
+            return borderBeanRects(for: artwork, in: rect)
+        }
+    }
 }
 
 private extension NoteBackgroundRenderer {
@@ -138,7 +164,8 @@ private extension NoteBackgroundRenderer {
             widthRatio: 0.56,
             maximumHeightRatio: 0.60,
             opacity: 0.08,
-            clipsToEllipse: false
+            clipsToEllipse: false,
+            layout: .centered
         ),
         BeanPaperArtwork(
             imageName: "BeanTabAvatar",
@@ -146,7 +173,35 @@ private extension NoteBackgroundRenderer {
             widthRatio: 0.60,
             maximumHeightRatio: 0.50,
             opacity: 0.075,
-            clipsToEllipse: true
+            clipsToEllipse: true,
+            layout: .centered
+        ),
+        BeanPaperArtwork(
+            imageName: "BeanBadge",
+            aspectRatio: 1,
+            widthRatio: 0.072,
+            maximumHeightRatio: 0.08,
+            opacity: 0.045,
+            clipsToEllipse: false,
+            layout: .tiled
+        ),
+        BeanPaperArtwork(
+            imageName: "BeanTabAvatar",
+            aspectRatio: 1,
+            widthRatio: 0.105,
+            maximumHeightRatio: 0.11,
+            opacity: 0.05,
+            clipsToEllipse: true,
+            layout: .scattered
+        ),
+        BeanPaperArtwork(
+            imageName: "BeanBadge",
+            aspectRatio: 1,
+            widthRatio: 0.09,
+            maximumHeightRatio: 0.10,
+            opacity: 0.055,
+            clipsToEllipse: false,
+            layout: .border
         )
     ]
 
@@ -184,14 +239,16 @@ private extension NoteBackgroundRenderer {
         guard theme == .bean, showsBeanArtwork else { return }
 
         let artwork = beanPaperArtwork(for: pageID)
-        let artworkRect = beanPaperArtworkRect(for: artwork, in: rect)
         var artworkContext = context
         artworkContext.opacity = artwork.opacity
-        if artwork.clipsToEllipse {
-            artworkContext.clip(to: Path(ellipseIn: artworkRect))
-        }
         let image = artworkContext.resolve(Image(artwork.imageName))
-        artworkContext.draw(image, in: artworkRect)
+        for artworkRect in beanPaperArtworkRects(for: artwork, in: rect) {
+            var itemContext = artworkContext
+            if artwork.clipsToEllipse {
+                itemContext.clip(to: Path(ellipseIn: artworkRect))
+            }
+            itemContext.draw(image, in: artworkRect)
+        }
     }
 
     nonisolated static func drawBeanArtworkIfNeeded(
@@ -205,15 +262,92 @@ private extension NoteBackgroundRenderer {
 
         let artwork = beanPaperArtwork(for: pageID)
         if let image = UIImage(named: artwork.imageName) {
-            let artworkRect = beanPaperArtworkRect(for: artwork, in: rect)
-            context.saveGState()
-            if artwork.clipsToEllipse {
-                context.addEllipse(in: artworkRect)
-                context.clip()
+            for artworkRect in beanPaperArtworkRects(for: artwork, in: rect) {
+                context.saveGState()
+                if artwork.clipsToEllipse {
+                    context.addEllipse(in: artworkRect)
+                    context.clip()
+                }
+                image.draw(in: artworkRect, blendMode: .normal, alpha: artwork.opacity)
+                context.restoreGState()
             }
-            image.draw(in: artworkRect, blendMode: .normal, alpha: artwork.opacity)
-            context.restoreGState()
         }
+    }
+
+    nonisolated static func tiledBeanRects(
+        for artwork: BeanPaperArtwork,
+        in rect: CGRect
+    ) -> [CGRect] {
+        let beanWidth = min(rect.width * artwork.widthRatio, rect.height * artwork.maximumHeightRatio)
+        let horizontalStep = beanWidth * 1.8
+        let verticalStep = beanWidth * 1.9
+        guard beanWidth > 0, horizontalStep > 0, verticalStep > 0 else { return [] }
+
+        var results: [CGRect] = []
+        var row = 0
+        var y = rect.minY + verticalStep * 0.55
+        while y + beanWidth <= rect.maxY {
+            let rowOffset = row.isMultiple(of: 2) ? 0 : horizontalStep * 0.5
+            var x = rect.minX + horizontalStep * 0.45 + rowOffset
+            while x + beanWidth <= rect.maxX {
+                results.append(CGRect(x: x, y: y, width: beanWidth, height: beanWidth))
+                x += horizontalStep
+            }
+            row += 1
+            y += verticalStep
+        }
+        return results
+    }
+
+    nonisolated static func scatteredBeanRects(
+        for artwork: BeanPaperArtwork,
+        in rect: CGRect
+    ) -> [CGRect] {
+        let beanWidth = min(rect.width * artwork.widthRatio, rect.height * artwork.maximumHeightRatio)
+        guard beanWidth > 0 else { return [] }
+
+        return (0..<22).map { index in
+            let availableWidth = max(0, rect.width - beanWidth)
+            let availableHeight = max(0, rect.height - beanWidth)
+            return CGRect(
+                x: rect.minX + availableWidth * artworkUnitValue(index: index, salt: 29),
+                y: rect.minY + availableHeight * artworkUnitValue(index: index, salt: 67),
+                width: beanWidth,
+                height: beanWidth
+            )
+        }
+    }
+
+    nonisolated static func borderBeanRects(
+        for artwork: BeanPaperArtwork,
+        in rect: CGRect
+    ) -> [CGRect] {
+        let beanWidth = min(rect.width * artwork.widthRatio, rect.height * artwork.maximumHeightRatio)
+        let inset = beanWidth * 0.42
+        let horizontalStep = beanWidth * 1.65
+        let verticalStep = beanWidth * 1.75
+        guard beanWidth > 0, horizontalStep > 0, verticalStep > 0 else { return [] }
+
+        var results: [CGRect] = []
+        var x = rect.minX + inset
+        while x + beanWidth <= rect.maxX - inset {
+            results.append(CGRect(x: x, y: rect.minY + inset, width: beanWidth, height: beanWidth))
+            results.append(CGRect(x: x, y: rect.maxY - inset - beanWidth, width: beanWidth, height: beanWidth))
+            x += horizontalStep
+        }
+
+        var y = rect.minY + inset + verticalStep
+        while y + beanWidth <= rect.maxY - inset - verticalStep {
+            results.append(CGRect(x: rect.minX + inset, y: y, width: beanWidth, height: beanWidth))
+            results.append(CGRect(x: rect.maxX - inset - beanWidth, y: y, width: beanWidth, height: beanWidth))
+            y += verticalStep
+        }
+        return results
+    }
+
+    nonisolated static func artworkUnitValue(index: Int, salt: Int) -> CGFloat {
+        let value = (index * 83 + salt * 41 + index * index * 23) % 1009
+        return CGFloat(value) / 1008
     }
 
     static func drawChalkboard(in rect: CGRect, context: inout GraphicsContext) {

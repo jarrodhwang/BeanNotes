@@ -2220,8 +2220,8 @@ struct BeanNotesTests {
     }
 
     @Test func beanPaperArtworkSelectionIsDeterministicPerPage() throws {
-        let firstPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000"))
-        let secondPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let firstPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000004"))
+        let secondPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000"))
 
         let firstSelection = NoteBackgroundRenderer.beanPaperArtwork(for: firstPageID)
         let repeatedSelection = NoteBackgroundRenderer.beanPaperArtwork(for: firstPageID)
@@ -2237,8 +2237,8 @@ struct BeanNotesTests {
     @Test func beanPaperArtworkIsCenteredAndLarge() throws {
         let pageRect = CGRect(x: 24, y: 40, width: 1_024, height: 1_366)
         let pageIDs = [
-            try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000")),
-            try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+            try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000004")),
+            try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000"))
         ]
 
         for pageID in pageIDs {
@@ -2250,6 +2250,35 @@ struct BeanNotesTests {
             #expect(artworkRect.width >= pageRect.width * 0.55)
             #expect(artworkRect.height <= pageRect.height * artwork.maximumHeightRatio + 0.001)
         }
+    }
+
+    @Test func beanPaperArtworkIncludesVariedStableLayouts() throws {
+        let pageRect = CGRect(x: 0, y: 0, width: 1_024, height: 1_366)
+        var layouts = Set<BeanPaperArtworkLayout>()
+
+        for suffix in 0...4 {
+            let pageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000000\(suffix)"))
+            let artwork = NoteBackgroundRenderer.beanPaperArtwork(for: pageID)
+            let repeatedArtwork = NoteBackgroundRenderer.beanPaperArtwork(for: pageID)
+
+            #expect(artwork == repeatedArtwork)
+            #expect(!NoteBackgroundRenderer.beanPaperArtworkRects(for: artwork, in: pageRect).isEmpty)
+            layouts.insert(artwork.layout)
+        }
+
+        #expect(layouts == Set([.centered, .tiled, .scattered, .border]))
+    }
+
+    @Test func tiledBeanPaperArtworkUsesManySmallBeans() throws {
+        let pageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let pageRect = CGRect(x: 0, y: 0, width: 1_024, height: 1_366)
+        let artwork = NoteBackgroundRenderer.beanPaperArtwork(for: pageID)
+        let artworkRects = NoteBackgroundRenderer.beanPaperArtworkRects(for: artwork, in: pageRect)
+
+        #expect(artwork.layout == .tiled)
+        #expect(artworkRects.count >= 40)
+        #expect(artworkRects.allSatisfy { $0.width < pageRect.width * 0.1 })
+        #expect(artworkRects.allSatisfy { pageRect.contains($0) })
     }
 
     @Test @MainActor func beanPaperArtworkSelectionFlowsIntoExportRendering() throws {
@@ -3949,8 +3978,8 @@ struct BeanNotesTests {
 
         #expect(beanFileName != standardFileName)
         #expect(beanFileName != beanArtworkFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-v7.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-v7.jpg"))
+        #expect(beanFileName.hasSuffix("-bean-off-v8.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-v8.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,
