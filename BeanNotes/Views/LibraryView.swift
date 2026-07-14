@@ -1020,6 +1020,9 @@ private struct NoteEditorTabBar: View {
 
     private func tabButton(for note: NoteDocument) -> some View {
         let isSelected = selectedNoteID == note.id
+        let folderColor = Color(hex: note.folder?.colorHex ?? beanNotesTheme.defaultFolderColorHex)
+        let tabColorOpacity = isSelected ? 0.20 : 0.08
+        let tabBorderOpacity = isSelected ? 0.36 : 0.16
 
         return HStack(spacing: 8) {
             Button {
@@ -1050,11 +1053,11 @@ private struct NoteEditorTabBar: View {
         .frame(height: 38)
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? beanNotesTheme.cardBackground : Color.clear)
+                .fill(folderColor.opacity(tabColorOpacity))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? Color.secondary.opacity(0.18) : Color.clear, lineWidth: 1)
+                .stroke(folderColor.opacity(tabBorderOpacity), lineWidth: 1)
         }
     }
 }
