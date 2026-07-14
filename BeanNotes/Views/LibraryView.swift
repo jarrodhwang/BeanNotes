@@ -881,9 +881,7 @@ private struct NoteTabbedEditorWorkspace: View {
     var closeTab: (UUID) -> Void
     var backToLibrary: () -> Void
 
-    @State private var isSwitchingTabs = false
     @State private var isFocusModeEnabled = false
-    @State private var switchLoadingTask: Task<Void, Never>?
     @StateObject private var editorSessionStore = NoteEditorSessionStore()
 
     private var selectedNote: NoteDocument? {
@@ -917,21 +915,13 @@ private struct NoteTabbedEditorWorkspace: View {
                         .transition(.opacity)
                 }
 
-                ZStack {
-                    NavigationStack {
-                        NoteEditorView(
-                            note: selectedNote,
-                            isWorkspaceFocusModeEnabled: $isFocusModeEnabled,
-                            editorSession: editorSessionStore.session(for: selectedNote.id)
-                        )
-                            .id(selectedNote.id)
-                    }
-
-                    if isSwitchingTabs {
-                        CompactProgressBanner(message: "Opening note...")
-                            .transition(.opacity)
-                    }
-
+                NavigationStack {
+                    NoteEditorView(
+                        note: selectedNote,
+                        isWorkspaceFocusModeEnabled: $isFocusModeEnabled,
+                        editorSession: editorSessionStore.session(for: selectedNote.id)
+                    )
+                        .id(selectedNote.id)
                 }
             }
             .background(beanNotesTheme.appBackground.ignoresSafeArea())
@@ -949,9 +939,6 @@ private struct NoteTabbedEditorWorkspace: View {
             .onChange(of: selectedNote.id) { _, _ in
                 isFocusModeEnabled = false
             }
-            .onDisappear {
-                switchLoadingTask?.cancel()
-            }
             .background {
                 HiddenKeyboardShortcutButton(title: "New Note", key: "n", action: createNote)
             }
@@ -963,19 +950,8 @@ private struct NoteTabbedEditorWorkspace: View {
     private func selectTab(_ noteID: UUID) {
         guard noteID != selectedNoteID else { return }
 
-        switchLoadingTask?.cancel()
         isFocusModeEnabled = false
-        isSwitchingTabs = true
         selectedNoteID = noteID
-
-        switchLoadingTask = Task {
-            try? await Task.sleep(nanoseconds: 320_000_000)
-            guard !Task.isCancelled else { return }
-
-            await MainActor.run {
-                isSwitchingTabs = false
-            }
-        }
     }
 }
 
