@@ -278,6 +278,9 @@ struct BeanNotesTests {
         #expect(PaperSize.defaultPaperSize == .letter)
         #expect(PaperSize.a4.dimensions == CGSize(width: 595, height: 842))
         #expect(PaperSize.b5.dimensions == CGSize(width: 499, height: 709))
+        #expect(PaperSize.matching(CGSize(width: 595, height: 842)) == .a4)
+        #expect(PaperSize.matching(CGSize(width: 595.25, height: 841.75)) == .a4)
+        #expect(PaperSize.matching(CGSize(width: 640, height: 900)) == nil)
     }
 
     @Test func followingPageInheritsPaperAndBackground() {
@@ -293,6 +296,7 @@ struct BeanNotesTests {
 
         #expect(followingPage.pageOrder == 4)
         #expect(followingPage.pageSize == page.pageSize)
+        #expect(page.standardPaperSize == .a5)
         #expect(followingPage.background == background)
         #expect(followingPage.id != page.id)
         #expect(followingPage.drawingFileName != page.drawingFileName)

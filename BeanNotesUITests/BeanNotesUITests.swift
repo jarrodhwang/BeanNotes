@@ -109,6 +109,29 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
+    func testPageBackgroundEditorExposesPaperSizeAndPinnedApplyAllAction() throws {
+        app.launch()
+
+        let createNoteButton = app.buttons["Create note"]
+        XCTAssertTrue(createNoteButton.waitForExistence(timeout: 8))
+        createNoteButton.tap()
+
+        let pageBackgroundButton = app.buttons["Page background"]
+        XCTAssertTrue(pageBackgroundButton.waitForExistence(timeout: 8))
+        pageBackgroundButton.tap()
+
+        XCTAssertTrue(app.navigationBars["Background"].waitForExistence(timeout: 8))
+
+        let paperSizePicker = app.descendants(matching: .any)["pageAppearance.paperSizePicker"]
+        XCTAssertTrue(paperSizePicker.waitForExistence(timeout: 8))
+        XCTAssertTrue(paperSizePicker.isHittable)
+
+        let applyToAllPagesButton = app.buttons["pageAppearance.applyToAllPages"]
+        XCTAssertTrue(applyToAllPagesButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(applyToAllPagesButton.isHittable)
+    }
+
+    @MainActor
     func testTitleRemainsScreenSpaceWhilePageZooms() throws {
         app.launch()
 

@@ -65,6 +65,10 @@ final class NotePage {
         CGSize(width: normalizedWidth, height: normalizedHeight)
     }
 
+    var standardPaperSize: PaperSize? {
+        PaperSize.matching(pageSize)
+    }
+
     var normalizedWidth: Double {
         Self.normalizedPageDimension(width, fallback: Self.defaultPageWidth)
     }

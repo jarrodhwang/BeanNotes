@@ -294,8 +294,16 @@ struct NoteEditorView: View {
                             updatePageBackground(page, colorHex: $0)
                         }
                     ),
+                    paperSize: Binding(
+                        get: { page.standardPaperSize },
+                        set: { paperSize in
+                            guard let paperSize else { return }
+                            updatePagePaperSize(page, to: paperSize)
+                        }
+                    ),
+                    currentPageSize: page.pageSize,
                     applyToAllPages: {
-                        applyBackgroundToAllPages(from: page)
+                        applyPageAppearanceToAllPages(from: page)
                     }
                 )
             }
@@ -1727,21 +1735,32 @@ struct NoteEditorView: View {
         }
     }
 
-    private func applyBackgroundToAllPages(from sourcePage: NotePage) {
+    private func applyPageAppearanceToAllPages(from sourcePage: NotePage) {
         let background = sourcePage.background
-        let previousBackgrounds = note.pages.map {
-            (page: $0, styleRaw: $0.backgroundStyleRaw, colorHex: $0.backgroundColorHex)
+        let pageSize = sourcePage.pageSize
+        let previousAppearances = note.pages.map {
+            (
+                page: $0,
+                styleRaw: $0.backgroundStyleRaw,
+                colorHex: $0.backgroundColorHex,
+                width: $0.width,
+                height: $0.height
+            )
         }
 
         for page in note.pages {
             page.background = background
+            page.width = pageSize.width
+            page.height = pageSize.height
         }
 
         note.touch()
-        if !saveEditorChanges("apply the background") {
-            for previous in previousBackgrounds {
+        if !saveEditorChanges("apply the page appearance") {
+            for previous in previousAppearances {
                 previous.page.backgroundStyleRaw = previous.styleRaw
                 previous.page.backgroundColorHex = previous.colorHex
+                previous.page.width = previous.width
+                previous.page.height = previous.height
             }
         }
     }
@@ -1838,6 +1857,20 @@ struct NoteEditorView: View {
         if !saveEditorChanges("save the page background") {
             page.backgroundStyleRaw = previousStyleRaw
             page.backgroundColorHex = previousColorHex
+        }
+    }
+
+    private func updatePagePaperSize(_ page: NotePage, to paperSize: PaperSize) {
+        let previousWidth = page.width
+        let previousHeight = page.height
+
+        page.width = paperSize.dimensions.width
+        page.height = paperSize.dimensions.height
+        page.touch()
+
+        if !saveEditorChanges("save the page size") {
+            page.width = previousWidth
+            page.height = previousHeight
         }
     }
 
@@ -1949,6 +1982,8 @@ private struct PageBackgroundEditorSheet: View {
 
     @Binding var styleRaw: String
     @Binding var colorHex: String
+    @Binding var paperSize: PaperSize?
+    var currentPageSize: CGSize
     var applyToAllPages: () -> Void
 
     var body: some View {
@@ -1959,16 +1994,44 @@ private struct PageBackgroundEditorSheet: View {
                         .padding(.vertical, 6)
                 }
 
-                Section {
-                    Button {
-                        applyToAllPages()
-                    } label: {
-                        Label("Apply to All Pages", systemImage: "square.stack.3d.up")
+                Section("Paper Size") {
+                    Picker("Paper Size", selection: $paperSize) {
+                        if paperSize == nil {
+                            Text(customPaperSizeLabel)
+                                .tag(Optional<PaperSize>.none)
+                        }
+
+                        ForEach(PaperSize.allCases) { size in
+                            Text("\(size.label) (\(size.dimensionsLabel))")
+                                .tag(Optional(size))
+                        }
                     }
+                    .accessibilityIdentifier("pageAppearance.paperSizePicker")
+
+                    Text("Existing ink and attachments keep their size when the page dimensions change.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Background")
             .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    Divider()
+
+                    Button {
+                        applyToAllPages()
+                    } label: {
+                        Label("Apply to All Pages", systemImage: "square.stack.3d.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("pageAppearance.applyToAllPages")
+                    .padding(.horizontal)
+                    .padding(.vertical, 12)
+                }
+                .background(.bar)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
@@ -1977,7 +2040,11 @@ private struct PageBackgroundEditorSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
+    }
+
+    private var customPaperSizeLabel: String {
+        "Custom (\(Int(currentPageSize.width.rounded())) × \(Int(currentPageSize.height.rounded())) pt)"
     }
 }
 

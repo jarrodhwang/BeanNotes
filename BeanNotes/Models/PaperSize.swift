@@ -36,6 +36,20 @@ enum PaperSize: String, CaseIterable, Identifiable {
         }
     }
 
+    var dimensionsLabel: String {
+        switch self {
+        case .letter: "8.5 × 11 in"
+        case .legal: "8.5 × 14 in"
+        case .tabloid: "11 × 17 in"
+        case .a3: "297 × 420 mm"
+        case .a4: "210 × 297 mm"
+        case .a5: "148 × 210 mm"
+        case .a6: "105 × 148 mm"
+        case .b4: "250 × 353 mm"
+        case .b5: "176 × 250 mm"
+        }
+    }
+
     var dimensions: CGSize {
         switch self {
         case .letter: CGSize(width: 612, height: 792)
@@ -47,6 +61,13 @@ enum PaperSize: String, CaseIterable, Identifiable {
         case .a6: CGSize(width: 298, height: 420)
         case .b4: CGSize(width: 709, height: 1_001)
         case .b5: CGSize(width: 499, height: 709)
+        }
+    }
+
+    static func matching(_ dimensions: CGSize, tolerance: CGFloat = 0.5) -> PaperSize? {
+        allCases.first { paperSize in
+            abs(paperSize.dimensions.width - dimensions.width) <= tolerance
+                && abs(paperSize.dimensions.height - dimensions.height) <= tolerance
         }
     }
 }
