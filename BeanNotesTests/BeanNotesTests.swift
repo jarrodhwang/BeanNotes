@@ -140,6 +140,38 @@ struct BeanNotesTests {
         #expect(!attachment.rendersBehindDrawing)
     }
 
+    @Test func imageAttachmentsDefaultBehindDrawingAndAllowForegroundOverride() {
+        let backgroundImage = Attachment(
+            kind: .image,
+            displayName: "Pasted Image",
+            originalFileName: "pasted.png",
+            storedFileName: "Imports/pasted.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png"
+        )
+        let foregroundImage = Attachment(
+            kind: .image,
+            displayName: "Foreground Image",
+            originalFileName: "foreground.png",
+            storedFileName: "Imports/foreground.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            rendersBehindDrawing: false
+        )
+        let document = Attachment(
+            kind: .pdf,
+            displayName: "Document",
+            originalFileName: "document.pdf",
+            storedFileName: "Imports/document.pdf",
+            contentTypeIdentifier: UTType.pdf.identifier,
+            fileExtension: "pdf"
+        )
+
+        #expect(backgroundImage.rendersBehindDrawing)
+        #expect(!foregroundImage.rendersBehindDrawing)
+        #expect(!document.rendersBehindDrawing)
+    }
+
     @Test func libraryNoteOrderDoesNotChangeWhenContentIsSaved() {
         let olderCreation = Date(timeIntervalSince1970: 1_700_000_000)
         let newerCreation = Date(timeIntervalSince1970: 1_800_000_000)

@@ -208,7 +208,8 @@ final class Attachment {
     var width: Double
     var height: Double
     var isLocked: Bool = false
-    var rendersBehindDrawing: Bool = false
+    // Keep newly migrated image records behind ink when the stored model predates this property.
+    var rendersBehindDrawing: Bool = true
     var vectorSourceStoredFileName: String?
     var vectorSourcePageIndex: Int?
     var createdAt: Date
@@ -254,7 +255,7 @@ final class Attachment {
         self.width = Double(frame.width)
         self.height = Double(frame.height)
         self.isLocked = isLocked
-        self.rendersBehindDrawing = rendersBehindDrawing ?? isLocked
+        self.rendersBehindDrawing = rendersBehindDrawing ?? (kind == .image)
         self.vectorSourceStoredFileName = vectorSourceStoredFileName
         self.vectorSourcePageIndex = vectorSourcePageIndex
         self.createdAt = createdAt
