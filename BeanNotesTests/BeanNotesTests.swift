@@ -2143,6 +2143,32 @@ struct BeanNotesTests {
         #expect(min(extremeCGImage.width, extremeCGImage.height) > 0)
     }
 
+    @Test @MainActor func thumbnailRenderingPreservesInkColorInDarkMode() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesThumbnailInkAppearance-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let page = NotePage(
+            pageOrder: 0,
+            background: NoteBackground(style: .plain, colorHex: "#FFFFFF"),
+            width: 120,
+            height: 140
+        )
+        let drawing = makeTestDrawing(color: .systemRed, xOffset: 0)
+        var image: UIImage?
+
+        UITraitCollection(userInterfaceStyle: .dark).performAsCurrent {
+            image = ThumbnailService.renderThumbnailImage(
+                snapshot: NotePageRenderSnapshot(page: page, theme: .standard),
+                drawing: drawing,
+                rootURL: rootURL,
+                maxDimension: 140
+            )
+        }
+
+        #expect(imageContainsDominantRedInk(try #require(image)))
+    }
+
     @Test @MainActor func beanThemeRendersIntoNotePagesAndExportImages() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesBeanPaper-\(UUID().uuidString)", isDirectory: true)
@@ -3866,6 +3892,8 @@ struct BeanNotesTests {
             maxDimension: 120
         )
         let thumbnail = try #require(UIImage(contentsOfFile: thumbnailURL.path))
+        #expect(ImageMemoryCache.shared.image(at: thumbnailURL, maxPixelSize: 120) != nil)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: thumbnailURL) == 1)
         let refreshedThumbnailURL = try service.generateThumbnail(
             for: page,
             theme: .bean,
@@ -3873,6 +3901,7 @@ struct BeanNotesTests {
             maxDimension: 120
         )
 
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: thumbnailURL) == 0)
         #expect(page.thumbnailFileName?.hasPrefix("Thumbnails/") == true)
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
         #expect(FileManager.default.fileExists(atPath: refreshedThumbnailURL.path))
@@ -3907,8 +3936,8 @@ struct BeanNotesTests {
 
         #expect(beanFileName != standardFileName)
         #expect(beanFileName != beanArtworkFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-v6.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-v6.jpg"))
+        #expect(beanFileName.hasSuffix("-bean-off-v7.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-v7.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,

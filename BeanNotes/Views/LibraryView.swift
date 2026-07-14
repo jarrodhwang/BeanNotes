@@ -52,6 +52,7 @@ struct LibraryView: View {
     @State private var focusSessionStartedAt = Date()
     @State private var awayStartedAt: Date?
     @State private var visitScheduleToken = 0
+    @State private var thumbnailRefreshVersions: [UUID: Int] = [:]
 
     private var sortedFolders: [NotebookFolder] {
         folders.sorted { lhs, rhs in
@@ -174,7 +175,8 @@ struct LibraryView: View {
                 importProgressMessage: importProgressMessage,
                 cancelImport: cancelImport,
                 openNote: openNote,
-                deleteNote: { notePendingDeletion = $0 }
+                deleteNote: { notePendingDeletion = $0 },
+                thumbnailRefreshVersions: thumbnailRefreshVersions
             )
         }
         .navigationSplitViewStyle(.balanced)
@@ -818,6 +820,7 @@ struct LibraryView: View {
                 maxDimension: 420
             )
             try modelContext.save()
+            thumbnailRefreshVersions[page.id, default: 0] &+= 1
         } catch is CancellationError {
             // A concurrent theme change will let the newly visible note card
             // regenerate the appearance-specific thumbnail.
@@ -1143,6 +1146,7 @@ private struct NotesCardGridView: View {
     var cancelImport: () -> Void
     var openNote: (NoteDocument) -> Void
     var deleteNote: (NoteDocument) -> Void
+    var thumbnailRefreshVersions: [UUID: Int]
 
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
 
@@ -1167,7 +1171,10 @@ private struct NotesCardGridView: View {
                             NoteCardView(
                                 note: note,
                                 openNote: { openNote(note) },
-                                deleteNote: { deleteNote(note) }
+                                deleteNote: { deleteNote(note) },
+                                thumbnailRefreshVersion: note.sortedPages.first.map {
+                                    thumbnailRefreshVersions[$0.id] ?? 0
+                                } ?? 0
                             )
                             .frame(height: NoteCardLayout.totalHeight)
                         }
@@ -1463,6 +1470,7 @@ private struct NoteCardView: View {
     var note: NoteDocument
     var openNote: () -> Void
     var deleteNote: () -> Void
+    var thumbnailRefreshVersion: Int
 
     @State private var thumbnailImage: UIImage?
     @State private var isLoadingThumbnail = false
@@ -1528,6 +1536,10 @@ private struct NoteCardView: View {
         .onChange(of: showsBeanArtwork) { _, _ in
             thumbnailImage = nil
             loadThumbnail(forceRefresh: true)
+        }
+        .onChange(of: thumbnailRefreshVersion) { _, _ in
+            thumbnailImage = nil
+            loadThumbnail()
         }
         .onDisappear {
             cancelThumbnailLoad()
@@ -1608,7 +1620,6 @@ private struct NoteCardView: View {
         if !forceRefresh,
            let image = fallbackFirstPageImage(for: page) {
             thumbnailImage = image
-            return
         }
 
         let requestID = UUID()

@@ -108,7 +108,7 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
-    nonisolated private static let thumbnailRenderVersion = 6
+    nonisolated private static let thumbnailRenderVersion = 7
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
@@ -173,6 +173,7 @@ struct ThumbnailService {
             to: .thumbnails,
             replacingExisting: true
         )
+        ImageMemoryCache.shared.removeImages(for: storage.url(forRelativePath: stored.relativePath))
         replaceThumbnailReference(for: page, with: stored.relativePath)
         return storage.url(forRelativePath: stored.relativePath)
     }
@@ -213,6 +214,7 @@ struct ThumbnailService {
             to: .thumbnails,
             replacingExisting: true
         )
+        ImageMemoryCache.shared.removeImages(for: storage.url(forRelativePath: stored.relativePath))
 
         guard !Task.isCancelled,
               resolvedTheme == .currentFromDefaults(),
@@ -288,18 +290,22 @@ struct ThumbnailService {
         format.opaque = true
 
         let renderer = UIGraphicsImageRenderer(size: thumbnailSize, format: format)
-        return renderer.image { context in
-            context.cgContext.saveGState()
-            context.cgContext.scaleBy(x: scale, y: scale)
-            drawPageContent(
-                snapshot: snapshot,
-                drawing: drawing,
-                rootURL: rootURL,
-                in: CGRect(origin: .zero, size: pageSize),
-                renderScale: scale
-            )
-            context.cgContext.restoreGState()
+        var image: UIImage?
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            image = renderer.image { context in
+                context.cgContext.saveGState()
+                context.cgContext.scaleBy(x: scale, y: scale)
+                drawPageContent(
+                    snapshot: snapshot,
+                    drawing: drawing,
+                    rootURL: rootURL,
+                    in: CGRect(origin: .zero, size: pageSize),
+                    renderScale: scale
+                )
+                context.cgContext.restoreGState()
+            }
         }
+        return image ?? UIImage()
     }
 
     nonisolated static func renderPageImage(
@@ -351,17 +357,20 @@ struct ThumbnailService {
 
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         var didRenderRequiredContent = false
-        let image = renderer.image { context in
-            didRenderRequiredContent = drawPageContent(
-                snapshot: snapshot,
-                drawing: drawing,
-                rootURL: rootURL,
-                in: CGRect(origin: .zero, size: size),
-                renderScale: scale,
-                requiresImageAttachments: requiresImageAttachments
-            )
+        var image: UIImage?
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            image = renderer.image { _ in
+                didRenderRequiredContent = drawPageContent(
+                    snapshot: snapshot,
+                    drawing: drawing,
+                    rootURL: rootURL,
+                    in: CGRect(origin: .zero, size: size),
+                    renderScale: scale,
+                    requiresImageAttachments: requiresImageAttachments
+                )
+            }
         }
-        return (image, didRenderRequiredContent)
+        return (image ?? UIImage(), didRenderRequiredContent)
     }
 
     nonisolated static func loadDrawing(fileName: String, rootURL: URL) -> PKDrawing {
