@@ -17,6 +17,8 @@ struct SettingsView: View {
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.defaultTheme.rawValue
     @AppStorage(LocalNotificationService.folderNotificationsEnabledKey) private var folderNotificationsEnabled = false
     @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
+    @AppStorage(BeanVisitPolicy.allowsInterruptionsKey) private var beanVisitsMayInterrupt = false
+    @AppStorage(BeanVisitPolicy.focusReminderIntervalKey) private var beanFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
@@ -42,7 +44,7 @@ struct SettingsView: View {
     @State private var notificationAuthorizationStatus = UNAuthorizationStatus.notDetermined
     @State private var isRequestingNotificationAuthorization = false
     @State private var notificationErrorMessage: String?
-    @State private var isPreviewingBeanVisit = false
+    @State private var beanVisitPreview: BeanVisit?
     @State private var beanVisitPreviewTask: Task<Void, Never>?
 
     private let oldExportAgeDays = 7
@@ -121,14 +123,25 @@ struct SettingsView: View {
 
                         BeanThemeHintView(message: "Bean is on hand to keep your library and writing space cozy.")
 
-                        Text("When this is on, Bean may quietly peek into the main library after you have been there for a while. Visits never interrupt the note editor.")
+                        Toggle("Allow Bean Interrupts", isOn: $beanVisitsMayInterrupt)
+                            .disabled(!beanVisitsEnabled)
+                            .accessibilityIdentifier("settings.beanInterruptToggle")
+
+                        Text("When enabled, Bean can pop up in the library and while you are writing. When off, Bean only checks in after you return from a 3-minute break or after a longer focus session.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        Picker("Focus check-in", selection: $beanFocusReminderInterval) {
+                            ForEach(BeanVisitPolicy.focusReminderOptions) { option in
+                                Text(option.label).tag(option.interval)
+                            }
+                        }
+                        .disabled(!beanVisitsEnabled || beanVisitsMayInterrupt)
 
                         Button(action: previewBeanVisit) {
                             Label("Invite Bean Now", systemImage: "pawprint.fill")
                         }
-                        .disabled(isPreviewingBeanVisit)
+                        .disabled(beanVisitPreview != nil)
                     }
                 }
 
@@ -338,8 +351,8 @@ struct SettingsView: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if isPreviewingBeanVisit {
-                    BeanPetVisitView()
+                if let beanVisitPreview {
+                    BeanPetVisitView(visit: beanVisitPreview)
                         .padding(.trailing, 20)
                         .padding(.bottom, 14)
                         .transition(beanVisitPreviewTransition)
@@ -349,7 +362,7 @@ struct SettingsView: View {
             .onDisappear {
                 backupTask?.cancel()
                 beanVisitPreviewTask?.cancel()
-                isPreviewingBeanVisit = false
+                beanVisitPreview = nil
             }
         }
         .environment(\.beanNotesTheme, selectedMoodTheme)
@@ -372,10 +385,9 @@ struct SettingsView: View {
     @MainActor
     private func previewBeanVisit() {
         beanVisitPreviewTask?.cancel()
-        BeanVisitPolicy.recordVisit()
 
         withAnimation(beanVisitPreviewAnimation) {
-            isPreviewingBeanVisit = true
+            beanVisitPreview = BeanVisit.make(reason: .friendly)
         }
 
         beanVisitPreviewTask = Task { @MainActor in
@@ -394,14 +406,14 @@ struct SettingsView: View {
     private func hideBeanVisitPreview(animated: Bool) {
         beanVisitPreviewTask?.cancel()
         beanVisitPreviewTask = nil
-        guard isPreviewingBeanVisit else { return }
+        guard beanVisitPreview != nil else { return }
 
         if animated {
             withAnimation(beanVisitPreviewAnimation) {
-                isPreviewingBeanVisit = false
+                beanVisitPreview = nil
             }
         } else {
-            isPreviewingBeanVisit = false
+            beanVisitPreview = nil
         }
     }
 

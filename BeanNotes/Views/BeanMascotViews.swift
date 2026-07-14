@@ -5,6 +5,46 @@
 
 import SwiftUI
 
+struct BeanVisit: Identifiable, Equatable {
+    enum Artwork: CaseIterable {
+        case cozyPortrait
+        case curiousAvatar
+        case littleBadge
+
+        var imageName: String {
+            switch self {
+            case .cozyPortrait:
+                "BeanWelcomeImage"
+            case .curiousAvatar:
+                "BeanTabAvatar"
+            case .littleBadge:
+                "BeanBadge"
+            }
+        }
+
+        var maximumImageHeight: CGFloat {
+            switch self {
+            case .cozyPortrait:
+                172
+            case .curiousAvatar, .littleBadge:
+                128
+            }
+        }
+    }
+
+    let id: UUID
+    let reason: BeanVisitPolicy.VisitReason
+    let artwork: Artwork
+
+    static func make(reason: BeanVisitPolicy.VisitReason) -> BeanVisit {
+        BeanVisit(
+            id: UUID(),
+            reason: reason,
+            artwork: Artwork.allCases.randomElement() ?? .cozyPortrait
+        )
+    }
+}
+
 struct BeanAvatarView: View {
     var size: CGFloat
 
@@ -61,28 +101,45 @@ struct BeanThemeHintView: View {
 struct BeanPetVisitView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    private var imageWidth: CGFloat { horizontalSizeClass == .compact ? 92 : 126 }
-    private var imageHeight: CGFloat { horizontalSizeClass == .compact ? 126 : 172 }
-    private var containerWidth: CGFloat { horizontalSizeClass == .compact ? 116 : 154 }
-    private var containerHeight: CGFloat { horizontalSizeClass == .compact ? 158 : 202 }
+    var visit: BeanVisit
+
+    private var imageWidth: CGFloat { horizontalSizeClass == .compact ? 94 : 128 }
+    private var imageHeight: CGFloat {
+        min(
+            horizontalSizeClass == .compact ? 126 : 172,
+            visit.artwork.maximumImageHeight
+        )
+    }
+    private var containerWidth: CGFloat { horizontalSizeClass == .compact ? 168 : 212 }
+    private var containerHeight: CGFloat { horizontalSizeClass == .compact ? 190 : 232 }
 
     var body: some View {
-        VStack(spacing: -4) {
-            Text("Bean stopped by")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 7)
-                .background(.regularMaterial, in: Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
-                }
+        VStack(spacing: 5) {
+            VStack(spacing: 2) {
+                Text(visit.reason.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
 
-            Image("BeanWelcomeImage")
+                Text(visit.reason.message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            }
+
+            Image(visit.artwork.imageName)
                 .resizable()
                 .scaledToFit()
                 .frame(width: imageWidth, height: imageHeight, alignment: .bottom)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .shadow(color: .black.opacity(0.18), radius: 10, y: 7)
         }
         .frame(width: containerWidth, height: containerHeight, alignment: .bottom)

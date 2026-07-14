@@ -11,7 +11,7 @@ import SwiftData
 struct ContentView: View {
     static let welcomeSeenKey = "hasSeenBeanNotesWelcome"
     static let welcomeContentVersionKey = "beanNotesWelcomeContentVersion"
-    static let currentWelcomeContentVersion = 28
+    static let currentWelcomeContentVersion = 29
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.defaultTheme.rawValue
@@ -224,7 +224,7 @@ private extension WelcomeToBeanNotesView.Mode {
         case .firstRun:
             "A private, paper-inspired space for handwritten ideas, PDFs, images, and study notes."
         case .featureUpdate:
-            "Bean now peeks into your paper, tabs, and library—with optional surprise visits."
+            "Bean now brings varied photo visits to the library and open notes, with optional interruption controls and focus-break check-ins."
         }
     }
 
@@ -241,8 +241,13 @@ private extension WelcomeToBeanNotesView.Mode {
         [
             Highlight(
                 title: "A familiar face",
-                detail: "A real-photo Bean avatar now appears in the library and note tabs, with optional quiet visits.",
+                detail: "Bean now rotates through several real-photo looks, with visits in the library and open notes.",
                 systemImage: "pawprint.fill"
+            ),
+            Highlight(
+                title: "Focus check-ins",
+                detail: "Keep interruptions off and Bean will only return after a 3-minute break or your chosen focus interval.",
+                systemImage: "timer"
             ),
             Highlight(
                 title: "Cozy paper surfaces",

@@ -1281,6 +1281,44 @@ struct BeanNotesTests {
             now: now.addingTimeInterval(BeanVisitPolicy.minimumCooldown),
             lastShownDate: now
         ))
+        #expect(BeanVisitPolicy.cooldownRemaining(now: now, lastShownDate: now) == BeanVisitPolicy.minimumCooldown)
+        #expect(BeanVisitPolicy.cooldownRemaining(
+            now: now.addingTimeInterval(BeanVisitPolicy.minimumCooldown),
+            lastShownDate: now
+        ) == 0)
+    }
+
+    @Test func beanVisitPolicyRespectsBreakAndFocusInterruptionPreferences() {
+        #expect(!BeanVisitPolicy.shouldVisitAfterReturning(
+            awayDuration: BeanVisitPolicy.awayThreshold - 1,
+            allowsInterruptions: false
+        ))
+        #expect(BeanVisitPolicy.shouldVisitAfterReturning(
+            awayDuration: BeanVisitPolicy.awayThreshold,
+            allowsInterruptions: false
+        ))
+        #expect(!BeanVisitPolicy.shouldVisitAfterReturning(
+            awayDuration: BeanVisitPolicy.awayThreshold * 2,
+            allowsInterruptions: true
+        ))
+
+        #expect(!BeanVisitPolicy.shouldVisitAfterFocusing(
+            focusDuration: BeanVisitPolicy.defaultFocusReminderInterval - 1,
+            reminderInterval: BeanVisitPolicy.defaultFocusReminderInterval,
+            allowsInterruptions: false
+        ))
+        #expect(BeanVisitPolicy.shouldVisitAfterFocusing(
+            focusDuration: BeanVisitPolicy.defaultFocusReminderInterval,
+            reminderInterval: BeanVisitPolicy.defaultFocusReminderInterval,
+            allowsInterruptions: false
+        ))
+        #expect(!BeanVisitPolicy.shouldVisitAfterFocusing(
+            focusDuration: BeanVisitPolicy.defaultFocusReminderInterval * 2,
+            reminderInterval: BeanVisitPolicy.defaultFocusReminderInterval,
+            allowsInterruptions: true
+        ))
+        #expect(BeanVisitPolicy.normalizedFocusReminderInterval(42) == BeanVisitPolicy.defaultFocusReminderInterval)
+        #expect(BeanVisitPolicy.normalizedFocusReminderInterval(30 * 60) == 30 * 60)
     }
 
     @Test func folderWelcomeUsesOnlyInAppFeedbackWhileForegrounded() {

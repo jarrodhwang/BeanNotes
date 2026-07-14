@@ -123,12 +123,18 @@ final class BeanNotesUITests: XCTestCase {
     func testBeanArtworkToggleDoesNotChangeNotePaper() throws {
         app.launch()
 
+        let startWritingButton = app.buttons["Start Writing"]
+        if startWritingButton.waitForExistence(timeout: 2) {
+            startWritingButton.tap()
+        }
+
         let settingsButton = app.buttons["Settings"]
         XCTAssertTrue(settingsButton.waitForExistence(timeout: 8))
         settingsButton.tap()
 
         let beanArtworkToggle = app.switches["settings.beanArtworkToggle"]
         XCTAssertTrue(beanArtworkToggle.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.switches["settings.beanInterruptToggle"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["Use Theme Paper for New Notes"].exists)
         XCTAssertFalse(app.buttons["Apply Theme Icon"].exists)
         XCTAssertFalse(app.buttons["Use Theme Paper Background"].exists)

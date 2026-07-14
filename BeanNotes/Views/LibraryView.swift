@@ -25,6 +25,8 @@ struct LibraryView: View {
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
+    @AppStorage(BeanVisitPolicy.allowsInterruptionsKey) private var beanVisitsMayInterrupt = false
+    @AppStorage(BeanVisitPolicy.focusReminderIntervalKey) private var beanFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
 
     @State private var selectedFolderID: UUID?
     @State private var searchText = ""
@@ -44,7 +46,11 @@ struct LibraryView: View {
     @State private var searchIndexRefreshTask: Task<Void, Never>?
     @State private var folderCreatedToast: FolderCreatedToast?
     @State private var folderCreatedToastDismissTask: Task<Void, Never>?
-    @State private var isShowingBeanVisit = false
+    @State private var beanVisit: BeanVisit?
+    @State private var beanVisitDismissTask: Task<Void, Never>?
+    @State private var focusSessionStartedAt = Date()
+    @State private var awayStartedAt: Date?
+    @State private var visitScheduleToken = 0
 
     private var sortedFolders: [NotebookFolder] {
         folders.sorted { lhs, rhs in
@@ -89,8 +95,7 @@ struct LibraryView: View {
     }
 
     private var isSafeForAutomaticBeanVisit: Bool {
-        selectedOpenNoteID == nil
-            && !isShowingFolderEditor
+        !isShowingFolderEditor
             && !isShowingSettings
             && !isShowingDocumentImporter
             && !isImportingDocument
@@ -101,7 +106,7 @@ struct LibraryView: View {
             && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var canScheduleAutomaticBeanVisit: Bool {
+    private var canScheduleBeanVisit: Bool {
         let processInfo = ProcessInfo.processInfo
         return BeanVisitPolicy.canSchedule(
             theme: beanNotesTheme,
@@ -112,6 +117,14 @@ struct LibraryView: View {
             thermalState: processInfo.thermalState,
             launchArguments: processInfo.arguments
         )
+    }
+
+    private var interruptibleVisitTaskID: String {
+        "\(canScheduleBeanVisit)-\(beanVisitsMayInterrupt)-\(visitScheduleToken)"
+    }
+
+    private var focusVisitTaskID: String {
+        "\(canScheduleBeanVisit)-\(beanVisitsMayInterrupt)-\(beanFocusReminderInterval)-\(focusSessionStartedAt.timeIntervalSinceReferenceDate)"
     }
 
     private var beanVisitTransition: AnyTransition {
@@ -165,8 +178,8 @@ struct LibraryView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .overlay(alignment: .bottomTrailing) {
-            if isShowingBeanVisit {
-                BeanPetVisitView()
+            if let beanVisit {
+                BeanPetVisitView(visit: beanVisit)
                     .padding(.trailing, 22)
                     .padding(.bottom, 18)
                     .transition(beanVisitTransition)
@@ -185,12 +198,27 @@ struct LibraryView: View {
         .onAppear {
             bootstrapLibrary()
         }
-        .task(id: canScheduleAutomaticBeanVisit) {
-            await runAutomaticBeanVisitIfEligible()
+        .task(id: interruptibleVisitTaskID) {
+            await runInterruptibleBeanVisitIfEligible()
+        }
+        .task(id: focusVisitTaskID) {
+            await runFocusBeanVisitIfEligible()
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
-            absorbSharedInbox()
+            handleScenePhaseChange(phase)
+            if phase == .active {
+                absorbSharedInbox()
+            }
+        }
+        .onChange(of: beanNotesTheme) { _, theme in
+            if theme != .bean {
+                hideBeanVisit(animated: false)
+            }
+        }
+        .onChange(of: beanVisitsEnabled) { _, isEnabled in
+            if !isEnabled {
+                hideBeanVisit(animated: false)
+            }
         }
         .onChange(of: searchText) { _, query in
             guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -200,6 +228,7 @@ struct LibraryView: View {
             NoteTabbedEditorWorkspace(
                 tabs: openNoteTabs,
                 selectedNoteID: $selectedOpenNoteID,
+                beanVisit: beanVisit,
                 createNote: createNote,
                 closeTab: closeNoteTab,
                 backToLibrary: closeWorkspace
@@ -363,48 +392,126 @@ struct LibraryView: View {
     }
 
     @MainActor
-    private func runAutomaticBeanVisitIfEligible() async {
-        guard canScheduleAutomaticBeanVisit,
+    private func runInterruptibleBeanVisitIfEligible() async {
+        guard beanVisitsMayInterrupt, canScheduleBeanVisit else { return }
+
+        let now = Date()
+        let cooldownRemaining = BeanVisitPolicy.cooldownRemaining(
+            now: now,
+            lastShownDate: BeanVisitPolicy.lastShownDate()
+        )
+        let delay = max(BeanVisitPolicy.interruptibleInitialDelay, cooldownRemaining)
+
+        do {
+            try await Task.sleep(nanoseconds: BeanVisitPolicy.nanoseconds(for: delay))
+            guard !Task.isCancelled,
+                  beanVisitsMayInterrupt,
+                  canScheduleBeanVisit else { return }
+
+            showBeanVisit(reason: .friendly)
+        } catch {
+            // Cancellation is expected when the app moves to another surface.
+        }
+    }
+
+    @MainActor
+    private func runFocusBeanVisitIfEligible() async {
+        guard !beanVisitsMayInterrupt, canScheduleBeanVisit else { return }
+
+        let interval = BeanVisitPolicy.normalizedFocusReminderInterval(beanFocusReminderInterval)
+        let focusStartedAt = focusSessionStartedAt
+        let elapsed = Date().timeIntervalSince(focusStartedAt)
+        let delay = max(0, interval - elapsed)
+
+        do {
+            try await Task.sleep(nanoseconds: BeanVisitPolicy.nanoseconds(for: delay))
+            guard !Task.isCancelled,
+                  !beanVisitsMayInterrupt,
+                  canScheduleBeanVisit,
+                  focusSessionStartedAt == focusStartedAt else { return }
+
+            let focusDuration = Date().timeIntervalSince(focusStartedAt)
+            guard BeanVisitPolicy.shouldVisitAfterFocusing(
+                focusDuration: focusDuration,
+                reminderInterval: interval,
+                allowsInterruptions: beanVisitsMayInterrupt
+            ) else { return }
+
+            showBeanVisit(reason: .focusBreak)
+        } catch {
+            // Cancellation is expected when focus is interrupted by an app transition.
+        }
+    }
+
+    @MainActor
+    private func handleScenePhaseChange(_ phase: ScenePhase) {
+        let now = Date()
+
+        switch phase {
+        case .active:
+            let awayDuration = awayStartedAt.map { now.timeIntervalSince($0) } ?? 0
+            awayStartedAt = nil
+            focusSessionStartedAt = now
+
+            guard BeanVisitPolicy.shouldVisitAfterReturning(
+                awayDuration: awayDuration,
+                allowsInterruptions: beanVisitsMayInterrupt
+            ), canScheduleBeanVisit else { return }
+
+            showBeanVisit(reason: .returnFromBreak)
+        case .inactive, .background:
+            awayStartedAt = awayStartedAt ?? now
+        @unknown default:
+            break
+        }
+    }
+
+    @MainActor
+    private func showBeanVisit(reason: BeanVisitPolicy.VisitReason) {
+        guard beanVisit == nil,
+              canScheduleBeanVisit,
               BeanVisitPolicy.cooldownHasElapsed(
                 now: Date(),
                 lastShownDate: BeanVisitPolicy.lastShownDate()
-              ) else {
-            hideBeanVisit(animated: false)
-            return
+              ) else { return }
+
+        beanVisitDismissTask?.cancel()
+        let visit = BeanVisit.make(reason: reason)
+        BeanVisitPolicy.recordVisit()
+
+        withAnimation(beanVisitAnimation) {
+            beanVisit = visit
         }
 
-        do {
-            try await Task.sleep(nanoseconds: BeanVisitPolicy.initialDelayNanoseconds)
-            guard !Task.isCancelled,
-                  canScheduleAutomaticBeanVisit,
-                  BeanVisitPolicy.cooldownHasElapsed(
-                    now: Date(),
-                    lastShownDate: BeanVisitPolicy.lastShownDate()
-                  ) else { return }
-
-            BeanVisitPolicy.recordVisit()
-            withAnimation(beanVisitAnimation) {
-                isShowingBeanVisit = true
+        beanVisitDismissTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: BeanVisitPolicy.displayDurationNanoseconds)
+                guard !Task.isCancelled, beanVisit?.id == visit.id else { return }
+                hideBeanVisit(animated: true)
+            } catch {
+                // The next visit replaces this dismissal task.
             }
-
-            try await Task.sleep(nanoseconds: BeanVisitPolicy.displayDurationNanoseconds)
-            guard !Task.isCancelled else { return }
-            hideBeanVisit(animated: true)
-        } catch {
-            hideBeanVisit(animated: true)
         }
     }
 
     @MainActor
     private func hideBeanVisit(animated: Bool) {
-        guard isShowingBeanVisit else { return }
+        beanVisitDismissTask?.cancel()
+        beanVisitDismissTask = nil
+        guard beanVisit != nil else { return }
 
         if animated {
             withAnimation(beanVisitAnimation) {
-                isShowingBeanVisit = false
+                beanVisit = nil
             }
         } else {
-            isShowingBeanVisit = false
+            beanVisit = nil
+        }
+
+        if beanVisitsMayInterrupt {
+            visitScheduleToken += 1
+        } else {
+            focusSessionStartedAt = Date()
         }
     }
 
@@ -765,9 +872,11 @@ struct LibraryView: View {
 
 private struct NoteTabbedEditorWorkspace: View {
     @Environment(\.beanNotesTheme) private var beanNotesTheme
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     var tabs: [NoteDocument]
     @Binding var selectedNoteID: UUID?
+    var beanVisit: BeanVisit?
     var createNote: () -> Void
     var closeTab: (UUID) -> Void
     var backToLibrary: () -> Void
@@ -779,6 +888,12 @@ private struct NoteTabbedEditorWorkspace: View {
     private var selectedNote: NoteDocument? {
         guard let selectedNoteID else { return tabs.first }
         return tabs.first { $0.id == selectedNoteID } ?? tabs.first
+    }
+
+    private var beanVisitTransition: AnyTransition {
+        accessibilityReduceMotion
+            ? .opacity
+            : .move(edge: .trailing).combined(with: .opacity)
     }
 
     var body: some View {
@@ -816,6 +931,15 @@ private struct NoteTabbedEditorWorkspace: View {
             }
             .background(beanNotesTheme.appBackground.ignoresSafeArea())
             .tint(beanNotesTheme.accentColor)
+            .overlay(alignment: .bottomTrailing) {
+                if let beanVisit {
+                    BeanPetVisitView(visit: beanVisit)
+                        .padding(.trailing, 22)
+                        .padding(.bottom, 18)
+                        .transition(beanVisitTransition)
+                        .zIndex(4)
+                }
+            }
             .animation(.snappy(duration: 0.18), value: isFocusModeEnabled)
             .onChange(of: selectedNote.id) { _, _ in
                 isFocusModeEnabled = false
