@@ -2915,6 +2915,33 @@ struct BeanNotesTests {
         #expect(artworkRect.height <= pageRect.height * 0.42 + 0.001)
     }
 
+    @Test @MainActor func plainChalkboardInteriorHasNoDecorativeMarks() throws {
+        let size = CGSize(width: 320, height: 180)
+        let bounds = CGRect(origin: .zero, size: size)
+        let background = NoteBackground(style: .chalkboard, colorHex: "#FFFFFF")
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = true
+        format.scale = 1
+
+        let renderedImage = UIGraphicsImageRenderer(size: size, format: format).image { context in
+            NoteBackgroundRenderer.draw(
+                background: background,
+                in: bounds,
+                context: context.cgContext
+            )
+        }
+        let expectedImage = UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor(hex: background.renderedColorHex).setFill()
+            context.fill(bounds)
+        }
+
+        let interior = CGRect(x: 20, y: 20, width: 280, height: 140)
+        let renderedInterior = try #require(renderedImage.cgImage?.cropping(to: interior))
+        let expectedInterior = try #require(expectedImage.cgImage?.cropping(to: interior))
+
+        #expect(UIImage(cgImage: renderedInterior).pngData() == UIImage(cgImage: expectedInterior).pngData())
+    }
+
     @Test @MainActor func chalkboardRenderingSupportsGridColorAndStableBeanArtwork() throws {
         let size = CGSize(width: 320, height: 180)
         let plain = NoteBackground(style: .chalkboard, colorHex: "#FFFFFF")
