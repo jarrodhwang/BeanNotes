@@ -8,6 +8,11 @@ import PencilKit
 import UIKit
 
 struct DrawingStorageService {
+    private struct PrefetchState {
+        var token: UUID
+        var cacheVersion: UInt = 0
+    }
+
     var storage = LocalStorageService()
 
     private static let memoryWarningObserver = NotificationCenter.default.addObserver(
@@ -29,8 +34,7 @@ struct DrawingStorageService {
         qos: .utility
     )
     private static let prefetchLock = NSLock()
-    private static var prefetchedOrInFlightKeys: Set<String> = []
-    private static var prefetchGeneration: UInt = 0
+    private static var prefetchStates: [String: PrefetchState] = [:]
 
     func drawingURL(for page: NotePage) throws -> URL {
         try storage.directoryURL(for: .drawings)
@@ -69,23 +73,37 @@ struct DrawingStorageService {
 
     static func cache(_ drawing: PKDrawing, fileName: String, rootURL: URL, approximateBytes: Int? = nil) {
         ensureMemoryWarningObservation()
+        let key = cacheKey(rootURL: rootURL, fileName: fileName)
         let cost = max(approximateBytes ?? 1, 1)
+
+        prefetchLock.lock()
+        if var state = prefetchStates[key as String] {
+            state.cacheVersion &+= 1
+            prefetchStates[key as String] = state
+        }
         drawingCache.setObject(
             CachedDrawing(drawing),
-            forKey: cacheKey(rootURL: rootURL, fileName: fileName),
+            forKey: key,
             cost: cost
         )
+        prefetchLock.unlock()
     }
 
     static func removeCachedDrawing(fileName: String, rootURL: URL) {
-        drawingCache.removeObject(forKey: cacheKey(rootURL: rootURL, fileName: fileName))
+        let key = cacheKey(rootURL: rootURL, fileName: fileName)
+        prefetchLock.lock()
+        if var state = prefetchStates[key as String] {
+            state.cacheVersion &+= 1
+            prefetchStates[key as String] = state
+        }
+        drawingCache.removeObject(forKey: key)
+        prefetchLock.unlock()
     }
 
     static func clearCache() {
-        drawingCache.removeAllObjects()
         prefetchLock.lock()
-        prefetchGeneration &+= 1
-        prefetchedOrInFlightKeys.removeAll()
+        prefetchStates.removeAll()
+        drawingCache.removeAllObjects()
         prefetchLock.unlock()
     }
 
@@ -96,10 +114,13 @@ struct DrawingStorageService {
 
         let stringKey = key as String
         prefetchLock.lock()
-        let inserted = prefetchedOrInFlightKeys.insert(stringKey).inserted
-        let generation = prefetchGeneration
+        guard prefetchStates[stringKey] == nil else {
+            prefetchLock.unlock()
+            return
+        }
+        let prefetchState = PrefetchState(token: UUID())
+        prefetchStates[stringKey] = prefetchState
         prefetchLock.unlock()
-        guard inserted else { return }
 
         prefetchQueue.async {
             autoreleasepool {
@@ -119,13 +140,22 @@ struct DrawingStorageService {
                 }
 
                 prefetchLock.lock()
-                let shouldCache = generation == prefetchGeneration
-                prefetchedOrInFlightKeys.remove(stringKey)
-                prefetchLock.unlock()
-
-                if shouldCache {
-                    cache(drawing, fileName: fileName, rootURL: rootURL, approximateBytes: approximateBytes)
+                guard let currentState = prefetchStates[stringKey],
+                      currentState.token == prefetchState.token else {
+                    prefetchLock.unlock()
+                    return
                 }
+                let shouldCache = currentState.cacheVersion == prefetchState.cacheVersion
+                    && drawingCache.object(forKey: key) == nil
+                prefetchStates[stringKey] = nil
+                if shouldCache {
+                    drawingCache.setObject(
+                        CachedDrawing(drawing),
+                        forKey: key,
+                        cost: max(approximateBytes, 1)
+                    )
+                }
+                prefetchLock.unlock()
             }
         }
     }

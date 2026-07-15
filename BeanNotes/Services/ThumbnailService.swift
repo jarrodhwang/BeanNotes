@@ -194,6 +194,9 @@ struct ThumbnailService {
             theme: resolvedTheme,
             showsBeanArtwork: resolvedShowsArtwork
         )
+        // Prefer the coordinated drawing cache so a preview cannot lag behind live
+        // ink while its debounced disk save is still in flight.
+        let drawingData = drawingStorage.loadDrawing(for: page).dataRepresentation()
         let rootURL = storage.rootURL
         let fileName = Self.thumbnailFileName(
             pageID: page.id,
@@ -202,6 +205,7 @@ struct ThumbnailService {
         )
         let data = try await Self.renderThumbnailData(
             snapshot: snapshot,
+            drawingData: drawingData,
             rootURL: rootURL,
             maxDimension: maxDimension
         )
@@ -407,13 +411,14 @@ struct ThumbnailService {
 
     nonisolated private static func renderThumbnailData(
         snapshot: NotePageRenderSnapshot,
+        drawingData: Data,
         rootURL: URL,
         maxDimension: CGFloat
     ) async throws -> Data {
         let renderTask = Task.detached(priority: .utility) {
             try autoreleasepool {
                 try Task.checkCancellation()
-                let drawing = loadDrawing(fileName: snapshot.drawingFileName, rootURL: rootURL)
+                let drawing = try PKDrawing(data: drawingData)
                 try Task.checkCancellation()
                 let thumbnail = renderThumbnailImage(
                     snapshot: snapshot,

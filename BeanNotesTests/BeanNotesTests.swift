@@ -1131,6 +1131,32 @@ struct BeanNotesTests {
         #expect(abs(warningLoad.bounds.midX - cachedDrawing.bounds.midX) > 20)
     }
 
+    @Test func drawingPrefetchCannotReplaceNewerCachedInk() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingPrefetchRace-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "prefetch-race.drawing")
+        let diskDrawing = makeTestDrawing(color: .systemBlue, xOffset: 0)
+        let liveDrawing = makeTestDrawing(color: .systemRed, xOffset: 64)
+        try drawingStorage.save(diskDrawing, for: page)
+        DrawingStorageService.clearCache()
+
+        DrawingStorageService.prefetchDrawing(fileName: page.drawingFileName, rootURL: rootURL)
+        DrawingStorageService.cache(liveDrawing, fileName: page.drawingFileName, rootURL: rootURL)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let loadedDrawing = drawingStorage.loadDrawing(for: page)
+        #expect(abs(loadedDrawing.bounds.midX - liveDrawing.bounds.midX) < 0.5)
+        #expect(abs(loadedDrawing.bounds.midX - diskDrawing.bounds.midX) > 20)
+    }
+
     @Test func localStorageCopiesStoredFilesToIndependentPaths() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesStoredCopy-\(UUID().uuidString)", isDirectory: true)
@@ -1521,6 +1547,19 @@ struct BeanNotesTests {
 
         pageView.applyInputMode(.pencilOnly)
         #expect(pageView.canvasView.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
+    }
+
+    @Test func pageCanvasRestoresDrawingInteractionDuringReconfiguration() {
+        let pageView = DrawingCanvasView.PageCanvasView()
+        pageView.applyInputMode(.anyInput)
+        pageView.canvasView.isUserInteractionEnabled = false
+        pageView.canvasView.drawingGestureRecognizer.isEnabled = false
+
+        pageView.applyInputMode(.anyInput)
+
+        #expect(pageView.canvasView.isUserInteractionEnabled)
+        #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        #expect(pageView.canvasView.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.anyInput.rawValue)
     }
 
     @Test @MainActor func pageCanvasLayoutPreservesStableCanvasOffsetUntilPageSizeChanges() throws {
@@ -4840,6 +4879,37 @@ struct BeanNotesTests {
         #expect(page.thumbnailFileName?.components(separatedBy: "/").count == 2)
         #expect(max(thumbnail.size.width, thumbnail.size.height) <= 120.5)
         #expect(thumbnail.size.height > thumbnail.size.width)
+    }
+
+    @Test @MainActor func backgroundThumbnailUsesLatestCachedDrawing() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesLiveThumbnail-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        let page = NotePage(pageOrder: 0, width: 180, height: 180)
+        let diskDrawing = makeTestDrawing(color: .systemBlue, xOffset: 0)
+        let liveDrawing = makeTestDrawing(color: .systemRed, xOffset: 48)
+        try drawingStorage.save(diskDrawing, for: page)
+        DrawingStorageService.cache(liveDrawing, fileName: page.drawingFileName, rootURL: rootURL)
+        let currentTheme = BeanNotesTheme.currentFromDefaults()
+        let showsArtwork = NoteBackground.showsArtwork(for: currentTheme)
+
+        let thumbnailURL = try await service.generateThumbnailInBackground(
+            for: page,
+            theme: currentTheme,
+            showsBeanArtwork: showsArtwork,
+            maxDimension: 180
+        )
+        let thumbnail = try #require(UIImage(contentsOfFile: thumbnailURL.path))
+
+        #expect(imageContainsDominantRedInk(thumbnail))
     }
 
     @Test func thumbnailCacheIdentityIncludesThemeAndRendererVersion() {

@@ -1759,7 +1759,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func applyInputMode(_ inputMode: DrawingInputMode) {
-            guard appliedInputMode != inputMode else { return }
             appliedInputMode = inputMode
             eraserScopeGesture.allowedTouchTypes = inputMode == .pencilOnly
                 ? [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
@@ -1767,6 +1766,11 @@ struct DrawingCanvasView: UIViewRepresentable {
                     NSNumber(value: UITouch.TouchType.pencil.rawValue),
                     NSNumber(value: UITouch.TouchType.direct.rawValue)
                 ]
+            // UIKit can disable a recognizer while resolving competing gestures.
+            // Reassert the editable state whenever SwiftUI configures the canvas so
+            // a recycled page cannot remain permanently non-interactive.
+            canvasView.isUserInteractionEnabled = true
+            canvasView.drawingGestureRecognizer.isEnabled = true
             guard canvasView.drawingPolicy != inputMode.drawingPolicy else { return }
             canvasView.drawingPolicy = inputMode.drawingPolicy
         }
