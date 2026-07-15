@@ -109,7 +109,10 @@ struct NoteTrashService {
         }
 
         try saveOrRollback(modelContext)
-        let cleanupReport = storage.removeStoredFiles(matching: cleanupTarget)
+        let retainedNotes = try modelContext.fetch(FetchDescriptor<NoteDocument>())
+        let cleanupReport = storage.removeStoredFiles(
+            matching: cleanupTarget.excludingFilesReferenced(by: retainedNotes)
+        )
         return NoteTrashDeletionResult(deletedNoteIDs: deletedNoteIDs, cleanupReport: cleanupReport)
     }
 
@@ -134,5 +137,16 @@ struct NoteTrashService {
             modelContext.rollback()
             throw error
         }
+    }
+}
+
+private extension LocalStorageCleanupTarget {
+    func excludingFilesReferenced(by notes: [NoteDocument]) -> LocalStorageCleanupTarget {
+        let retainedTarget = LocalStorageCleanupTarget(notes: notes)
+        var cleanupTarget = self
+        cleanupTarget.relativePaths.subtract(retainedTarget.relativePaths)
+        cleanupTarget.drawingFileNames.subtract(retainedTarget.drawingFileNames)
+        cleanupTarget.exportedNoteTitlePrefixes.subtract(retainedTarget.exportedNoteTitlePrefixes)
+        return cleanupTarget
     }
 }

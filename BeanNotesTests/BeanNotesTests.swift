@@ -384,6 +384,68 @@ struct BeanNotesTests {
         #expect(!FileManager.default.fileExists(atPath: storage.url(forRelativePath: imported.relativePath).path))
     }
 
+    @Test func permanentTrashDeletionPreservesFilesReferencedByRemainingNotes() throws {
+        let context = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesSharedTrashCleanup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let sharedDrawingFileName = "shared-page.drawing"
+        let sharedDrawing = try storage.saveData(
+            Data("shared drawing".utf8),
+            fileName: sharedDrawingFileName,
+            contentType: .data,
+            to: .drawings,
+            replacingExisting: true
+        )
+        let sharedAttachment = try storage.saveData(
+            Data("shared attachment".utf8),
+            preferredName: "Shared.pdf",
+            contentType: .pdf,
+            to: .imports
+        )
+
+        let folder = NotebookFolder(name: "Inbox")
+        let deletedNote = NoteDocument(title: "Deleted")
+        let retainedNote = NoteDocument(title: "Retained")
+        let deletedPage = NotePage(pageOrder: 0, drawingFileName: sharedDrawingFileName)
+        let retainedPage = NotePage(pageOrder: 0, drawingFileName: sharedDrawingFileName)
+        let deletedAttachment = Attachment(
+            kind: .pdf,
+            displayName: "Shared",
+            originalFileName: "Shared.pdf",
+            storedFileName: sharedAttachment.relativePath,
+            contentTypeIdentifier: UTType.pdf.identifier,
+            fileExtension: "pdf"
+        )
+        let retainedAttachment = Attachment(
+            kind: .pdf,
+            displayName: "Shared",
+            originalFileName: "Shared.pdf",
+            storedFileName: sharedAttachment.relativePath,
+            contentTypeIdentifier: UTType.pdf.identifier,
+            fileExtension: "pdf"
+        )
+        folder.notes.append(contentsOf: [deletedNote, retainedNote])
+        deletedNote.pages.append(deletedPage)
+        retainedNote.pages.append(retainedPage)
+        deletedPage.attachments.append(deletedAttachment)
+        retainedPage.attachments.append(retainedAttachment)
+        context.insert(folder)
+        try context.save()
+
+        let service = NoteTrashService(storage: storage)
+        try service.moveToTrash([deletedNote], in: context)
+        let result = try service.permanentlyDelete([deletedNote], in: context)
+
+        #expect(result.cleanupReport.failedRelativePaths.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: sharedDrawing.relativePath).path))
+        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: sharedAttachment.relativePath).path))
+        #expect(try context.fetch(FetchDescriptor<NoteDocument>()).map(\.id) == [retainedNote.id])
+    }
+
     @Test func noteSearchMatchesIndexedPageTextAndAttachmentMetadata() throws {
         let context = try makeInMemoryModelContext()
         let note = NoteDocument(title: "CMPT 310")
