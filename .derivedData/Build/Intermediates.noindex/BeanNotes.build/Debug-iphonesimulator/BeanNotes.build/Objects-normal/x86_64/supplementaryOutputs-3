@@ -1,0 +1,37 @@
+{
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/PaperSize.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/AppIconService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/DrawingStorageService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/ImageMemoryCache.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/ImagePasteService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.swiftdeps"
+  }
+}

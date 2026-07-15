@@ -1,0 +1,409 @@
+{
+  "" : {
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotes-primary.dia",
+    "emit-module-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotes-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotes-primary-emit-module.dia",
+    "pch" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotes-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotes-primary.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/GeneratedAssetSymbols.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/GeneratedAssetSymbols.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/GeneratedAssetSymbols.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/GeneratedAssetSymbols~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/BeanNotesApp.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesApp.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesApp.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesApp.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesApp.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesApp.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesApp.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesApp.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesApp~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/ContentView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ContentView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ContentView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ContentView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ContentView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ContentView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ContentView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/Attachment.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/BeanNotesTheme.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/BeanVisitPolicy.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/DrawingToolState.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/DrawingZoomPreset.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/NoteBackground.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackground.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackground.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackground.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackground.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackground.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackground.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackground.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackground~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/NoteDocument.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteDocument.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteDocument.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteDocument.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteDocument.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteDocument.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteDocument.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteDocument.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteDocument~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/NoteEditorPageFlowMode.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorPageFlowMode.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorPageFlowMode.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorPageFlowMode.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorPageFlowMode.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorPageFlowMode.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorPageFlowMode.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorPageFlowMode.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorPageFlowMode~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/NotePage.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotePage.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotePage.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotePage.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotePage.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotePage.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotePage.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotePage.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotePage~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/NotebookFolder.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotebookFolder.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotebookFolder.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotebookFolder.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotebookFolder.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotebookFolder.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotebookFolder.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotebookFolder.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NotebookFolder~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/PaperSize.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PaperSize~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/AppIconService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AppIconService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/DrawingStorageService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingStorageService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/ImageMemoryCache.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImageMemoryCache~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/ImagePasteService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImagePasteService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/ImportExportService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImportExportService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImportExportService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImportExportService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImportExportService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImportExportService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImportExportService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImportExportService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ImportExportService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/LibraryBackupService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryBackupService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryBackupService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryBackupService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryBackupService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryBackupService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryBackupService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryBackupService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryBackupService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/LocalNotificationService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalNotificationService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalNotificationService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalNotificationService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalNotificationService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalNotificationService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalNotificationService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalNotificationService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalNotificationService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/LocalStorageService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalStorageService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalStorageService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalStorageService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalStorageService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalStorageService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalStorageService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalStorageService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LocalStorageService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/NoteBackgroundRenderer.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundRenderer.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundRenderer.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundRenderer.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundRenderer.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundRenderer.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundRenderer.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundRenderer.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundRenderer~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/NoteSearchIndexService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteSearchIndexService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteSearchIndexService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteSearchIndexService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteSearchIndexService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteSearchIndexService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteSearchIndexService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteSearchIndexService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteSearchIndexService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/NoteTrashService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteTrashService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteTrashService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteTrashService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteTrashService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteTrashService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteTrashService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteTrashService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteTrashService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Services/ThumbnailService.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ThumbnailService.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ThumbnailService.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ThumbnailService.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ThumbnailService.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ThumbnailService.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ThumbnailService.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ThumbnailService.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ThumbnailService~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/AttachmentPickerView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentPickerView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentPickerView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentPickerView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentPickerView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentPickerView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentPickerView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentPickerView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentPickerView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/AttachmentViews.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentViews.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentViews.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentViews.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentViews.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentViews.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentViews.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentViews.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/AttachmentViews~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/BeanMascotViews.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanMascotViews.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanMascotViews.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanMascotViews.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanMascotViews.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanMascotViews.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanMascotViews.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanMascotViews.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanMascotViews~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/BeanNotesPaperBackground.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/DrawingCanvasView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/ExportView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/FolderListView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/HiddenKeyboardShortcutButton.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/LibraryView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/LibraryView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/NoteBackgroundPickerView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundPickerView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundPickerView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundPickerView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundPickerView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundPickerView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundPickerView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundPickerView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundPickerView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/NoteBackgroundSurface.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundSurface.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundSurface.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundSurface.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundSurface.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundSurface.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundSurface.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundSurface.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteBackgroundSurface~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/NoteEditorView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/NoteEditorView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/PenPaletteView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PenPaletteView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PenPaletteView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PenPaletteView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PenPaletteView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PenPaletteView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PenPaletteView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PenPaletteView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/PenPaletteView~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/SettingsView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/SettingsView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/SettingsView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/SettingsView.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/SettingsView.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/SettingsView.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/SettingsView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/SettingsView.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/SettingsView~partial.swiftmodule"
+  }
+}

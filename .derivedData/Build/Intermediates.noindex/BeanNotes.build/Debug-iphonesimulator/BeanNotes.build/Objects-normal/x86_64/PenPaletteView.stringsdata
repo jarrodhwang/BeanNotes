@@ -1,0 +1,256 @@
+{
+  "source": "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/PenPaletteView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Pen palette",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 84
+        }
+      },
+      {
+        "comment": "",
+        "key": "Expand palette",
+        "location": {
+          "startingColumn": 43,
+          "startingLine": 429
+        }
+      },
+      {
+        "comment": "",
+        "key": "Collapse palette",
+        "location": {
+          "startingColumn": 62,
+          "startingLine": 429
+        }
+      },
+      {
+        "comment": "",
+        "key": "Eraser controls",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 291
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ stroke width",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 192
+        }
+      },
+      {
+        "comment": "",
+        "key": "Eraser controls",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 309
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ stroke width",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 210
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 609
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit %@ %@ color",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 619
+        }
+      },
+      {
+        "comment": "",
+        "key": "Opens the color picker for this selected swatch",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 620
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ %@ color",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 628
+        }
+      },
+      {
+        "comment": "",
+        "key": "Selects this color; tap it again to edit",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 629
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom pen thickness",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 240
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom pen thickness",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 259
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ point stroke",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 679
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 229
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom pen thickness",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 247
+        }
+      },
+      {
+        "comment": "",
+        "key": "Eraser mode",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 272
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ eraser",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 560
+        }
+      },
+      {
+        "comment": "",
+        "key": "Erases within the selected size",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 563
+        }
+      },
+      {
+        "comment": "",
+        "key": "Removes a whole stroke",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 564
+        }
+      },
+      {
+        "comment": "",
+        "key": "Eraser size",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 319
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ points",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 320
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom eraser size",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 344
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ points",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 345
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom eraser size",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 367
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ points",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 368
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ point eraser",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 705
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 330
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom eraser size",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 355
+        }
+      },
+      {
+        "comment": "",
+        "key": "Current color",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 388
+        }
+      }
+    ]
+  },
+  "version": 1
+}

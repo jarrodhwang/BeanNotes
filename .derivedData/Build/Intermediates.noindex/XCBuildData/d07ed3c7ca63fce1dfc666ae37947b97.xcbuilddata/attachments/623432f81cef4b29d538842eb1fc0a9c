@@ -1,0 +1,19 @@
+{
+  "" : {
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/BeanNotesShareExtension-primary.dia",
+    "emit-module-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/BeanNotesShareExtension-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/BeanNotesShareExtension-primary-emit-module.dia",
+    "pch" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/BeanNotesShareExtension-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/BeanNotesShareExtension-primary.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotesShareExtension/ShareViewController.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/ShareViewController.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/ShareViewController.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/ShareViewController.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/ShareViewController.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/ShareViewController.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/ShareViewController.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/ShareViewController.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesShareExtension.build/Objects-normal/x86_64/ShareViewController~partial.swiftmodule"
+  }
+}

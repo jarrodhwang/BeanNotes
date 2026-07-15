@@ -1,0 +1,37 @@
+{
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/Attachment.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/Attachment.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/BeanNotesTheme.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesTheme.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/BeanVisitPolicy.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanVisitPolicy.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/DrawingToolState.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingToolState.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Models/DrawingZoomPreset.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingZoomPreset.swiftdeps"
+  }
+}

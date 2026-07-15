@@ -1,0 +1,37 @@
+{
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/BeanNotesPaperBackground.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/BeanNotesPaperBackground.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/DrawingCanvasView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/DrawingCanvasView.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/ExportView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/ExportView.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/FolderListView.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/FolderListView.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/HiddenKeyboardShortcutButton.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.dia",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotes.build/Objects-normal/x86_64/HiddenKeyboardShortcutButton.swiftdeps"
+  }
+}

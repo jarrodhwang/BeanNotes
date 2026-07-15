@@ -1,0 +1,504 @@
+{
+  "source": "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/LibraryView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Delete Folder?",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 372
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move Note to Trash?",
+        "location": {
+          "startingColumn": 47,
+          "startingLine": 385
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move Notes to Trash?",
+        "location": {
+          "startingColumn": 71,
+          "startingLine": 385
+        }
+      },
+      {
+        "comment": "",
+        "key": "Permanently Delete Note?",
+        "location": {
+          "startingColumn": 56,
+          "startingLine": 399
+        }
+      },
+      {
+        "comment": "",
+        "key": "Permanently Delete Notes?",
+        "location": {
+          "startingColumn": 85,
+          "startingLine": 399
+        }
+      },
+      {
+        "comment": "",
+        "key": "BeanNotes",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 414
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 376
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 379
+        }
+      },
+      {
+        "comment": "",
+        "key": "All notes in this folder, including notes in Trash, will be permanently deleted.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 383
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move to Trash",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 389
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 392
+        }
+      },
+      {
+        "comment": "",
+        "key": "You can restore %@ for 30 days before permanent deletion.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 396
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Permanently",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 405
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 408
+        }
+      },
+      {
+        "comment": "",
+        "key": "This permanently removes %@. This cannot be undone.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 412
+        }
+      },
+      {
+        "comment": "",
+        "key": "OK",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 418
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Open Notes",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 1166
+        }
+      },
+      {
+        "comment": "",
+        "key": "Back to library",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 1201
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close %@",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 1243
+        }
+      },
+      {
+        "comment": "",
+        "key": "Folder created. %@",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 1328
+        }
+      },
+      {
+        "comment": "",
+        "key": "Try a different search.",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 1662
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deleted notes stay here for 30 days before they are permanently removed.",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 1669
+        }
+      },
+      {
+        "comment": "",
+        "key": "Create a note in this folder.",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 1730
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Matching Notes",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 1660
+        }
+      },
+      {
+        "comment": "",
+        "key": "Trash is Empty",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 1667
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Notes",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 1728
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 1479
+        }
+      },
+      {
+        "comment": "",
+        "key": "Finish selecting notes",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 1484
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ theme",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 1505
+        }
+      },
+      {
+        "comment": "",
+        "key": "Select notes",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 1517
+        }
+      },
+      {
+        "comment": "",
+        "key": "Import file or photo",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 1558
+        }
+      },
+      {
+        "comment": "",
+        "key": "Create note",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 1575
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld %@",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 1471
+        }
+      },
+      {
+        "comment": "",
+        "key": "File",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 1525
+        }
+      },
+      {
+        "comment": "",
+        "key": "Photo",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 1529
+        }
+      },
+      {
+        "comment": "",
+        "key": "Google Drive",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 1535
+        }
+      },
+      {
+        "comment": "",
+        "key": "OneDrive",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 1541
+        }
+      },
+      {
+        "comment": "",
+        "key": "Importing",
+        "location": {
+          "startingColumn": 57,
+          "startingLine": 1550
+        }
+      },
+      {
+        "comment": "",
+        "key": "Import",
+        "location": {
+          "startingColumn": 71,
+          "startingLine": 1550
+        }
+      },
+      {
+        "comment": "",
+        "key": "New",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 1568
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld selected",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 1592
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deselect All",
+        "location": {
+          "startingColumn": 59,
+          "startingLine": 1583
+        }
+      },
+      {
+        "comment": "",
+        "key": "Select All",
+        "location": {
+          "startingColumn": 76,
+          "startingLine": 1583
+        }
+      },
+      {
+        "comment": "",
+        "key": "Restore",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 1604
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 1614
+        }
+      },
+      {
+        "comment": "",
+        "key": "Export",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 1630
+        }
+      },
+      {
+        "comment": "",
+        "key": "Trash",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 1640
+        }
+      },
+      {
+        "comment": "",
+        "key": "Create Note",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 1689
+        }
+      },
+      {
+        "comment": "",
+        "key": "Create Note",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 1717
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel %@",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 1825
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 1819
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@, %lld pages",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 1984
+        }
+      },
+      {
+        "comment": "",
+        "key": "Selected",
+        "location": {
+          "startingColumn": 57,
+          "startingLine": 1985
+        }
+      },
+      {
+        "comment": "",
+        "key": "Not selected",
+        "location": {
+          "startingColumn": 70,
+          "startingLine": 1985
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 88,
+          "startingLine": 1985
+        }
+      },
+      {
+        "comment": "",
+        "key": "BeanNotes",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 2004
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 1925
+        }
+      },
+      {
+        "comment": "",
+        "key": "Restore",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 1967
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Permanently",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 1973
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move to Trash",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 1979
+        }
+      },
+      {
+        "comment": "",
+        "key": "OK",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2008
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 2044
+        }
+      }
+    ]
+  },
+  "version": 1
+}

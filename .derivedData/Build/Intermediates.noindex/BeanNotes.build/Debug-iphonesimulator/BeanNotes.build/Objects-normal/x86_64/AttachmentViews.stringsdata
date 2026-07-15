@@ -1,0 +1,152 @@
+{
+  "source": "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/AttachmentViews.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Resize image",
+        "location": {
+          "startingColumn": 45,
+          "startingLine": 40
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename Attachment",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 109
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Attachment?",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 123
+        }
+      },
+      {
+        "comment": "",
+        "key": "Name",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 113
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 114
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 119
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 127
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 132
+        }
+      },
+      {
+        "comment": "",
+        "key": "This removes the attachment and its local file if no other note is using it.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 136
+        }
+      },
+      {
+        "comment": "",
+        "key": "Share original",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 163
+        }
+      },
+      {
+        "comment": "",
+        "key": "Preview",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 172
+        }
+      },
+      {
+        "comment": "",
+        "key": "Attachment actions",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 213
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 179
+        }
+      },
+      {
+        "comment": "",
+        "key": "Unlock",
+        "location": {
+          "startingColumn": 49,
+          "startingLine": 185
+        }
+      },
+      {
+        "comment": "",
+        "key": "Lock",
+        "location": {
+          "startingColumn": 60,
+          "startingLine": 185
+        }
+      },
+      {
+        "comment": "",
+        "key": "Bring Above Drawing",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 193
+        }
+      },
+      {
+        "comment": "",
+        "key": "Send Behind Drawing",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 199
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 207
+        }
+      }
+    ]
+  },
+  "version": 1
+}

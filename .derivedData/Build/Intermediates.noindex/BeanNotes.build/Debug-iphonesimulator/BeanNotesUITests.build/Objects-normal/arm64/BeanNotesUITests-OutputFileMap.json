@@ -1,0 +1,39 @@
+{
+  "" : {
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests-primary.dia",
+    "emit-module-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests-primary-emit-module.dia",
+    "pch" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests-primary.swiftdeps"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotesUITests/BeanNotesPerformanceTests.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesPerformanceTests.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesPerformanceTests.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesPerformanceTests.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesPerformanceTests.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesPerformanceTests.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesPerformanceTests.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesPerformanceTests.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesPerformanceTests~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotesUITests/BeanNotesUITests.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITests~partial.swiftmodule"
+  },
+  "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotesUITests/BeanNotesUITestsLaunchTests.swift" : {
+    "const-values" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITestsLaunchTests.swiftconstvalues",
+    "dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITestsLaunchTests.d",
+    "diagnostics" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITestsLaunchTests.dia",
+    "index-unit-output-path" : "/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITestsLaunchTests.o",
+    "llvm-bc" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITestsLaunchTests.bc",
+    "object" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITestsLaunchTests.o",
+    "swift-dependencies" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITestsLaunchTests.swiftdeps",
+    "swiftmodule" : "/Users/jarrod/Documents/Source/Dev/BeanNotes/.derivedData/Build/Intermediates.noindex/BeanNotes.build/Debug-iphonesimulator/BeanNotesUITests.build/Objects-normal/arm64/BeanNotesUITestsLaunchTests~partial.swiftmodule"
+  }
+}

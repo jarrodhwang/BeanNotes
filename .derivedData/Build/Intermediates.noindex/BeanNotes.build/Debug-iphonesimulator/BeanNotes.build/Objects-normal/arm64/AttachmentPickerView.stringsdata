@@ -1,0 +1,48 @@
+{
+  "source": "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/AttachmentPickerView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Add Attachment",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 48
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paste Image",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 37
+        }
+      },
+      {
+        "comment": "",
+        "key": "Photos",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 25
+        }
+      },
+      {
+        "comment": "",
+        "key": "Files",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 31
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 52
+        }
+      }
+    ]
+  },
+  "version": 1
+}

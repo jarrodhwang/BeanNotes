@@ -1,0 +1,320 @@
+{
+  "source": "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/SettingsView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Settings",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 318
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clean up exports older than %lld days?",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 346
+        }
+      },
+      {
+        "comment": "",
+        "key": "Theme",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 82
+        }
+      },
+      {
+        "comment": "",
+        "key": "Notifications",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 115
+        }
+      },
+      {
+        "comment": "",
+        "key": "Default Note Background",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 150
+        }
+      },
+      {
+        "comment": "",
+        "key": "Pagination",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 158
+        }
+      },
+      {
+        "comment": "",
+        "key": "Default Paper Size",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 182
+        }
+      },
+      {
+        "comment": "",
+        "key": "Storage",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 201
+        }
+      },
+      {
+        "comment": "",
+        "key": "Library Backup",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 260
+        }
+      },
+      {
+        "comment": "",
+        "key": "Apple Pencil",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 285
+        }
+      },
+      {
+        "comment": "",
+        "key": "Adds a subtle, randomly selected Bean paper design without changing your note template or color.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 102
+        }
+      },
+      {
+        "comment": "",
+        "key": "Theme",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 83
+        }
+      },
+      {
+        "comment": "",
+        "key": "Appearance",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 89
+        }
+      },
+      {
+        "comment": "",
+        "key": "Show Bean on Note Backgrounds",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 99
+        }
+      },
+      {
+        "comment": "",
+        "key": "Folder Welcomes",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 116
+        }
+      },
+      {
+        "comment": "",
+        "key": "Open System Settings",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 124
+        }
+      },
+      {
+        "comment": "",
+        "key": "Display",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 159
+        }
+      },
+      {
+        "comment": "",
+        "key": "New Pages",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 166
+        }
+      },
+      {
+        "comment": "",
+        "key": "Applies to new notes. Existing pages keep their current size.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 196
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paper Size",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 183
+        }
+      },
+      {
+        "comment": "",
+        "key": "Custom",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 189
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ (%@)",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 185
+        }
+      },
+      {
+        "comment": "",
+        "key": "Calculating storage",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 220
+        }
+      },
+      {
+        "comment": "",
+        "key": "Refresh Usage",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 241
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clean Up Old Exports",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 248
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cleaning exports",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 255
+        }
+      },
+      {
+        "comment": "",
+        "key": "Includes folders, note metadata, drawings, imported files, thumbnails, and exports.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 268
+        }
+      },
+      {
+        "comment": "",
+        "key": "Export .beannotes Backup",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 264
+        }
+      },
+      {
+        "comment": "",
+        "key": "Drawing uses one native PencilKit high-detail canvas at every zoom level.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 302
+        }
+      },
+      {
+        "comment": "",
+        "key": "Pen Palette",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 286
+        }
+      },
+      {
+        "comment": "",
+        "key": "Drawing Input",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 292
+        }
+      },
+      {
+        "comment": "",
+        "key": "Double Tap",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 306
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Old Exports",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 350
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 356
+        }
+      },
+      {
+        "comment": "",
+        "key": "Focus check-in",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 409
+        }
+      },
+      {
+        "comment": "",
+        "key": "Width and height must each be between 1 and 4096 points.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 448
+        }
+      },
+      {
+        "comment": "",
+        "key": "Width (pt)",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 439
+        }
+      },
+      {
+        "comment": "",
+        "key": "Height (pt)",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 443
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld %@",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 787
+        }
+      }
+    ]
+  },
+  "version": 1
+}

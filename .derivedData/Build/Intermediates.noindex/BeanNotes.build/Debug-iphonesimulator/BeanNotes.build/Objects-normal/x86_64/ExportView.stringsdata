@@ -1,0 +1,64 @@
+{
+  "source": "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/ExportView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Export",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 99
+        }
+      },
+      {
+        "comment": "",
+        "key": "Current Page",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 49
+        }
+      },
+      {
+        "comment": "",
+        "key": "Whole Note",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 59
+        }
+      },
+      {
+        "comment": "",
+        "key": "Page Originals",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 70
+        }
+      },
+      {
+        "comment": "",
+        "key": "Note Originals",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 82
+        }
+      },
+      {
+        "comment": "",
+        "key": "All Originals",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 86
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 104
+        }
+      }
+    ]
+  },
+  "version": 1
+}

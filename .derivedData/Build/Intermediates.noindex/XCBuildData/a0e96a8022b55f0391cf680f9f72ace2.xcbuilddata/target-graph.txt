@@ -1,0 +1,8 @@
+Target dependency graph (4 targets)
+Target 'BeanNotesTests' in project 'BeanNotes'
+➜ Explicit dependency on target 'BeanNotes' in project 'BeanNotes'
+Target 'BeanNotesUITests' in project 'BeanNotes'
+➜ Explicit dependency on target 'BeanNotes' in project 'BeanNotes'
+Target 'BeanNotes' in project 'BeanNotes'
+➜ Explicit dependency on target 'BeanNotesShareExtension' in project 'BeanNotes'
+Target 'BeanNotesShareExtension' in project 'BeanNotes' (no dependencies)

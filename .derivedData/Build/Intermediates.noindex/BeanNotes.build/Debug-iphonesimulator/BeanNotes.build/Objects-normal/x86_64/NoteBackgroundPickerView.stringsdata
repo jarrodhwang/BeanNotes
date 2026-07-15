@@ -1,0 +1,48 @@
+{
+  "source": "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/NoteBackgroundPickerView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Template",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 14
+        }
+      },
+      {
+        "comment": "",
+        "key": "More Colors",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 51
+        }
+      },
+      {
+        "comment": "",
+        "key": "Color",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 33
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld pt",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 88
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld pt",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 110
+        }
+      }
+    ]
+  },
+  "version": 1
+}

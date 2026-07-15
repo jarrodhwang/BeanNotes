@@ -1,0 +1,4 @@
+Target dependency graph (2 targets)
+Target 'BeanNotes' in project 'BeanNotes'
+➜ Explicit dependency on target 'BeanNotesShareExtension' in project 'BeanNotes'
+Target 'BeanNotesShareExtension' in project 'BeanNotes' (no dependencies)

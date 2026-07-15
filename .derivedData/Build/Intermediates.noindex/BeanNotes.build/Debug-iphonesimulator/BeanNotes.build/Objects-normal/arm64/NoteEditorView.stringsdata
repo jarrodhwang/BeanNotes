@@ -1,0 +1,688 @@
+{
+  "source": "/Users/jarrod/Documents/Source/Dev/BeanNotes/BeanNotes/Views/NoteEditorView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Delete Image?",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 342
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Page?",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 357
+        }
+      },
+      {
+        "comment": "",
+        "key": "BeanNotes",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 372
+        }
+      },
+      {
+        "comment": "",
+        "key": "No pages",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 262
+        }
+      },
+      {
+        "comment": "",
+        "key": "Missing file",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 339
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 346
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 351
+        }
+      },
+      {
+        "comment": "",
+        "key": "This removes the image and its local file if no other note is using it.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 355
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 361
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 366
+        }
+      },
+      {
+        "comment": "",
+        "key": "This removes the page, handwriting, thumbnails, and page attachments from local storage.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 370
+        }
+      },
+      {
+        "comment": "",
+        "key": "OK",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 376
+        }
+      },
+      {
+        "comment": "",
+        "key": "Focus mode drawing controls",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 747
+        }
+      },
+      {
+        "comment": "",
+        "key": "Untitled Note",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 518
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit note title",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 545
+        }
+      },
+      {
+        "comment": "",
+        "key": "Focus drawing mode",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 572
+        }
+      },
+      {
+        "comment": "",
+        "key": "Hide editor controls for more drawing space",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 573
+        }
+      },
+      {
+        "comment": "",
+        "key": "Undo",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 586
+        }
+      },
+      {
+        "comment": "",
+        "key": "Undo the last drawing change on the current page",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 587
+        }
+      },
+      {
+        "comment": "",
+        "key": "Redo",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 597
+        }
+      },
+      {
+        "comment": "",
+        "key": "Redo the last undone drawing change on the current page",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 598
+        }
+      },
+      {
+        "comment": "",
+        "key": "Previous page",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 611
+        }
+      },
+      {
+        "comment": "",
+        "key": "Next page",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 621
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add page",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 632
+        }
+      },
+      {
+        "comment": "",
+        "key": "Page background",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 642
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paste image",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 650
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add attachment",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 659
+        }
+      },
+      {
+        "comment": "",
+        "key": "Attachments",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 669
+        }
+      },
+      {
+        "comment": "",
+        "key": "Export",
+        "location": {
+          "startingColumn": 69,
+          "startingLine": 684
+        }
+      },
+      {
+        "comment": "",
+        "key": "Preparing export",
+        "location": {
+          "startingColumn": 80,
+          "startingLine": 684
+        }
+      },
+      {
+        "comment": "",
+        "key": "Page actions",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 1061
+        }
+      },
+      {
+        "comment": "",
+        "key": "Exit focus mode",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 707
+        }
+      },
+      {
+        "comment": "",
+        "key": "Show editor controls",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 708
+        }
+      },
+      {
+        "comment": "",
+        "key": "Undo",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 721
+        }
+      },
+      {
+        "comment": "",
+        "key": "Undo the last drawing change on the current page",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 722
+        }
+      },
+      {
+        "comment": "",
+        "key": "Redo",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 732
+        }
+      },
+      {
+        "comment": "",
+        "key": "Redo the last undone drawing change on the current page",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 733
+        }
+      },
+      {
+        "comment": "",
+        "key": "Zoom %@, native PencilKit detail, %@ touch mode, %@ ink",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 774
+        }
+      },
+      {
+        "comment": "",
+        "key": "Zoom out",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 759
+        }
+      },
+      {
+        "comment": "",
+        "key": "Zoom in",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 770
+        }
+      },
+      {
+        "comment": "",
+        "key": "Zoom %@, native PencilKit canvas, %@ touch mode, %@ ink",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 888
+        }
+      },
+      {
+        "comment": "",
+        "key": "Zoom, fit the selected page, change touch mode, or ink width",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 889
+        }
+      },
+      {
+        "comment": "",
+        "key": "Touch Mode",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 845
+        }
+      },
+      {
+        "comment": "",
+        "key": "Quick Zoom",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 859
+        }
+      },
+      {
+        "comment": "",
+        "key": "Current %@",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 781
+        }
+      },
+      {
+        "comment": "",
+        "key": "Native PencilKit canvas",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 782
+        }
+      },
+      {
+        "comment": "",
+        "key": "Touch %@",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 783
+        }
+      },
+      {
+        "comment": "",
+        "key": "Ink %@",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 784
+        }
+      },
+      {
+        "comment": "",
+        "key": "Lock current page ink width",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 821
+        }
+      },
+      {
+        "comment": "",
+        "key": "Store the effective page ink width and keep it consistent across zoom levels",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 822
+        }
+      },
+      {
+        "comment": "",
+        "key": "Lock Page Ink",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 818
+        }
+      },
+      {
+        "comment": "",
+        "key": "Zoom In",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 829
+        }
+      },
+      {
+        "comment": "",
+        "key": "Zoom Out",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 835
+        }
+      },
+      {
+        "comment": "",
+        "key": "Fit Page",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 841
+        }
+      },
+      {
+        "comment": "",
+        "key": "Lock page ink width",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 983
+        }
+      },
+      {
+        "comment": "",
+        "key": "Store the current page ink width and switch to Page Width ink",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 984
+        }
+      },
+      {
+        "comment": "",
+        "key": "Fit page",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 995
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reset zoom to the selected page",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 996
+        }
+      },
+      {
+        "comment": "",
+        "key": "Duplicate Page",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 1018
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move Page Up",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 1024
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move Page Down",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 1031
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reorder Pages",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 1038
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move to Note",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 1045
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Page",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 1054
+        }
+      },
+      {
+        "comment": "",
+        "key": "Background",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 2074
+        }
+      },
+      {
+        "comment": "",
+        "key": "Page Background",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 2025
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paper Size",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 2030
+        }
+      },
+      {
+        "comment": "",
+        "key": "Width and height must each be between 1 and 4096 points.",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 2063
+        }
+      },
+      {
+        "comment": "",
+        "key": "Existing ink and attachments keep their size when the page dimensions change.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 2069
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paper Size",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 2031
+        }
+      },
+      {
+        "comment": "",
+        "key": "Width (pt)",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 2048
+        }
+      },
+      {
+        "comment": "",
+        "key": "Height (pt)",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 2052
+        }
+      },
+      {
+        "comment": "",
+        "key": "Apply Custom Size",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 2056
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ (%@)",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 2033
+        }
+      },
+      {
+        "comment": "",
+        "key": "Apply to All Pages",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 2083
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 2095
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reorder Pages",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 2140
+        }
+      },
+      {
+        "comment": "",
+        "key": "Page %lld",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 2135
+        }
+      },
+      {
+        "comment": "",
+        "key": "Page %lld",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 2126
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 2144
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move Page",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 2200
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Other Notes",
+        "location": {
+          "startingColumn": 44,
+          "startingLine": 2165
+        }
+      },
+      {
+        "comment": "",
+        "key": "Move page to %@",
+        "location": {
+          "startingColumn": 45,
+          "startingLine": 2196
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 2190
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 2204
+        }
+      }
+    ]
+  },
+  "version": 1
+}
