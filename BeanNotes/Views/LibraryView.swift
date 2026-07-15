@@ -56,6 +56,8 @@ struct LibraryView: View {
     @State private var searchIndexRefreshTask: Task<Void, Never>?
     @State private var folderCreatedToast: FolderCreatedToast?
     @State private var folderCreatedToastDismissTask: Task<Void, Never>?
+    @State private var trashUndoToast: TrashUndoToast?
+    @State private var trashUndoToastDismissTask: Task<Void, Never>?
     @State private var beanVisit: BeanVisit?
     @State private var beanVisitDismissTask: Task<Void, Never>?
     @State private var focusSessionStartedAt = Date()
@@ -187,6 +189,7 @@ struct LibraryView: View {
             && !isShowingDocumentImporter
             && !isImportingDocument
             && folderCreatedToast == nil
+            && trashUndoToast == nil
             && folderPendingDeletion == nil
             && notesPendingTrash.isEmpty
             && notesPendingRestore.isEmpty
@@ -272,13 +275,20 @@ struct LibraryView: View {
             BeanVisitOverlayView(visit: beanVisit)
         }
         .overlay(alignment: .bottom) {
-            if let folderCreatedToast {
-                FolderCreatedToastView(toast: folderCreatedToast)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 28)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(5)
+            VStack(spacing: 12) {
+                if let folderCreatedToast {
+                    FolderCreatedToastView(toast: folderCreatedToast)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
+                if let trashUndoToast {
+                    TrashUndoToastView(toast: trashUndoToast, undo: undoTrashMove)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 28)
+            .zIndex(5)
         }
         .overlay {
             if isExportingNotes {
@@ -845,8 +855,47 @@ struct LibraryView: View {
         do {
             let movedNoteIDs = try NoteTrashService().moveToTrash(notes, in: modelContext)
             closeNoteTabs(movedNoteIDs)
+            let movedNotes = notes.filter { movedNoteIDs.contains($0.id) }
+            if !movedNotes.isEmpty {
+                showTrashUndoToast(for: movedNotes)
+            }
         } catch {
             errorMessage = "BeanNotes could not move the selected notes to Trash. \(error.localizedDescription)"
+        }
+    }
+
+    private func showTrashUndoToast(for notes: [NoteDocument]) {
+        trashUndoToastDismissTask?.cancel()
+        let toast = TrashUndoToast(notes: notes)
+
+        withAnimation(.snappy(duration: 0.22)) {
+            trashUndoToast = toast
+        }
+
+        trashUndoToastDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            dismissTrashUndoToast(id: toast.id)
+        }
+    }
+
+    private func undoTrashMove() {
+        guard let toast = trashUndoToast else { return }
+        trashUndoToastDismissTask?.cancel()
+
+        do {
+            try NoteTrashService().undoMoveToTrash(toast.notes, in: modelContext)
+            dismissTrashUndoToast(id: toast.id)
+        } catch {
+            errorMessage = "BeanNotes could not undo moving the selected notes to Trash. \(error.localizedDescription)"
+        }
+    }
+
+    private func dismissTrashUndoToast(id: UUID) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if trashUndoToast?.id == id {
+                trashUndoToast = nil
+            }
         }
     }
 
@@ -907,6 +956,8 @@ struct LibraryView: View {
 
     private func deletePendingFolder() {
         guard let folder = folderPendingDeletion else { return }
+        trashUndoToastDismissTask?.cancel()
+        trashUndoToast = nil
         let deletingFolderID = folder.id
         let deletingSelectedFolder = folder.id == selectedFolderID
         let nextSelectedFolderID = sortedFolders.first { $0.id != deletingFolderID }?.id
@@ -1338,6 +1389,51 @@ private struct FolderCreatedToastView: View {
         .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Folder created. \(toast.message)")
+    }
+}
+
+private struct TrashUndoToast: Identifiable {
+    let id = UUID()
+    var notes: [NoteDocument]
+
+    var message: String {
+        notes.count == 1 ? "Note moved to Trash" : "\(notes.count) notes moved to Trash"
+    }
+}
+
+private struct TrashUndoToastView: View {
+    @Environment(\.beanNotesTheme) private var beanNotesTheme
+
+    var toast: TrashUndoToast
+    var undo: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "trash")
+                .font(.headline)
+                .foregroundStyle(beanNotesTheme.accentColor)
+                .accessibilityHidden(true)
+
+            Text(toast.message)
+                .font(.subheadline.weight(.semibold))
+
+            Spacer(minLength: 8)
+
+            Button("Undo", action: undo)
+                .font(.subheadline.weight(.bold))
+                .buttonStyle(.bordered)
+                .accessibilityHint("Returns the notes to their previous folders")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 420)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(beanNotesTheme.accentColor.opacity(0.18), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
+        .accessibilityElement(children: .contain)
     }
 }
 

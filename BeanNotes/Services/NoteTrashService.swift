@@ -34,6 +34,24 @@ struct NoteTrashService {
     }
 
     @discardableResult
+    func undoMoveToTrash(
+        _ notes: [NoteDocument],
+        at date: Date = Date(),
+        in modelContext: ModelContext
+    ) throws -> Set<UUID> {
+        let notes = uniqueNotes(notes).filter(\.isInTrash)
+        guard !notes.isEmpty else { return [] }
+
+        for note in notes {
+            note.trashedAt = nil
+            note.folder?.updatedAt = date
+        }
+
+        try saveOrRollback(modelContext)
+        return Set(notes.map(\.id))
+    }
+
+    @discardableResult
     func restore(
         _ notes: [NoteDocument],
         to folder: NotebookFolder,

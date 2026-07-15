@@ -246,6 +246,36 @@ struct BeanNotesTests {
         #expect(destinationFolder.updatedAt == restoredAt)
     }
 
+    @Test func trashMoveCanBeUndoneWithoutChangingOriginalFolders() throws {
+        let context = try makeInMemoryModelContext()
+        let firstFolder = NotebookFolder(name: "Inbox")
+        let secondFolder = NotebookFolder(name: "Projects")
+        let firstNote = NoteDocument(title: "First")
+        let secondNote = NoteDocument(title: "Second")
+        let activeNote = NoteDocument(title: "Active")
+        firstFolder.notes.append(contentsOf: [firstNote, activeNote])
+        secondFolder.notes.append(secondNote)
+        context.insert(firstFolder)
+        context.insert(secondFolder)
+        try context.save()
+
+        try NoteTrashService().moveToTrash([firstNote, secondNote], in: context)
+        let restoredAt = Date(timeIntervalSince1970: 1_900_000_000)
+        let restoredIDs = try NoteTrashService().undoMoveToTrash(
+            [firstNote, secondNote, firstNote, activeNote],
+            at: restoredAt,
+            in: context
+        )
+
+        #expect(restoredIDs == [firstNote.id, secondNote.id])
+        #expect(firstNote.trashedAt == nil)
+        #expect(secondNote.trashedAt == nil)
+        #expect(firstNote.folder?.id == firstFolder.id)
+        #expect(secondNote.folder?.id == secondFolder.id)
+        #expect(firstFolder.updatedAt == restoredAt)
+        #expect(secondFolder.updatedAt == restoredAt)
+    }
+
     @Test func deletingFolderMovesItsContentsToTrashWithoutDeletingNotes() throws {
         let context = try makeInMemoryModelContext()
         let folder = NotebookFolder(name: "Projects")
