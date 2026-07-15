@@ -42,6 +42,8 @@ struct LibraryView: View {
     @StateObject private var editorSessionStore = NoteEditorSessionStore()
     @State private var notesPendingTrash: [NoteDocument] = []
     @State private var notesPendingRestore: [NoteDocument] = []
+    @State private var notePendingTrashRestoreAndOpen: NoteDocument?
+    @State private var notePendingOpenAfterRestore: NoteDocument?
     @State private var notesPendingPermanentDeletion: [NoteDocument] = []
     @State private var isShowingFolderEditor = false
     @State private var isShowingDocumentImporter = false
@@ -262,7 +264,7 @@ struct LibraryView: View {
                 importProgress: importProgress,
                 importProgressMessage: importProgressMessage,
                 cancelImport: cancelImport,
-                openNote: openNote,
+                openNote: requestToOpenNote,
                 exportNotes: exportNotes,
                 moveNotesToTrash: { notesPendingTrash = $0 },
                 restoreNotes: restoreNotes,
@@ -411,6 +413,10 @@ struct LibraryView: View {
             folders: sortedFolders,
             notes: $notesPendingRestore,
             restore: restoreNotes(_:to:)
+        ))
+        .modifier(TrashRestoreConfirmation(
+            note: $notePendingTrashRestoreAndOpen,
+            revertAndOpen: revertPendingNoteAndOpen
         ))
         .alert(
             notesPendingPermanentDeletion.count == 1 ? "Permanently Delete Note?" : "Permanently Delete Notes?",
@@ -900,15 +906,57 @@ struct LibraryView: View {
     }
 
     private func restoreNotes(_ notes: [NoteDocument]) {
-        notesPendingRestore = notes
+        let notesWithPreviousFolders = notes.filter { $0.isInTrash && $0.folder != nil }
+        let notesNeedingDestination = notes.filter { $0.isInTrash && $0.folder == nil }
+
+        guard !notesWithPreviousFolders.isEmpty || !notesNeedingDestination.isEmpty else { return }
+
+        if !notesWithPreviousFolders.isEmpty {
+            do {
+                try NoteTrashService().undoMoveToTrash(notesWithPreviousFolders, in: modelContext)
+            } catch {
+                errorMessage = "BeanNotes could not revert the selected notes. \(error.localizedDescription)"
+                return
+            }
+        }
+
+        if notesNeedingDestination.isEmpty {
+            openRestoredNoteIfNeeded(in: notesWithPreviousFolders)
+        } else {
+            notesPendingRestore = notesNeedingDestination
+        }
     }
 
     private func restoreNotes(_ notes: [NoteDocument], to folder: NotebookFolder) {
         do {
             try NoteTrashService().restore(notes, to: folder, in: modelContext)
+            openRestoredNoteIfNeeded(in: notes)
         } catch {
             errorMessage = "BeanNotes could not restore the selected notes. \(error.localizedDescription)"
         }
+    }
+
+    private func requestToOpenNote(_ note: NoteDocument) {
+        if note.isInTrash {
+            notePendingTrashRestoreAndOpen = note
+        } else {
+            openNote(note)
+        }
+    }
+
+    private func revertPendingNoteAndOpen() {
+        guard let note = notePendingTrashRestoreAndOpen else { return }
+        notePendingTrashRestoreAndOpen = nil
+        notePendingOpenAfterRestore = note
+        restoreNotes([note])
+    }
+
+    private func openRestoredNoteIfNeeded(in restoredNotes: [NoteDocument]) {
+        guard let note = notePendingOpenAfterRestore,
+              restoredNotes.contains(where: { $0.id == note.id }) else { return }
+
+        notePendingOpenAfterRestore = nil
+        openNote(note)
     }
 
     private func permanentlyDeletePendingNotes() {
@@ -1454,9 +1502,21 @@ private struct RestoreDestinationDialog: ViewModifier {
             titleVisibility: .visible
         ) {
             ForEach(folders) { folder in
-                Button(folder.name) {
+                Button {
                     notes = []
                     restore(notesToRestore, folder)
+                } label: {
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(Color(hex: folder.colorHex))
+                            .frame(width: 14, height: 14)
+                            .overlay {
+                                Circle()
+                                    .stroke(Color.primary.opacity(0.16), lineWidth: 1)
+                            }
+
+                        Text(folder.name)
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {
@@ -1468,6 +1528,27 @@ private struct RestoreDestinationDialog: ViewModifier {
             } else {
                 Text("Choose a folder for \(notes.count == 1 ? "this note" : "these notes").")
             }
+        }
+    }
+}
+
+private struct TrashRestoreConfirmation: ViewModifier {
+    @Binding var note: NoteDocument?
+    var revertAndOpen: () -> Void
+
+    func body(content: Content) -> some View {
+        content.alert("Revert Note?", isPresented: Binding(
+            get: { note != nil },
+            set: { if !$0 { note = nil } }
+        )) {
+            Button("Revert and Open") {
+                revertAndOpen()
+            }
+            Button("Cancel", role: .cancel) {
+                note = nil
+            }
+        } message: {
+            Text("This note must be reverted from Trash before it can be opened.")
         }
     }
 }
