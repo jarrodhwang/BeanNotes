@@ -1657,31 +1657,6 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class PageCanvasView: UIView, UIGestureRecognizerDelegate {
-        // Prefer this recognizer over PencilKit's quick-tap edit interaction so the
-        // edit menu remains available through its standard long-press interaction.
-        private final class DirectTouchTapGestureRecognizer: UITapGestureRecognizer {
-            override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
-                if Self.isSingleFingerSingleTap(preventedGestureRecognizer) {
-                    return true
-                }
-
-                return super.canPrevent(preventedGestureRecognizer)
-            }
-
-            override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
-                if Self.isSingleFingerSingleTap(preventingGestureRecognizer) {
-                    return false
-                }
-
-                return super.canBePrevented(by: preventingGestureRecognizer)
-            }
-
-            private static func isSingleFingerSingleTap(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-                guard let tapGesture = gestureRecognizer as? UITapGestureRecognizer else { return false }
-                return tapGesture.numberOfTouchesRequired == 1 && tapGesture.numberOfTapsRequired == 1
-            }
-        }
-
         private struct NativeViewportRequest {
             var rect: CGRect
             var overscan: CGFloat
@@ -1716,7 +1691,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var activeDrawingViewportRect: CGRect = .null
         private var nativeZoomScale: CGFloat = 1
         private var pendingNativeViewport: NativeViewportRequest?
-        private var directTouchTapGesture: UITapGestureRecognizer?
 
         var currentNativeDrawingZoomScale: CGFloat {
             nativeZoomScale
@@ -1902,15 +1876,14 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             addSubview(eraserScopeView)
 
-            let directTouchTapGesture = DirectTouchTapGestureRecognizer(
+            let selectAttachmentGesture = UITapGestureRecognizer(
                 target: self,
                 action: #selector(handleAttachmentSelection(_:))
             )
-            directTouchTapGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-            directTouchTapGesture.cancelsTouchesInView = true
-            directTouchTapGesture.delegate = self
-            addGestureRecognizer(directTouchTapGesture)
-            self.directTouchTapGesture = directTouchTapGesture
+            selectAttachmentGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            selectAttachmentGesture.cancelsTouchesInView = true
+            selectAttachmentGesture.delegate = self
+            addGestureRecognizer(selectAttachmentGesture)
         }
 
         func updateRenderScale(
@@ -2264,12 +2237,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             })
         }
 
-        func shouldHandleDirectTap(at point: CGPoint) -> Bool {
-            selectedAttachmentID != nil
-                || topmostEditableAttachment(at: point) != nil
-                || appliedInputMode == .pencilOnly
-        }
-
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldReceive touch: UITouch
@@ -2283,22 +2250,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return false
             }
 
-            guard gestureRecognizer === directTouchTapGesture else { return true }
-            return shouldHandleDirectTap(at: touch.location(in: self))
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
-        ) -> Bool {
-            guard gestureRecognizer === directTouchTapGesture else { return false }
-
-            if otherGestureRecognizer is UILongPressGestureRecognizer {
-                return true
-            }
-
-            guard let tapGesture = otherGestureRecognizer as? UITapGestureRecognizer else { return false }
-            return tapGesture.numberOfTouchesRequired == 1 && tapGesture.numberOfTapsRequired > 1
+            return selectedAttachmentID != nil
+                || topmostEditableAttachment(at: touch.location(in: self)) != nil
         }
 
         func gestureRecognizer(
