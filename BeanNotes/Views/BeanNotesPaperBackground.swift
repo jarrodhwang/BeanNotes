@@ -26,13 +26,13 @@ struct BeanNotesPaperBackground: View {
                     .accessibilityHidden(true)
             }
 
-            if theme == .bean,
+            if let watermarkImageName = theme.mascotWatermarkImageName,
                showsMascotWatermark,
                !accessibilityReduceTransparency {
                 GeometryReader { proxy in
                     let imageWidth = min(220, max(108, proxy.size.width * 0.58))
 
-                    Image("BeanWelcomeImage")
+                    Image(watermarkImageName)
                         .resizable()
                         .scaledToFit()
                         .saturation(colorScheme == .dark ? 0.32 : 0.55)

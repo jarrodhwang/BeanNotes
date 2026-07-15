@@ -27,8 +27,8 @@ struct FolderListView: View {
 
             HStack {
                 HStack(spacing: 7) {
-                    if beanNotesTheme == .bean {
-                        BeanBadgeView(size: 20)
+                    if beanNotesTheme.supportsFriendlyVisits {
+                        ThemeBadgeView(theme: beanNotesTheme, size: 20)
                     }
 
                     Text("Folders")
@@ -40,15 +40,15 @@ struct FolderListView: View {
 
                 Button(action: createFolder) {
                     ZStack(alignment: .bottomTrailing) {
-                        if beanNotesTheme == .bean {
-                            BeanBadgeView(size: 28)
+                        if beanNotesTheme.supportsFriendlyVisits {
+                            ThemeBadgeView(theme: beanNotesTheme, size: 28)
                         }
 
-                        Image(systemName: beanNotesTheme == .bean ? "plus.circle.fill" : "plus")
-                            .font(beanNotesTheme == .bean ? .caption.weight(.bold) : .title3)
-                            .foregroundStyle(beanNotesTheme == .bean ? beanNotesTheme.accentColor : .secondary)
+                        Image(systemName: beanNotesTheme.supportsFriendlyVisits ? "plus.circle.fill" : "plus")
+                            .font(beanNotesTheme.supportsFriendlyVisits ? .caption.weight(.bold) : .title3)
+                            .foregroundStyle(beanNotesTheme.supportsFriendlyVisits ? beanNotesTheme.accentColor : .secondary)
                             .background {
-                                if beanNotesTheme == .bean {
+                                if beanNotesTheme.supportsFriendlyVisits {
                                     Circle()
                                         .fill(beanNotesTheme.cardBackground)
                                         .frame(width: 15, height: 15)
@@ -93,15 +93,15 @@ struct FolderListView: View {
 
     @ViewBuilder
     private var topControls: some View {
-        if beanNotesTheme == .bean {
+        if beanNotesTheme.supportsFriendlyVisits {
             HStack(spacing: 12) {
-                BeanAvatarView(size: 48)
+                ThemeAvatarView(theme: beanNotesTheme, size: 48)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Bean's corner")
+                    Text(beanNotesTheme.cornerTitle)
                         .font(.headline.weight(.bold))
 
-                    Text("Ready for your next idea")
+                    Text(beanNotesTheme.cornerSubtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -403,6 +403,8 @@ private struct FolderProjectMarker: View {
                 Image(systemName: "pawprint.fill")
                     .font(.system(size: size * 0.46, weight: .bold))
                     .foregroundStyle(readableForegroundColor)
+            } else if theme == .blueberry {
+                ThemeBadgeView(theme: theme, size: size * 0.78)
             }
         }
         .frame(width: size, height: size)

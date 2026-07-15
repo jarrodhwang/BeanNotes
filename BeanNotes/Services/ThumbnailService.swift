@@ -70,10 +70,11 @@ struct NotePageRenderSnapshot: Sendable {
 
     @MainActor
     init(page: NotePage) {
+        let theme = BeanNotesTheme.currentFromDefaults()
         self.init(
             page: page,
-            theme: .currentFromDefaults(),
-            showsBeanArtwork: NoteBackground.showsBeanArtwork()
+            theme: theme,
+            showsBeanArtwork: NoteBackground.showsArtwork(for: theme)
         )
     }
 
@@ -81,7 +82,7 @@ struct NotePageRenderSnapshot: Sendable {
     init(
         page: NotePage,
         theme: BeanNotesTheme,
-        showsBeanArtwork: Bool = NoteBackground.showsBeanArtwork()
+        showsBeanArtwork: Bool? = nil
     ) {
         let pageSize = page.pageSize
         self.id = page.id
@@ -92,7 +93,7 @@ struct NotePageRenderSnapshot: Sendable {
         self.width = Double(pageSize.width)
         self.height = Double(pageSize.height)
         self.themeRaw = theme.rawValue
-        self.showsBeanArtwork = showsBeanArtwork
+        self.showsBeanArtwork = showsBeanArtwork ?? NoteBackground.showsArtwork(for: theme)
         self.imageAttachments = page.imageAttachments.map {
             NoteImageAttachmentRenderSnapshot(attachment: $0, pageSize: pageSize)
         }
@@ -108,7 +109,7 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
-    nonisolated private static let thumbnailRenderVersion = 8
+    nonisolated private static let thumbnailRenderVersion = 9
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
@@ -145,14 +146,15 @@ struct ThumbnailService {
     func generateThumbnail(
         for page: NotePage,
         theme: BeanNotesTheme? = nil,
-        showsBeanArtwork: Bool = NoteBackground.showsBeanArtwork(),
+        showsBeanArtwork: Bool? = nil,
         maxDimension: CGFloat = 360
     ) throws -> URL {
         let resolvedTheme = theme ?? .currentFromDefaults()
+        let resolvedShowsArtwork = showsBeanArtwork ?? NoteBackground.showsArtwork(for: resolvedTheme)
         let snapshot = NotePageRenderSnapshot(
             page: page,
             theme: resolvedTheme,
-            showsBeanArtwork: showsBeanArtwork
+            showsBeanArtwork: resolvedShowsArtwork
         )
         let drawing = drawingStorage.loadDrawing(for: page)
         let thumbnail = Self.renderThumbnailImage(
@@ -182,14 +184,15 @@ struct ThumbnailService {
     func generateThumbnailInBackground(
         for page: NotePage,
         theme: BeanNotesTheme? = nil,
-        showsBeanArtwork: Bool = NoteBackground.showsBeanArtwork(),
+        showsBeanArtwork: Bool? = nil,
         maxDimension: CGFloat = 360
     ) async throws -> URL {
         let resolvedTheme = theme ?? .currentFromDefaults()
+        let resolvedShowsArtwork = showsBeanArtwork ?? NoteBackground.showsArtwork(for: resolvedTheme)
         let snapshot = NotePageRenderSnapshot(
             page: page,
             theme: resolvedTheme,
-            showsBeanArtwork: showsBeanArtwork
+            showsBeanArtwork: resolvedShowsArtwork
         )
         let rootURL = storage.rootURL
         let fileName = Self.thumbnailFileName(
@@ -204,7 +207,7 @@ struct ThumbnailService {
         )
         try Task.checkCancellation()
         guard resolvedTheme == .currentFromDefaults(),
-              showsBeanArtwork == NoteBackground.showsBeanArtwork() else {
+              resolvedShowsArtwork == NoteBackground.showsArtwork(for: resolvedTheme) else {
             throw CancellationError()
         }
 
@@ -219,7 +222,7 @@ struct ThumbnailService {
 
         guard !Task.isCancelled,
               resolvedTheme == .currentFromDefaults(),
-              showsBeanArtwork == NoteBackground.showsBeanArtwork() else {
+              resolvedShowsArtwork == NoteBackground.showsArtwork(for: resolvedTheme) else {
             if page.thumbnailFileName != stored.relativePath {
                 try? storage.removeFile(relativePath: stored.relativePath)
             }

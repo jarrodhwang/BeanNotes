@@ -65,7 +65,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         case .bean:
             "Warm paper, soft caramel accents, and cozy folder colors."
         case .blueberry:
-            "Cool paper, vivid blue controls, and crisp study-focused surfaces."
+            "Cool blueberry paper, berry buttons, and cheerful snack-break visits."
         }
     }
 
@@ -168,21 +168,163 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         }
     }
 
-    var brandImageName: String? {
+    var supportsFriendlyVisits: Bool {
         switch self {
-        case .bean:
-            "BeanBadge"
-        case .standard, .blueberry:
-            nil
+        case .standard:
+            false
+        case .bean, .blueberry:
+            true
         }
     }
 
-    var paperTextureImageName: String? {
+    var mascotName: String {
+        mascotCopy?.name ?? label
+    }
+
+    var visitThemeSectionTitle: String {
+        mascotCopy?.themeSectionTitle ?? "Theme"
+    }
+
+    var visitToggleTitle: String {
+        mascotCopy?.visitsToggleTitle ?? "Occasional Visits"
+    }
+
+    var visitHintMessage: String {
+        mascotCopy?.hintMessage ?? "BeanNotes is ready for your next idea."
+    }
+
+    var visitInterruptionsToggleTitle: String {
+        mascotCopy?.interruptionsToggleTitle ?? "Allow Interrupts"
+    }
+
+    var visitInterruptionsDescription: String {
+        mascotCopy?.interruptionsDescription ?? "Optional check-ins can appear while you are writing."
+    }
+
+    var inviteVisitTitle: String {
+        mascotCopy?.inviteTitle ?? "Preview a Visit"
+    }
+
+    var paperArtworkToggleTitle: String {
+        mascotCopy?.paperArtworkToggleTitle ?? "Show Theme Art on Note Backgrounds"
+    }
+
+    var paperArtworkDescription: String {
+        mascotCopy?.paperArtworkDescription ?? "Adds subtle theme art without changing your note template or color."
+    }
+
+    var cornerTitle: String {
+        mascotCopy?.cornerTitle ?? "BeanNotes"
+    }
+
+    var cornerSubtitle: String {
+        mascotCopy?.cornerSubtitle ?? "Ready for your next idea"
+    }
+
+    var mascotEmptyStateTitle: String {
+        mascotCopy?.emptyStateTitle ?? "Ready for a new note?"
+    }
+
+    var mascotEmptyStateMessage: String {
+        mascotCopy?.emptyStateMessage ?? "This folder is ready for your first idea."
+    }
+
+    var mascotExportHint: String {
+        mascotCopy?.exportHint ?? "Your original note will stay unchanged."
+    }
+
+    var folderReadyTitle: String {
+        mascotCopy?.folderReadyTitle ?? "Folder created"
+    }
+
+    var mascotAvatarImageName: String? {
         switch self {
+        case .standard:
+            nil
+        case .bean:
+            "BeanTabAvatar"
+        case .blueberry:
+            "BlueberryBadge"
+        }
+    }
+
+    var mascotWelcomeImageName: String? {
+        switch self {
+        case .standard:
+            nil
+        case .bean:
+            "BeanWelcomeImage"
+        case .blueberry:
+            "BlueberryVisitImage"
+        }
+    }
+
+    var mascotWatermarkImageName: String? {
+        mascotWelcomeImageName
+    }
+
+    var brandImageName: String? {
+        switch self {
+        case .standard:
+            nil
+        case .bean:
+            "BeanBadge"
+        case .blueberry:
+            "BlueberryBadge"
+        }
+    }
+
+    nonisolated var paperTextureImageName: String? {
+        switch self {
+        case .standard:
+            nil
         case .bean:
             "BeanPaperTexture"
-        case .standard, .blueberry:
+        case .blueberry:
+            "BlueberryPaperTexture"
+        }
+    }
+
+    var mascotCopy: MascotCopy? {
+        switch self {
+        case .standard:
             nil
+        case .bean:
+            MascotCopy(
+                name: "Bean",
+                themeSectionTitle: "Bean Theme",
+                visitsToggleTitle: "Occasional Bean Visits",
+                hintMessage: "Bean is on hand to keep your library and writing space cozy.",
+                interruptionsToggleTitle: "Allow Bean Interrupts",
+                interruptionsDescription: "When enabled, Bean can pop up in the library and while you are writing. When off, Bean only checks in after you return from a 3-minute break or after a longer focus session.",
+                inviteTitle: "Invite Bean Now",
+                paperArtworkToggleTitle: "Show Bean on Note Backgrounds",
+                paperArtworkDescription: "Adds a subtle, randomly selected Bean paper design without changing your note template or color.",
+                cornerTitle: "Bean's corner",
+                cornerSubtitle: "Ready for your next idea",
+                emptyStateTitle: "Ready for a new note?",
+                emptyStateMessage: "Bean will keep this folder cozy until your first idea arrives.",
+                exportHint: "Bean will help package this note without changing your original.",
+                folderReadyTitle: "Folder ready"
+            )
+        case .blueberry:
+            MascotCopy(
+                name: "Blueberry",
+                themeSectionTitle: "Blueberry Theme",
+                visitsToggleTitle: "Occasional Blueberry Visits",
+                hintMessage: "Blueberry is ready to brighten your library and writing space.",
+                interruptionsToggleTitle: "Allow Blueberry Interrupts",
+                interruptionsDescription: "When enabled, Blueberry can pop up in the library and while you are writing. When off, Blueberry only checks in after you return from a 3-minute break or after a longer focus session.",
+                inviteTitle: "Invite Blueberry Now",
+                paperArtworkToggleTitle: "Show Blueberries on Note Backgrounds",
+                paperArtworkDescription: "Adds a subtle blueberry paper texture without changing your note template or color.",
+                cornerTitle: "Blueberry patch",
+                cornerSubtitle: "Fresh ideas are ready to grow",
+                emptyStateTitle: "Ready for a fresh note?",
+                emptyStateMessage: "A cheerful blueberry will keep this folder bright until your first idea arrives.",
+                exportHint: "Blueberry will help package this note without changing your original.",
+                folderReadyTitle: "A fresh folder ripened"
+            )
         }
     }
 
@@ -327,6 +469,26 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
                 traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
             }
         )
+    }
+}
+
+extension BeanNotesTheme {
+    struct MascotCopy: Equatable, Sendable {
+        let name: String
+        let themeSectionTitle: String
+        let visitsToggleTitle: String
+        let hintMessage: String
+        let interruptionsToggleTitle: String
+        let interruptionsDescription: String
+        let inviteTitle: String
+        let paperArtworkToggleTitle: String
+        let paperArtworkDescription: String
+        let cornerTitle: String
+        let cornerSubtitle: String
+        let emptyStateTitle: String
+        let emptyStateMessage: String
+        let exportHint: String
+        let folderReadyTitle: String
     }
 }
 

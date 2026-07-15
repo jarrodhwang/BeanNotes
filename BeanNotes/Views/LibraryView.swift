@@ -30,6 +30,9 @@ struct LibraryView: View {
     @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
     @AppStorage(BeanVisitPolicy.allowsInterruptionsKey) private var beanVisitsMayInterrupt = false
     @AppStorage(BeanVisitPolicy.focusReminderIntervalKey) private var beanFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
+    @AppStorage(BeanVisitPolicy.blueberryEnabledKey) private var blueberryVisitsEnabled = true
+    @AppStorage(BeanVisitPolicy.blueberryAllowsInterruptionsKey) private var blueberryVisitsMayInterrupt = false
+    @AppStorage(BeanVisitPolicy.blueberryFocusReminderIntervalKey) private var blueberryFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
 
     @State private var selectedFolderID: UUID?
     @State private var isTrashSelected = false
@@ -137,6 +140,39 @@ struct LibraryView: View {
         AppTheme(rawValue: appThemeRaw) ?? .system
     }
 
+    private var visitsEnabled: Bool {
+        switch beanNotesTheme {
+        case .standard:
+            false
+        case .bean:
+            beanVisitsEnabled
+        case .blueberry:
+            blueberryVisitsEnabled
+        }
+    }
+
+    private var visitsMayInterrupt: Bool {
+        switch beanNotesTheme {
+        case .standard:
+            false
+        case .bean:
+            beanVisitsMayInterrupt
+        case .blueberry:
+            blueberryVisitsMayInterrupt
+        }
+    }
+
+    private var focusReminderInterval: TimeInterval {
+        switch beanNotesTheme {
+        case .standard:
+            BeanVisitPolicy.defaultFocusReminderInterval
+        case .bean:
+            beanFocusReminderInterval
+        case .blueberry:
+            blueberryFocusReminderInterval
+        }
+    }
+
     private var isShowingNoteEditor: Binding<Bool> {
         Binding(
             get: { selectedOpenNoteID != nil },
@@ -162,7 +198,7 @@ struct LibraryView: View {
         let processInfo = ProcessInfo.processInfo
         return BeanVisitPolicy.canSchedule(
             theme: beanNotesTheme,
-            isEnabled: beanVisitsEnabled,
+            isEnabled: visitsEnabled,
             sceneIsActive: scenePhase == .active,
             isSafeSurface: isSafeForAutomaticBeanVisit,
             isLowPowerModeEnabled: processInfo.isLowPowerModeEnabled,
@@ -172,11 +208,11 @@ struct LibraryView: View {
     }
 
     private var interruptibleVisitTaskID: String {
-        "\(canScheduleBeanVisit)-\(beanVisitsMayInterrupt)-\(visitScheduleToken)"
+        "\(beanNotesTheme.rawValue)-\(canScheduleBeanVisit)-\(visitsMayInterrupt)-\(visitScheduleToken)"
     }
 
     private var focusVisitTaskID: String {
-        "\(canScheduleBeanVisit)-\(beanVisitsMayInterrupt)-\(beanFocusReminderInterval)-\(focusSessionStartedAt.timeIntervalSinceReferenceDate)"
+        "\(beanNotesTheme.rawValue)-\(canScheduleBeanVisit)-\(visitsMayInterrupt)-\(focusReminderInterval)-\(focusSessionStartedAt.timeIntervalSinceReferenceDate)"
     }
 
     var body: some View {
@@ -271,12 +307,12 @@ struct LibraryView: View {
                 absorbSharedInbox()
             }
         }
-        .onChange(of: beanNotesTheme) { _, theme in
-            if theme != .bean {
-                hideBeanVisit(animated: false)
-            }
+        .onChange(of: beanNotesTheme) { _, _ in
+            hideBeanVisit(animated: false)
+            focusSessionStartedAt = Date()
+            visitScheduleToken += 1
         }
-        .onChange(of: beanVisitsEnabled) { _, isEnabled in
+        .onChange(of: visitsEnabled) { _, isEnabled in
             if !isEnabled {
                 hideBeanVisit(animated: false)
             }
@@ -476,19 +512,18 @@ struct LibraryView: View {
 
     @MainActor
     private func runInterruptibleBeanVisitIfEligible() async {
-        guard beanVisitsMayInterrupt, canScheduleBeanVisit else { return }
+        guard visitsMayInterrupt, canScheduleBeanVisit else { return }
 
         let now = Date()
-        let cooldownRemaining = BeanVisitPolicy.cooldownRemaining(
-            now: now,
-            lastShownDate: BeanVisitPolicy.lastShownDate()
-        )
+        let scheduledTheme = beanNotesTheme
+        let cooldownRemaining = BeanVisitPolicy.cooldownRemaining(for: scheduledTheme, now: now)
         let delay = max(BeanVisitPolicy.interruptibleInitialDelay, cooldownRemaining)
 
         do {
             try await Task.sleep(nanoseconds: BeanVisitPolicy.nanoseconds(for: delay))
             guard !Task.isCancelled,
-                  beanVisitsMayInterrupt,
+                  beanNotesTheme == scheduledTheme,
+                  visitsMayInterrupt,
                   canScheduleBeanVisit else { return }
 
             showBeanVisit(reason: .friendly)
@@ -499,9 +534,10 @@ struct LibraryView: View {
 
     @MainActor
     private func runFocusBeanVisitIfEligible() async {
-        guard !beanVisitsMayInterrupt, canScheduleBeanVisit else { return }
+        guard !visitsMayInterrupt, canScheduleBeanVisit else { return }
 
-        let interval = BeanVisitPolicy.normalizedFocusReminderInterval(beanFocusReminderInterval)
+        let scheduledTheme = beanNotesTheme
+        let interval = BeanVisitPolicy.normalizedFocusReminderInterval(focusReminderInterval)
         let focusStartedAt = focusSessionStartedAt
         let elapsed = Date().timeIntervalSince(focusStartedAt)
         let delay = max(0, interval - elapsed)
@@ -509,7 +545,8 @@ struct LibraryView: View {
         do {
             try await Task.sleep(nanoseconds: BeanVisitPolicy.nanoseconds(for: delay))
             guard !Task.isCancelled,
-                  !beanVisitsMayInterrupt,
+                  beanNotesTheme == scheduledTheme,
+                  !visitsMayInterrupt,
                   canScheduleBeanVisit,
                   focusSessionStartedAt == focusStartedAt else { return }
 
@@ -517,7 +554,7 @@ struct LibraryView: View {
             guard BeanVisitPolicy.shouldVisitAfterFocusing(
                 focusDuration: focusDuration,
                 reminderInterval: interval,
-                allowsInterruptions: beanVisitsMayInterrupt
+                allowsInterruptions: visitsMayInterrupt
             ) else { return }
 
             showBeanVisit(reason: .focusBreak)
@@ -538,7 +575,7 @@ struct LibraryView: View {
 
             guard BeanVisitPolicy.shouldVisitAfterReturning(
                 awayDuration: awayDuration,
-                allowsInterruptions: beanVisitsMayInterrupt
+                allowsInterruptions: visitsMayInterrupt
             ), canScheduleBeanVisit else { return }
 
             showBeanVisit(reason: .returnFromBreak)
@@ -553,14 +590,11 @@ struct LibraryView: View {
     private func showBeanVisit(reason: BeanVisitPolicy.VisitReason) {
         guard beanVisit == nil,
               canScheduleBeanVisit,
-              BeanVisitPolicy.cooldownHasElapsed(
-                now: Date(),
-                lastShownDate: BeanVisitPolicy.lastShownDate()
-              ) else { return }
+              BeanVisitPolicy.cooldownHasElapsed(for: beanNotesTheme, now: Date()) else { return }
 
         beanVisitDismissTask?.cancel()
-        let visit = BeanVisit.make(reason: reason)
-        BeanVisitPolicy.recordVisit()
+        let visit = BeanVisit.make(reason: reason, theme: beanNotesTheme)
+        BeanVisitPolicy.recordVisit(for: beanNotesTheme)
 
         withAnimation(beanVisitAnimation) {
             beanVisit = visit
@@ -591,7 +625,7 @@ struct LibraryView: View {
             beanVisit = nil
         }
 
-        if beanVisitsMayInterrupt {
+        if visitsMayInterrupt {
             visitScheduleToken += 1
         } else {
             focusSessionStartedAt = Date()
@@ -1157,8 +1191,8 @@ private struct NoteEditorTabBar: View {
                     Image(systemName: "chevron.left")
                         .font(.headline.weight(.semibold))
 
-                    if beanNotesTheme == .bean {
-                        BeanAvatarView(size: 30)
+                    if beanNotesTheme.supportsFriendlyVisits {
+                        ThemeAvatarView(theme: beanNotesTheme, size: 30)
                     }
                 }
                 .frame(minWidth: 44, minHeight: 44)
@@ -1269,7 +1303,7 @@ private struct FolderCreatedToastView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(beanNotesTheme == .bean ? "Folder ready" : "Folder created")
+                Text(beanNotesTheme.folderReadyTitle)
                     .font(.subheadline.weight(.semibold))
 
                 Text(toast.message)
@@ -1450,8 +1484,8 @@ private struct NotesCardGridView: View {
                 .accessibilityLabel("Finish selecting notes")
             } else {
                 HStack(spacing: 8) {
-                    if beanNotesTheme == .bean {
-                        BeanAvatarView(size: 26)
+                    if beanNotesTheme.supportsFriendlyVisits {
+                        ThemeAvatarView(theme: beanNotesTheme, size: 26)
                     } else {
                         Image(systemName: beanNotesTheme.symbolName)
                             .font(.subheadline.weight(.semibold))
@@ -1525,8 +1559,8 @@ private struct NotesCardGridView: View {
 
                     Button(action: createNote) {
                         HStack(spacing: 7) {
-                            if beanNotesTheme == .bean {
-                                BeanBadgeView(size: 24)
+                            if beanNotesTheme.supportsFriendlyVisits {
+                                ThemeBadgeView(theme: beanNotesTheme, size: 24)
                             } else {
                                 Image(systemName: "plus")
                             }
@@ -1643,16 +1677,45 @@ private struct NotesCardGridView: View {
                     .frame(height: 152)
                     .accessibilityHidden(true)
 
-                Text("Ready for a new note?")
+                Text(beanNotesTheme.mascotEmptyStateTitle)
                     .font(.title3.weight(.semibold))
 
-                Text("Bean will keep this folder cozy until your first idea arrives.")
+                Text(beanNotesTheme.mascotEmptyStateMessage)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
                 Button(action: createNote) {
                     Label("Create Note", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, minHeight: 390)
+            .padding(.horizontal, 24)
+        } else if beanNotesTheme == .blueberry {
+            VStack(spacing: 14) {
+                Image("BlueberryVisitImage")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 158)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .accessibilityHidden(true)
+
+                Text(beanNotesTheme.mascotEmptyStateTitle)
+                    .font(.title3.weight(.semibold))
+
+                Text(beanNotesTheme.mascotEmptyStateMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Button(action: createNote) {
+                    HStack(spacing: 8) {
+                        ThemeBadgeView(theme: beanNotesTheme, size: 24)
+                        Text("Create Note")
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -1714,8 +1777,8 @@ struct BeanNotesProgressOverlay: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 14) {
-                    if beanNotesTheme == .bean {
-                        BeanBadgeView(size: 34)
+                    if beanNotesTheme.supportsFriendlyVisits {
+                        ThemeBadgeView(theme: beanNotesTheme, size: 34)
                     }
 
                     ProgressView()
@@ -1809,6 +1872,7 @@ private struct NoteCardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.beanNotesTheme) private var beanNotesTheme
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
+    @AppStorage(NoteBackground.showsBlueberryArtworkKey) private var showsBlueberryArtwork = true
 
     var note: NoteDocument
     var isTrash: Bool
@@ -1828,6 +1892,17 @@ private struct NoteCardView: View {
 
     private let storage = LocalStorageService()
     private let thumbnailService = ThumbnailService()
+
+    private var showsThemeArtwork: Bool {
+        switch beanNotesTheme {
+        case .standard:
+            false
+        case .bean:
+            showsBeanArtwork
+        case .blueberry:
+            showsBlueberryArtwork
+        }
+    }
 
     var body: some View {
         Button(action: openNote) {
@@ -1915,7 +1990,7 @@ private struct NoteCardView: View {
             thumbnailImage = nil
             loadThumbnail(forceRefresh: true)
         }
-        .onChange(of: showsBeanArtwork) { _, _ in
+        .onChange(of: showsThemeArtwork) { _, _ in
             thumbnailImage = nil
             loadThumbnail(forceRefresh: true)
         }
@@ -2040,7 +2115,7 @@ private struct NoteCardView: View {
                 let url = try await thumbnailService.generateThumbnailInBackground(
                     for: page,
                     theme: requestedTheme,
-                    showsBeanArtwork: showsBeanArtwork,
+                    showsBeanArtwork: showsThemeArtwork,
                     maxDimension: 360
                 )
                 try Task.checkCancellation()
@@ -2081,7 +2156,7 @@ private struct NoteCardView: View {
                   relativePath,
                   pageID: page.id,
                   theme: theme,
-                  showsBeanArtwork: showsBeanArtwork
+                  showsBeanArtwork: showsThemeArtwork
               ) else {
             return nil
         }

@@ -131,6 +131,7 @@ struct NoteBackground: Codable, Equatable, Sendable {
     nonisolated static let defaultStyleRawKey = "defaultNoteBackgroundStyle"
     nonisolated static let defaultColorHexKey = "defaultNoteBackgroundColorHex"
     nonisolated static let showsBeanArtworkKey = "showsBeanArtworkOnNoteBackgrounds"
+    nonisolated static let showsBlueberryArtworkKey = "showsBlueberryArtworkOnNoteBackgrounds"
     nonisolated static let legacyThemePaperMigrationKey = "migratedThemeControlledNotePaperDefaults"
     nonisolated static let defaultColorHex = "#FFFFFF"
     nonisolated static let chalkboardColorHex = "#243A32"
@@ -170,6 +171,25 @@ struct NoteBackground: Codable, Equatable, Sendable {
 
     nonisolated static func showsBeanArtwork(in defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: showsBeanArtworkKey)
+    }
+
+    nonisolated static func showsBlueberryArtwork(in defaults: UserDefaults = .standard) -> Bool {
+        guard defaults.object(forKey: showsBlueberryArtworkKey) != nil else { return true }
+        return defaults.bool(forKey: showsBlueberryArtworkKey)
+    }
+
+    nonisolated static func showsArtwork(
+        for theme: BeanNotesTheme,
+        in defaults: UserDefaults = .standard
+    ) -> Bool {
+        switch theme {
+        case .standard:
+            false
+        case .bean:
+            showsBeanArtwork(in: defaults)
+        case .blueberry:
+            showsBlueberryArtwork(in: defaults)
+        }
     }
 
     nonisolated static func migrateLegacyThemeControlledDefaultsIfNeeded(

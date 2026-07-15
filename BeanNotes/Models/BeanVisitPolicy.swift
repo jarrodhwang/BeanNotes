@@ -10,6 +10,14 @@ struct BeanVisitPolicy {
     static let allowsInterruptionsKey = "beanVisitsMayInterrupt"
     static let focusReminderIntervalKey = "beanFocusReminderInterval"
     static let lastShownDateKey = "lastBeanVisitDate"
+    static let blueberryVisitsEnabledKey = "blueberryVisitsEnabled"
+    static let blueberryVisitsMayInterruptKey = "blueberryVisitsMayInterrupt"
+    static let blueberryFocusReminderIntervalKey = "blueberryFocusReminderInterval"
+    static let lastBlueberryVisitDateKey = "lastBlueberryVisitDate"
+
+    static let blueberryEnabledKey = blueberryVisitsEnabledKey
+    static let blueberryAllowsInterruptionsKey = blueberryVisitsMayInterruptKey
+    static let blueberryLastShownDateKey = lastBlueberryVisitDateKey
 
     static let interruptibleInitialDelay: TimeInterval = 2 * 60
     static let displayDurationNanoseconds: UInt64 = 5_000_000_000
@@ -23,6 +31,34 @@ struct BeanVisitPolicy {
         FocusReminderOption(label: "90 minutes", interval: 90 * 60),
         FocusReminderOption(label: "2 hours", interval: 2 * 60 * 60)
     ]
+
+    struct StorageKeys: Equatable, Sendable {
+        let enabled: String
+        let allowsInterruptions: String
+        let focusReminderInterval: String
+        let lastShownDate: String
+    }
+
+    static func storageKeys(for theme: BeanNotesTheme) -> StorageKeys? {
+        switch theme {
+        case .standard:
+            nil
+        case .bean:
+            StorageKeys(
+                enabled: enabledKey,
+                allowsInterruptions: allowsInterruptionsKey,
+                focusReminderInterval: focusReminderIntervalKey,
+                lastShownDate: lastShownDateKey
+            )
+        case .blueberry:
+            StorageKeys(
+                enabled: blueberryEnabledKey,
+                allowsInterruptions: blueberryAllowsInterruptionsKey,
+                focusReminderInterval: blueberryFocusReminderIntervalKey,
+                lastShownDate: blueberryLastShownDateKey
+            )
+        }
+    }
 
     enum VisitReason: String, Equatable, Sendable {
         case friendly
@@ -103,10 +139,102 @@ struct BeanVisitPolicy {
             }
         }
 
+        var blueberrySayings: [Saying] {
+            switch self {
+            case .friendly:
+                [
+                    Saying(
+                        title: "A blueberry hello",
+                        message: "A tiny blueberry rolled in to say your next idea is worth noting."
+                    ),
+                    Saying(
+                        title: "Snack-sized cheer",
+                        message: "Fancy a few blueberries? They bring fiber along with their bright flavor."
+                    ),
+                    Saying(
+                        title: "Vitamin C note",
+                        message: "Blueberries contain vitamin C and make a colorful writing-time snack."
+                    ),
+                    Saying(
+                        title: "Deep-blue detail",
+                        message: "Anthocyanins are pigments that help give blueberries their rich blue color."
+                    ),
+                    Saying(
+                        title: "Berry good company",
+                        message: "Keep writing, and save a small handful of blueberries for your next pause."
+                    )
+                ]
+            case .returnFromBreak:
+                [
+                    Saying(
+                        title: "Welcome back",
+                        message: "Your page waited right here. Would a few blueberries make a refreshing return snack?"
+                    ),
+                    Saying(
+                        title: "A fresh blue start",
+                        message: "Blueberries contain fiber, so a small bowl can add a little fiber to snack time."
+                    ),
+                    Saying(
+                        title: "Colorful return",
+                        message: "Vitamin C is one of the nutrients found in blueberries. Ready for the next line?"
+                    ),
+                    Saying(
+                        title: "Back in blue",
+                        message: "Anthocyanins help make blueberries blue. Your notes are ready for more color too."
+                    ),
+                    Saying(
+                        title: "Berry nice to see you",
+                        message: "Settle back in, and enjoy a few blueberries if you are hungry."
+                    )
+                ]
+            case .focusBreak:
+                [
+                    Saying(
+                        title: "Blueberry break",
+                        message: "Rest your eyes and stretch. If you are hungry, try a small blueberry snack."
+                    ),
+                    Saying(
+                        title: "A little fiber pause",
+                        message: "Blueberries contain fiber. A few can be a simple companion for this break."
+                    ),
+                    Saying(
+                        title: "Vitamin C pause",
+                        message: "Blueberries contain vitamin C. Take a breath, sip some water, and reset."
+                    ),
+                    Saying(
+                        title: "Anthocyanin moment",
+                        message: "Those deep blue pigments are called anthocyanins. Enjoy the color while you pause."
+                    ),
+                    Saying(
+                        title: "Fresh focus soon",
+                        message: "Have a few blueberries, loosen your shoulders, and return when you feel ready."
+                    )
+                ]
+            }
+        }
+
+        func sayings(for theme: BeanNotesTheme) -> [Saying] {
+            switch theme {
+            case .standard:
+                []
+            case .bean:
+                sayings
+            case .blueberry:
+                blueberrySayings
+            }
+        }
+
         func randomSaying() -> Saying {
             sayings.randomElement() ?? Saying(
                 title: "Bean stopped by",
                 message: "Bean brought you one supportive tail wag."
+            )
+        }
+
+        func randomSaying(for theme: BeanNotesTheme) -> Saying {
+            sayings(for: theme).randomElement() ?? Saying(
+                title: "A writing break",
+                message: "Your notes are ready whenever you are."
             )
         }
     }
@@ -132,7 +260,7 @@ struct BeanVisitPolicy {
         thermalState: ProcessInfo.ThermalState,
         launchArguments: [String]
     ) -> Bool {
-        theme == .bean
+        theme.supportsFriendlyVisits
             && isEnabled
             && sceneIsActive
             && isSafeSurface
@@ -183,7 +311,40 @@ struct BeanVisitPolicy {
         defaults.object(forKey: lastShownDateKey) as? Date
     }
 
+    static func lastShownDate(
+        for theme: BeanNotesTheme,
+        in defaults: UserDefaults = .standard
+    ) -> Date? {
+        guard let key = storageKeys(for: theme)?.lastShownDate else { return nil }
+        return defaults.object(forKey: key) as? Date
+    }
+
     static func recordVisit(at date: Date = Date(), in defaults: UserDefaults = .standard) {
         defaults.set(date, forKey: lastShownDateKey)
+    }
+
+    static func recordVisit(
+        for theme: BeanNotesTheme,
+        at date: Date = Date(),
+        in defaults: UserDefaults = .standard
+    ) {
+        guard let key = storageKeys(for: theme)?.lastShownDate else { return }
+        defaults.set(date, forKey: key)
+    }
+
+    static func cooldownHasElapsed(
+        for theme: BeanNotesTheme,
+        now: Date,
+        in defaults: UserDefaults = .standard
+    ) -> Bool {
+        cooldownHasElapsed(now: now, lastShownDate: lastShownDate(for: theme, in: defaults))
+    }
+
+    static func cooldownRemaining(
+        for theme: BeanNotesTheme,
+        now: Date,
+        in defaults: UserDefaults = .standard
+    ) -> TimeInterval {
+        cooldownRemaining(now: now, lastShownDate: lastShownDate(for: theme, in: defaults))
     }
 }

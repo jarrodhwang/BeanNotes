@@ -19,6 +19,9 @@ struct SettingsView: View {
     @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
     @AppStorage(BeanVisitPolicy.allowsInterruptionsKey) private var beanVisitsMayInterrupt = false
     @AppStorage(BeanVisitPolicy.focusReminderIntervalKey) private var beanFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
+    @AppStorage(BeanVisitPolicy.blueberryEnabledKey) private var blueberryVisitsEnabled = true
+    @AppStorage(BeanVisitPolicy.blueberryAllowsInterruptionsKey) private var blueberryVisitsMayInterrupt = false
+    @AppStorage(BeanVisitPolicy.blueberryFocusReminderIntervalKey) private var blueberryFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
@@ -30,6 +33,7 @@ struct SettingsView: View {
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
+    @AppStorage(NoteBackground.showsBlueberryArtworkKey) private var showsBlueberryArtwork = true
 
     @State private var storageUsage: LocalStorageUsageSnapshot?
     @State private var isLoadingStorageUsage = false
@@ -98,6 +102,13 @@ struct SettingsView: View {
                         Text("Adds a subtle, randomly selected Bean paper design without changing your note template or color.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    } else if selectedMoodTheme == .blueberry {
+                        Toggle(selectedMoodTheme.paperArtworkToggleTitle, isOn: $showsBlueberryArtwork)
+                            .accessibilityIdentifier("settings.blueberryArtworkToggle")
+
+                        Text(selectedMoodTheme.paperArtworkDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -121,31 +132,19 @@ struct SettingsView: View {
                 }
 
                 if selectedMoodTheme == .bean {
-                    Section("Bean Theme") {
-                        Toggle("Occasional Bean Visits", isOn: $beanVisitsEnabled)
-
-                        BeanThemeHintView(message: "Bean is on hand to keep your library and writing space cozy.")
-
-                        Toggle("Allow Bean Interrupts", isOn: $beanVisitsMayInterrupt)
-                            .disabled(!beanVisitsEnabled)
-                            .accessibilityIdentifier("settings.beanInterruptToggle")
-
-                        Text("When enabled, Bean can pop up in the library and while you are writing. When off, Bean only checks in after you return from a 3-minute break or after a longer focus session.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Picker("Focus check-in", selection: $beanFocusReminderInterval) {
-                            ForEach(BeanVisitPolicy.focusReminderOptions) { option in
-                                Text(option.label).tag(option.interval)
-                            }
-                        }
-                        .disabled(!beanVisitsEnabled || beanVisitsMayInterrupt)
-
-                        Button(action: previewBeanVisit) {
-                            Label("Invite Bean Now", systemImage: "pawprint.fill")
-                        }
-                        .disabled(beanVisitPreview != nil)
-                    }
+                    mascotVisitSettings(
+                        theme: .bean,
+                        visitsEnabled: $beanVisitsEnabled,
+                        visitsMayInterrupt: $beanVisitsMayInterrupt,
+                        focusReminderInterval: $beanFocusReminderInterval
+                    )
+                } else if selectedMoodTheme == .blueberry {
+                    mascotVisitSettings(
+                        theme: .blueberry,
+                        visitsEnabled: $blueberryVisitsEnabled,
+                        visitsMayInterrupt: $blueberryVisitsMayInterrupt,
+                        focusReminderInterval: $blueberryFocusReminderInterval
+                    )
                 }
 
                 Section("Default Note Background") {
@@ -326,11 +325,8 @@ struct SettingsView: View {
                 await refreshStorageUsage()
                 await refreshNotificationAuthorizationStatus()
             }
-            .onChange(of: beanNotesThemeRaw) { _, rawValue in
-                let theme = BeanNotesTheme(rawValue: rawValue) ?? .defaultTheme
-                if theme != .bean {
-                    hideBeanVisitPreview(animated: false)
-                }
+            .onChange(of: beanNotesThemeRaw) { _, _ in
+                hideBeanVisitPreview(animated: false)
             }
             .onChange(of: folderNotificationsEnabled) { _, isEnabled in
                 guard isEnabled else { return }
@@ -386,6 +382,58 @@ struct SettingsView: View {
         .presentationBackground(selectedMoodTheme.appBackground)
     }
 
+    @ViewBuilder
+    private func mascotVisitSettings(
+        theme: BeanNotesTheme,
+        visitsEnabled: Binding<Bool>,
+        visitsMayInterrupt: Binding<Bool>,
+        focusReminderInterval: Binding<TimeInterval>
+    ) -> some View {
+        Section(theme.visitThemeSectionTitle) {
+            Toggle(theme.visitToggleTitle, isOn: visitsEnabled)
+
+            ThemeHintView(theme: theme, message: theme.visitHintMessage)
+
+            Toggle(theme.visitInterruptionsToggleTitle, isOn: visitsMayInterrupt)
+                .disabled(!visitsEnabled.wrappedValue)
+                .accessibilityIdentifier(
+                    theme == .bean
+                        ? "settings.beanInterruptToggle"
+                        : "settings.blueberryInterruptToggle"
+                )
+
+            Text(theme.visitInterruptionsDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Picker("Focus check-in", selection: focusReminderInterval) {
+                ForEach(BeanVisitPolicy.focusReminderOptions) { option in
+                    Text(option.label).tag(option.interval)
+                }
+            }
+            .disabled(!visitsEnabled.wrappedValue || visitsMayInterrupt.wrappedValue)
+
+            Button {
+                previewBeanVisit(theme: theme)
+            } label: {
+                if theme == .bean {
+                    Label(theme.inviteVisitTitle, systemImage: "pawprint.fill")
+                } else {
+                    HStack(spacing: 8) {
+                        ThemeBadgeView(theme: theme, size: 24)
+                        Text(theme.inviteVisitTitle)
+                    }
+                }
+            }
+            .disabled(beanVisitPreview != nil)
+            .accessibilityIdentifier(
+                theme == .bean
+                    ? "settings.inviteBeanButton"
+                    : "settings.inviteBlueberryButton"
+            )
+        }
+    }
+
     private var customPaperSizeFields: some View {
         Group {
             TextField("Width (pt)", value: $customPaperWidth, format: .number.precision(.fractionLength(0...2)))
@@ -411,11 +459,11 @@ struct SettingsView: View {
     }
 
     @MainActor
-    private func previewBeanVisit() {
+    private func previewBeanVisit(theme: BeanNotesTheme) {
         beanVisitPreviewTask?.cancel()
 
         withAnimation(beanVisitPreviewAnimation) {
-            beanVisitPreview = BeanVisit.make(reason: .friendly)
+            beanVisitPreview = BeanVisit.make(reason: .friendly, theme: theme)
         }
 
         beanVisitPreviewTask = Task { @MainActor in

@@ -90,7 +90,7 @@ private struct WelcomeToBeanNotesView: View {
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text(mode.subtitle)
+                        Text(theme == .blueberry ? mode.blueberrySubtitle : mode.subtitle)
                             .font(.body)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -127,10 +127,15 @@ private struct WelcomeToBeanNotesView: View {
     }
 
     private func welcomeImage(size: CGFloat) -> some View {
-        ZStack {
+        let imageName = theme.mascotWelcomeImageName ?? "BeanWelcomeImage"
+        let accessibilityLabel = theme == .blueberry
+            ? "The Blueberry theme note-taking friends"
+            : "Bean, the BeanNotes mascot"
+
+        return ZStack {
             BeanNotesPaperBackground(theme: theme, baseColor: theme.previewBackground)
 
-            Image("BeanWelcomeImage")
+            Image(imageName)
                 .resizable()
                 .scaledToFit()
                 .padding(8)
@@ -143,12 +148,12 @@ private struct WelcomeToBeanNotesView: View {
                     .stroke(.white.opacity(0.72), lineWidth: 2)
             }
             .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
-            .accessibilityLabel("Bean, the BeanNotes mascot")
+            .accessibilityLabel(accessibilityLabel)
     }
 
     private var featureHighlights: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(mode.highlights, id: \.title) { highlight in
+            ForEach(theme == .blueberry ? mode.blueberryHighlights : mode.highlights, id: \.title) { highlight in
                 Label {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(highlight.title)
@@ -174,13 +179,19 @@ private struct WelcomeToBeanNotesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
                 featureBadge("Private", systemImage: "lock.shield")
-                featureBadge("Bean Theme", systemImage: "pawprint.fill")
+                featureBadge(
+                    theme == .blueberry ? "Blueberry Theme" : "Bean Theme",
+                    systemImage: theme == .blueberry ? "leaf.fill" : "pawprint.fill"
+                )
                 featureBadge("Paper", systemImage: "doc.text")
             }
 
             VStack(spacing: 10) {
                 featureBadge("Private", systemImage: "lock.shield")
-                featureBadge("Bean Theme", systemImage: "pawprint.fill")
+                featureBadge(
+                    theme == .blueberry ? "Blueberry Theme" : "Bean Theme",
+                    systemImage: theme == .blueberry ? "leaf.fill" : "pawprint.fill"
+                )
                 featureBadge("Paper", systemImage: "doc.text")
             }
         }
@@ -228,6 +239,15 @@ private extension WelcomeToBeanNotesView.Mode {
         }
     }
 
+    var blueberrySubtitle: String {
+        switch self {
+        case .firstRun:
+            "A private, blueberry-paper space for handwritten ideas, PDFs, images, and study notes."
+        case .featureUpdate:
+            "The Blueberry theme now brings cute berry artwork, cool paper, berry buttons, and optional snack-break check-ins."
+        }
+    }
+
     var buttonTitle: String {
         switch self {
         case .firstRun:
@@ -257,6 +277,31 @@ private extension WelcomeToBeanNotesView.Mode {
             Highlight(
                 title: "Optional folder welcomes",
                 detail: "Turn on folder notifications in Settings when you want Bean to celebrate a new project.",
+                systemImage: "bell.badge"
+            )
+        ]
+    }
+
+    var blueberryHighlights: [Highlight] {
+        [
+            Highlight(
+                title: "A fresh blueberry look",
+                detail: "Friendly blueberry artwork now appears across the app icon, theme badges, buttons, and quiet empty states.",
+                systemImage: "leaf.fill"
+            ),
+            Highlight(
+                title: "Berry break check-ins",
+                detail: "Optional blueberry visits can suggest a stretch, a pause, or a small blueberry snack while sharing simple nutrition notes.",
+                systemImage: "timer"
+            ),
+            Highlight(
+                title: "Cool paper surfaces",
+                detail: "Low-contrast blueberry paper texture adds character while keeping notes and controls easy to read.",
+                systemImage: "doc.text"
+            ),
+            Highlight(
+                title: "Blueberry folder welcomes",
+                detail: "Turn on folder notifications in Settings when you want the blueberry crew to celebrate a new project.",
                 systemImage: "bell.badge"
             )
         ]

@@ -34,7 +34,8 @@ enum NoteBackgroundRenderer {
         context: inout GraphicsContext
     ) {
         context.fill(Path(rect), with: .color(Color(hex: background.renderedColorHex)))
-        drawBeanArtworkIfNeeded(
+        drawThemeArtworkIfNeeded(
+            background: background,
             theme: theme,
             showsBeanArtwork: showsBeanArtwork,
             pageID: pageID,
@@ -78,7 +79,8 @@ enum NoteBackgroundRenderer {
 
         UIColor(hex: background.renderedColorHex).setFill()
         context.fill(rect)
-        drawBeanArtworkIfNeeded(
+        drawThemeArtworkIfNeeded(
+            background: background,
             theme: theme,
             showsBeanArtwork: showsBeanArtwork,
             pageID: pageID,
@@ -153,6 +155,23 @@ enum NoteBackgroundRenderer {
         case .border:
             return borderBeanRects(for: artwork, in: rect)
         }
+    }
+
+    nonisolated static func blueberryPaperTextureRects(in rect: CGRect) -> [CGRect] {
+        guard rect.width > 0, rect.height > 0 else { return [] }
+
+        let tileSide = max(180, min(640, rect.width * 0.52))
+        var results: [CGRect] = []
+        var y = rect.minY
+        while y < rect.maxY {
+            var x = rect.minX
+            while x < rect.maxX {
+                results.append(CGRect(x: x, y: y, width: tileSide, height: tileSide))
+                x += tileSide
+            }
+            y += tileSide
+        }
+        return results
     }
 }
 
@@ -229,47 +248,78 @@ private extension NoteBackgroundRenderer {
     }
 
     @MainActor
-    static func drawBeanArtworkIfNeeded(
+    static func drawThemeArtworkIfNeeded(
+        background: NoteBackground,
         theme: BeanNotesTheme,
         showsBeanArtwork: Bool,
         pageID: UUID?,
         in rect: CGRect,
         context: inout GraphicsContext
     ) {
-        guard theme == .bean, showsBeanArtwork else { return }
+        guard showsBeanArtwork else { return }
 
-        let artwork = beanPaperArtwork(for: pageID)
-        var artworkContext = context
-        artworkContext.opacity = artwork.opacity
-        let image = artworkContext.resolve(Image(artwork.imageName))
-        for artworkRect in beanPaperArtworkRects(for: artwork, in: rect) {
-            var itemContext = artworkContext
-            if artwork.clipsToEllipse {
-                itemContext.clip(to: Path(ellipseIn: artworkRect))
+        switch theme {
+        case .standard:
+            return
+        case .bean:
+            let artwork = beanPaperArtwork(for: pageID)
+            var artworkContext = context
+            artworkContext.opacity = artwork.opacity
+            let image = artworkContext.resolve(Image(artwork.imageName))
+            for artworkRect in beanPaperArtworkRects(for: artwork, in: rect) {
+                var itemContext = artworkContext
+                if artwork.clipsToEllipse {
+                    itemContext.clip(to: Path(ellipseIn: artworkRect))
+                }
+                itemContext.draw(image, in: artworkRect)
             }
-            itemContext.draw(image, in: artworkRect)
+        case .blueberry:
+            guard background.style != .chalkboard,
+                  let imageName = theme.paperTextureImageName else { return }
+
+            var textureContext = context
+            textureContext.opacity = 0.12
+            textureContext.blendMode = .multiply
+            let image = textureContext.resolve(Image(imageName))
+            for textureRect in blueberryPaperTextureRects(in: rect) {
+                textureContext.draw(image, in: textureRect)
+            }
         }
     }
 
-    nonisolated static func drawBeanArtworkIfNeeded(
+    nonisolated static func drawThemeArtworkIfNeeded(
+        background: NoteBackground,
         theme: BeanNotesTheme,
         showsBeanArtwork: Bool,
         pageID: UUID?,
         in rect: CGRect,
         context: CGContext
     ) {
-        guard theme == .bean, showsBeanArtwork else { return }
+        guard showsBeanArtwork else { return }
 
-        let artwork = beanPaperArtwork(for: pageID)
-        if let image = UIImage(named: artwork.imageName) {
-            for artworkRect in beanPaperArtworkRects(for: artwork, in: rect) {
-                context.saveGState()
-                if artwork.clipsToEllipse {
-                    context.addEllipse(in: artworkRect)
-                    context.clip()
+        switch theme {
+        case .standard:
+            return
+        case .bean:
+            let artwork = beanPaperArtwork(for: pageID)
+            if let image = UIImage(named: artwork.imageName) {
+                for artworkRect in beanPaperArtworkRects(for: artwork, in: rect) {
+                    context.saveGState()
+                    if artwork.clipsToEllipse {
+                        context.addEllipse(in: artworkRect)
+                        context.clip()
+                    }
+                    image.draw(in: artworkRect, blendMode: .normal, alpha: artwork.opacity)
+                    context.restoreGState()
                 }
-                image.draw(in: artworkRect, blendMode: .normal, alpha: artwork.opacity)
-                context.restoreGState()
+            }
+        case .blueberry:
+            guard background.style != .chalkboard,
+                  let imageName = theme.paperTextureImageName,
+                  let image = UIImage(named: imageName) else { return }
+
+            for textureRect in blueberryPaperTextureRects(in: rect) {
+                image.draw(in: textureRect, blendMode: .multiply, alpha: 0.12)
             }
         }
     }

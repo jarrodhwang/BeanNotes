@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct BeanVisit: Identifiable, Equatable {
     enum Placement: CaseIterable, Equatable {
@@ -55,6 +56,22 @@ struct BeanVisit: Identifiable, Equatable {
             }
         }
 
+        func imageName(for theme: BeanNotesTheme) -> String? {
+            switch theme {
+            case .standard:
+                nil
+            case .bean:
+                imageName
+            case .blueberry:
+                switch self {
+                case .cozyPortrait:
+                    "BlueberryVisitImage"
+                case .curiousAvatar, .littleBadge:
+                    "BlueberryBadge"
+                }
+            }
+        }
+
         var maximumImageHeight: CGFloat {
             switch self {
             case .cozyPortrait:
@@ -70,25 +87,53 @@ struct BeanVisit: Identifiable, Equatable {
     let artwork: Artwork
     let placement: Placement
     let saying: BeanVisitPolicy.Saying
+    let theme: BeanNotesTheme
+
+    var artworkImageName: String? {
+        artwork.imageName(for: theme)
+    }
+
+    init(
+        id: UUID,
+        reason: BeanVisitPolicy.VisitReason,
+        artwork: Artwork,
+        placement: Placement,
+        saying: BeanVisitPolicy.Saying,
+        theme: BeanNotesTheme = .bean
+    ) {
+        self.id = id
+        self.reason = reason
+        self.artwork = artwork
+        self.placement = placement
+        self.saying = saying
+        self.theme = theme
+    }
 
     static func make(reason: BeanVisitPolicy.VisitReason) -> BeanVisit {
+        make(reason: reason, theme: .bean)
+    }
+
+    static func make(
+        reason: BeanVisitPolicy.VisitReason,
+        theme: BeanNotesTheme
+    ) -> BeanVisit {
         BeanVisit(
             id: UUID(),
             reason: reason,
             artwork: Artwork.allCases.randomElement() ?? .cozyPortrait,
             placement: Placement.allCases.randomElement() ?? .bottomTrailing,
-            saying: reason.randomSaying()
+            saying: reason.randomSaying(for: theme),
+            theme: theme
         )
     }
 }
 
-struct BeanAvatarView: View {
+struct ThemeAvatarView: View {
+    var theme: BeanNotesTheme
     var size: CGFloat
 
     var body: some View {
-        Image("BeanTabAvatar")
-            .resizable()
-            .scaledToFill()
+        avatar
             .frame(width: size, height: size)
             .clipShape(Circle())
             .overlay {
@@ -98,15 +143,32 @@ struct BeanAvatarView: View {
             .shadow(color: .black.opacity(0.14), radius: size * 0.09, y: size * 0.04)
             .accessibilityHidden(true)
     }
+
+    @ViewBuilder
+    private var avatar: some View {
+        if let imageName = theme.mascotAvatarImageName {
+            Image(imageName)
+                .resizable()
+                .scaledToFill()
+        } else {
+            ZStack {
+                Circle()
+                    .fill(theme.accentColor)
+
+                Image(systemName: theme.symbolName)
+                    .font(.system(size: size * 0.48, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+        }
+    }
 }
 
-struct BeanBadgeView: View {
+struct ThemeBadgeView: View {
+    var theme: BeanNotesTheme
     var size: CGFloat
 
     var body: some View {
-        Image("BeanBadge")
-            .resizable()
-            .scaledToFill()
+        badge
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
             .overlay {
@@ -116,14 +178,33 @@ struct BeanBadgeView: View {
             .shadow(color: .black.opacity(0.12), radius: size * 0.08, y: size * 0.035)
             .accessibilityHidden(true)
     }
+
+    @ViewBuilder
+    private var badge: some View {
+        if let imageName = theme.brandImageName {
+            Image(imageName)
+                .resizable()
+                .scaledToFill()
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+                    .fill(theme.accentColor)
+
+                Image(systemName: theme.symbolName)
+                    .font(.system(size: size * 0.46, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+        }
+    }
 }
 
-struct BeanThemeHintView: View {
+struct ThemeHintView: View {
+    var theme: BeanNotesTheme
     var message: String
 
     var body: some View {
         HStack(spacing: 10) {
-            BeanAvatarView(size: 34)
+            ThemeAvatarView(theme: theme, size: 34)
 
             Text(message)
                 .font(.caption.weight(.medium))
@@ -132,6 +213,30 @@ struct BeanThemeHintView: View {
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
+    }
+}
+
+struct BeanAvatarView: View {
+    var size: CGFloat
+
+    var body: some View {
+        ThemeAvatarView(theme: .bean, size: size)
+    }
+}
+
+struct BeanBadgeView: View {
+    var size: CGFloat
+
+    var body: some View {
+        ThemeBadgeView(theme: .bean, size: size)
+    }
+}
+
+struct BeanThemeHintView: View {
+    var message: String
+
+    var body: some View {
+        ThemeHintView(theme: .bean, message: message)
     }
 }
 
@@ -172,12 +277,14 @@ struct BeanPetVisitView: View {
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
             }
 
-            Image(visit.artwork.imageName)
-                .resizable()
-                .scaledToFit()
-                .frame(width: imageWidth, height: imageHeight, alignment: .bottom)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .shadow(color: .black.opacity(0.18), radius: 10, y: 7)
+            if let imageName = visit.artworkImageName {
+                Image(imageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: imageWidth, height: imageHeight, alignment: .bottom)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .shadow(color: .black.opacity(0.18), radius: 10, y: 7)
+            }
         }
         .frame(width: containerWidth, height: containerHeight, alignment: .bottom)
         .allowsHitTesting(false)
@@ -203,6 +310,13 @@ struct BeanVisitOverlayView: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        .onChange(of: visit) { _, visit in
+            guard UIAccessibility.isVoiceOverRunning, let visit else { return }
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: "\(visit.saying.title). \(visit.saying.message)"
+            )
+        }
     }
 
     private func transition(for visit: BeanVisit) -> AnyTransition {

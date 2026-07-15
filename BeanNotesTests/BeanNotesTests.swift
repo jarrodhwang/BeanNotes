@@ -1765,10 +1765,33 @@ struct BeanNotesTests {
         #expect(BeanNotesTheme.standard.brandImageName == nil)
         #expect(BeanNotesTheme.standard.paperTextureImageName == nil)
         #expect(BeanNotesTheme.standard.notePaperPreviewHex == "#FFFFFF")
-        #expect(BeanNotesTheme.blueberry.brandImageName == nil)
+        #expect(!BeanNotesTheme.standard.supportsFriendlyVisits)
+        #expect(BeanNotesTheme.blueberry.brandImageName == "BlueberryBadge")
+        #expect(BeanNotesTheme.blueberry.mascotAvatarImageName == "BlueberryBadge")
+        #expect(BeanNotesTheme.blueberry.mascotWelcomeImageName == "BlueberryVisitImage")
+        #expect(BeanNotesTheme.blueberry.paperTextureImageName == "BlueberryPaperTexture")
+        #expect(BeanNotesTheme.blueberry.notificationAttachmentName == "BlueberryNotificationIcon")
         #expect(BeanNotesTheme.blueberry.notePaperPreviewHex == "#EAF3FF")
         #expect(BeanNotesTheme.bean.alternateAppIconName == nil)
         #expect(BeanNotesTheme.blueberry.alternateAppIconName == "BlueberryAppIcon")
+        #expect(BeanNotesTheme.bean.supportsFriendlyVisits)
+        #expect(BeanNotesTheme.blueberry.supportsFriendlyVisits)
+    }
+
+    @Test func beanAndBlueberryPaperArtworkPreferencesStayIndependent() throws {
+        let suiteName = "BeanNotesPaperArtworkIsolation-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(!NoteBackground.showsArtwork(for: .standard, in: defaults))
+        #expect(!NoteBackground.showsArtwork(for: .bean, in: defaults))
+        #expect(NoteBackground.showsArtwork(for: .blueberry, in: defaults))
+
+        defaults.set(true, forKey: NoteBackground.showsBeanArtworkKey)
+        defaults.set(false, forKey: NoteBackground.showsBlueberryArtworkKey)
+
+        #expect(NoteBackground.showsArtwork(for: .bean, in: defaults))
+        #expect(!NoteBackground.showsArtwork(for: .blueberry, in: defaults))
     }
 
     @Test func noteTemplateRenderingStaysLightInDarkMode() throws {
@@ -1816,6 +1839,16 @@ struct BeanNotesTests {
             launchArguments: []
         )
         #expect(eligible)
+
+        #expect(BeanVisitPolicy.canSchedule(
+            theme: .blueberry,
+            isEnabled: true,
+            sceneIsActive: true,
+            isSafeSurface: true,
+            isLowPowerModeEnabled: false,
+            thermalState: .nominal,
+            launchArguments: []
+        ))
 
         #expect(!BeanVisitPolicy.canSchedule(
             theme: .standard,
@@ -1895,6 +1928,29 @@ struct BeanNotesTests {
         ) == 0)
     }
 
+    @Test func beanAndBlueberryVisitsKeepIndependentPreferencesAndCooldowns() throws {
+        let suiteName = "BeanNotesThemeVisitIsolation-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let blueberryDate = now.addingTimeInterval(120)
+
+        #expect(BeanVisitPolicy.storageKeys(for: .standard) == nil)
+        #expect(BeanVisitPolicy.storageKeys(for: .bean) != BeanVisitPolicy.storageKeys(for: .blueberry))
+
+        BeanVisitPolicy.recordVisit(for: .bean, at: now, in: defaults)
+        #expect(BeanVisitPolicy.lastShownDate(for: .bean, in: defaults) == now)
+        #expect(BeanVisitPolicy.lastShownDate(for: .blueberry, in: defaults) == nil)
+
+        BeanVisitPolicy.recordVisit(for: .blueberry, at: blueberryDate, in: defaults)
+        #expect(BeanVisitPolicy.lastShownDate(for: .bean, in: defaults) == now)
+        #expect(BeanVisitPolicy.lastShownDate(for: .blueberry, in: defaults) == blueberryDate)
+
+        #expect(!BeanVisitPolicy.cooldownHasElapsed(for: .bean, now: now, in: defaults))
+        #expect(!BeanVisitPolicy.cooldownHasElapsed(for: .blueberry, now: blueberryDate, in: defaults))
+    }
+
     @Test func beanVisitPolicyRespectsBreakAndFocusInterruptionPreferences() {
         #expect(!BeanVisitPolicy.shouldVisitAfterReturning(
             awayDuration: BeanVisitPolicy.awayThreshold - 1,
@@ -1951,6 +2007,47 @@ struct BeanNotesTests {
         #expect(allMessages.allSatisfy { saying in
             dogLanguage.contains { saying.localizedCaseInsensitiveContains($0) }
         })
+    }
+
+    @Test func blueberryVisitsUseBerrySpecificArtworkAndHelpfulSnackCopy() {
+        let reasons: [BeanVisitPolicy.VisitReason] = [.friendly, .returnFromBreak, .focusBreak]
+        let dogLanguage = ["Bean", "tail", "dog", "paws", "walkies", "sniff", "ears", "scratch"]
+        let blueberryLanguage = ["blueberr", "fiber", "vitamin C", "anthocyanin"]
+
+        for reason in reasons {
+            let sayings = reason.sayings(for: .blueberry)
+            #expect(sayings.count >= 4)
+            #expect(Set(sayings.map(\.title)).count == sayings.count)
+            #expect(sayings.allSatisfy { !$0.message.isEmpty })
+            #expect(sayings.allSatisfy { saying in
+                let fullText = "\(saying.title) \(saying.message)"
+                return blueberryLanguage.contains { fullText.localizedCaseInsensitiveContains($0) }
+            })
+            #expect(sayings.allSatisfy { saying in
+                let fullText = "\(saying.title) \(saying.message)"
+                let words = Set(
+                    fullText
+                        .lowercased()
+                        .split { !$0.isLetter }
+                        .map(String.init)
+                )
+                return dogLanguage.allSatisfy { !words.contains($0.lowercased()) }
+            })
+        }
+
+        #expect(BeanVisit.Artwork.allCases.allSatisfy {
+            guard let imageName = $0.imageName(for: .blueberry) else { return false }
+            return ["BlueberryVisitImage", "BlueberryBadge"].contains(imageName)
+        })
+        #expect(BeanVisit.Artwork.allCases.allSatisfy {
+            !($0.imageName(for: .bean) ?? "").localizedCaseInsensitiveContains("blueberry")
+        })
+
+        let visit = BeanVisit.make(reason: .friendly, theme: .blueberry)
+        #expect(visit.theme == .blueberry)
+        #expect(visit.artworkImageName.map {
+            ["BlueberryVisitImage", "BlueberryBadge"].contains($0)
+        } == true)
     }
 
     @Test func folderWelcomeUsesOnlyInAppFeedbackWhileForegrounded() {
@@ -2523,6 +2620,58 @@ struct BeanNotesTests {
         #expect(standardImage.size == beanImageWithArtwork.size)
         #expect(standardImage.pngData() == beanImageWithoutArtwork.pngData())
         #expect(standardImage.pngData() != beanImageWithArtwork.pngData())
+    }
+
+    @Test @MainActor func blueberryPaperRendersOnlyForBlueberryWhenEnabled() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesBlueberryPaper-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let page = NotePage(
+            pageOrder: 0,
+            background: NoteBackground(style: .lined, colorHex: "#FFFFFF"),
+            width: 320,
+            height: 420
+        )
+        let drawing = PKDrawing()
+        let standardImage = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: page, theme: .standard, showsBeanArtwork: true),
+            drawing: drawing,
+            rootURL: rootURL,
+            scale: 1
+        )
+        let blueberryWithoutArtwork = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: page, theme: .blueberry, showsBeanArtwork: false),
+            drawing: drawing,
+            rootURL: rootURL,
+            scale: 1
+        )
+        let blueberryWithArtwork = ThumbnailService.renderPageImage(
+            snapshot: NotePageRenderSnapshot(page: page, theme: .blueberry, showsBeanArtwork: true),
+            drawing: drawing,
+            rootURL: rootURL,
+            scale: 1
+        )
+
+        #expect(standardImage.pngData() == blueberryWithoutArtwork.pngData())
+        #expect(standardImage.pngData() != blueberryWithArtwork.pngData())
+        #expect(blueberryWithoutArtwork.pngData() != blueberryWithArtwork.pngData())
+    }
+
+    @Test func blueberryPaperTextureTilesCoverPracticalPageSizesEfficiently() {
+        for rect in [
+            CGRect(x: 0, y: 0, width: 320, height: 420),
+            CGRect(x: 24, y: 40, width: 1_024, height: 1_366),
+            CGRect(x: 0, y: 0, width: 4_096, height: 4_096)
+        ] {
+            let tiles = NoteBackgroundRenderer.blueberryPaperTextureRects(in: rect)
+            #expect(!tiles.isEmpty)
+            #expect(tiles.count <= 64)
+            #expect(tiles.allSatisfy { $0.intersects(rect) })
+
+            let coveredBounds = tiles.reduce(CGRect.null) { $0.union($1) }
+            #expect(coveredBounds.contains(rect))
+        }
     }
 
     @Test func beanPaperArtworkSelectionIsDeterministicPerPage() throws {
@@ -4475,12 +4624,26 @@ struct BeanNotesTests {
             theme: .bean,
             showsBeanArtwork: true
         )
+        let blueberryFileName = ThumbnailService.thumbnailFileName(
+            pageID: pageID,
+            theme: .blueberry,
+            showsBeanArtwork: false
+        )
+        let blueberryArtworkFileName = ThumbnailService.thumbnailFileName(
+            pageID: pageID,
+            theme: .blueberry,
+            showsBeanArtwork: true
+        )
         let standardFileName = ThumbnailService.thumbnailFileName(pageID: pageID, theme: .standard)
 
         #expect(beanFileName != standardFileName)
         #expect(beanFileName != beanArtworkFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-v8.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-v8.jpg"))
+        #expect(blueberryFileName != blueberryArtworkFileName)
+        #expect(beanFileName != blueberryFileName)
+        #expect(beanFileName.hasSuffix("-bean-off-v9.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-v9.jpg"))
+        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-v9.jpg"))
+        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-v9.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,

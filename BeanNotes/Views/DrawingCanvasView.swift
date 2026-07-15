@@ -895,7 +895,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func applyWorkspaceTheme(_ theme: BeanNotesTheme) {
-            let shouldRevealPaperBackdrop = theme == .bean
+            let shouldRevealPaperBackdrop = theme.paperTextureImageName != nil
             backgroundColor = shouldRevealPaperBackdrop ? .clear : .systemGroupedBackground
             isOpaque = !shouldRevealPaperBackdrop
         }

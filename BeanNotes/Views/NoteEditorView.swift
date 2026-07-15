@@ -81,6 +81,7 @@ struct NoteEditorView: View {
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
+    @AppStorage(NoteBackground.showsBlueberryArtworkKey) private var showsBlueberryArtwork = true
 
     @ObservedObject private var editorSession: NoteEditorSession
     @State private var isShowingAttachmentPicker = false
@@ -123,6 +124,17 @@ struct NoteEditorView: View {
 
     private let importExportService = ImportExportService()
     private let drawingMetadataSaveDelayNanoseconds: UInt64 = 700_000_000
+
+    private var showsThemeArtwork: Bool {
+        switch beanNotesTheme {
+        case .standard:
+            false
+        case .bean:
+            showsBeanArtwork
+        case .blueberry:
+            showsBlueberryArtwork
+        }
+    }
 
     init(
         note: NoteDocument,
@@ -420,7 +432,7 @@ struct NoteEditorView: View {
                         addPageAtBottom: addPageAtBottom,
                         topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page)),
                         theme: beanNotesTheme,
-                        showsBeanArtwork: showsBeanArtwork
+                        showsBeanArtwork: showsThemeArtwork
                     )
                     .ignoresSafeArea(.container, edges: .bottom)
 
@@ -497,8 +509,8 @@ struct NoteEditorView: View {
 
     private func editorTitleHeader(page: NotePage) -> some View {
         HStack(alignment: .center, spacing: 16) {
-            if beanNotesTheme == .bean {
-                BeanAvatarView(size: 38)
+            if beanNotesTheme.supportsFriendlyVisits {
+                ThemeAvatarView(theme: beanNotesTheme, size: 38)
             }
 
             VStack(alignment: .leading, spacing: 4) {
