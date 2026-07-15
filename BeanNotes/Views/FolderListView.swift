@@ -8,6 +8,7 @@ import UIKit
 
 struct FolderListView: View {
     @Environment(\.beanNotesTheme) private var beanNotesTheme
+    @State private var cornerStatusMessage: String?
 
     var folders: [NotebookFolder]
     @Binding var selectedFolderID: UUID?
@@ -89,6 +90,9 @@ struct FolderListView: View {
         }
         .navigationTitle("BeanNotes")
         .tint(beanNotesTheme.accentColor)
+        .task(id: beanNotesTheme.id) {
+            await cycleCornerStatusMessages()
+        }
     }
 
     @ViewBuilder
@@ -101,7 +105,7 @@ struct FolderListView: View {
                     Text(beanNotesTheme.cornerTitle)
                         .font(.headline.weight(.bold))
 
-                    Text(beanNotesTheme.cornerSubtitle)
+                    Text(cornerStatusMessage ?? beanNotesTheme.cornerStatusMessages[0])
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -125,6 +129,28 @@ struct FolderListView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Settings")
+    }
+
+    @MainActor
+    private func cycleCornerStatusMessages() async {
+        let messages = beanNotesTheme.cornerStatusMessages
+        guard messages.count > 1 else {
+            cornerStatusMessage = nil
+            return
+        }
+
+        var currentMessage = messages.randomElement()
+        cornerStatusMessage = currentMessage
+
+        do {
+            while !Task.isCancelled {
+                try await Task.sleep(for: .seconds(7))
+                currentMessage = messages.filter { $0 != currentMessage }.randomElement() ?? currentMessage
+                cornerStatusMessage = currentMessage
+            }
+        } catch {
+            // The view disappeared or the selected theme changed.
+        }
     }
 
     private var searchField: some View {

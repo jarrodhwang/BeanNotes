@@ -221,6 +221,19 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
         mascotCopy?.cornerSubtitle ?? "Ready for your next idea"
     }
 
+    var cornerStatusMessages: [String] {
+        switch self {
+        case .bean:
+            [
+                "Bean's fav place (She is sleeping)",
+                "Bean is drinking water",
+                "Bean's want ~"
+            ]
+        case .standard, .blueberry:
+            [cornerSubtitle]
+        }
+    }
+
     var mascotEmptyStateTitle: String {
         mascotCopy?.emptyStateTitle ?? "Ready for a new note?"
     }
@@ -300,7 +313,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
                 inviteTitle: "Invite Bean Now",
                 paperArtworkToggleTitle: "Show Bean on Note Backgrounds",
                 paperArtworkDescription: "Adds a subtle, randomly selected Bean paper design without changing your note template or color.",
-                cornerTitle: "Bean's corner",
+                cornerTitle: "Bean's Corner",
                 cornerSubtitle: "Ready for your next idea",
                 emptyStateTitle: "Ready for a new note?",
                 emptyStateMessage: "Bean will keep this folder cozy until your first idea arrives.",

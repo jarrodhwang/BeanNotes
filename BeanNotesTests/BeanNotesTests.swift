@@ -1778,6 +1778,15 @@ struct BeanNotesTests {
         #expect(BeanNotesTheme.blueberry.supportsFriendlyVisits)
     }
 
+    @Test func beanThemeCyclesCornerStatusMessages() {
+        #expect(BeanNotesTheme.bean.cornerStatusMessages == [
+            "Bean's fav place (She is sleeping)",
+            "Bean is drinking water",
+            "Bean's want ~"
+        ])
+        #expect(BeanNotesTheme.blueberry.cornerStatusMessages == [BeanNotesTheme.blueberry.cornerSubtitle])
+    }
+
     @Test func beanAndBlueberryPaperArtworkPreferencesStayIndependent() throws {
         let suiteName = "BeanNotesPaperArtworkIsolation-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
