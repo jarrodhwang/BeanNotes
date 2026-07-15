@@ -8,6 +8,7 @@ import SwiftUI
 struct NoteBackgroundPickerView: View {
     @Binding var styleRaw: String
     @Binding var colorHex: String
+    var onStyleChanged: (NoteBackgroundStyle) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -39,7 +40,10 @@ struct NoteBackgroundPickerView: View {
                             Button {
                                 colorHex = preset.colorHex
                             } label: {
-                                colorSwatch(preset)
+                                colorSwatch(
+                                    preset,
+                                    isSelected: colorHex.caseInsensitiveCompare(preset.colorHex) == .orderedSame
+                                )
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(preset.name)
@@ -69,6 +73,7 @@ struct NoteBackgroundPickerView: View {
             set: { rawValue in
                 let style = NoteBackgroundStyle(rawValue: rawValue) ?? .plain
                 styleRaw = background.changingStyle(to: style).storageStyleRaw
+                onStyleChanged(style)
             }
         )
     }
@@ -77,7 +82,9 @@ struct NoteBackgroundPickerView: View {
     private var templateControls: some View {
         let selectedStyle = background.style
 
-        if selectedStyle.supportsSpacing || selectedStyle.supportsMargin {
+        if selectedStyle == .chalkboard {
+            chalkboardControls
+        } else if selectedStyle.supportsSpacing || selectedStyle.supportsMargin {
             VStack(alignment: .leading, spacing: 14) {
                 if selectedStyle.supportsSpacing {
                     VStack(alignment: .leading, spacing: 8) {
@@ -126,6 +133,53 @@ struct NoteBackgroundPickerView: View {
         }
     }
 
+    private var chalkboardControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Board Style")
+                    .font(.subheadline.weight(.semibold))
+
+                Picker("Board Style", selection: chalkboardPatternSelection) {
+                    ForEach(ChalkboardPattern.allCases) { pattern in
+                        Text(pattern.label).tag(pattern.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("background.chalkboardPattern")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Chalkboard Color")
+                    .font(.subheadline.weight(.semibold))
+
+                HStack(spacing: 12) {
+                    ForEach(NoteBackground.chalkboardColorPresets) { preset in
+                        Button {
+                            styleRaw = background.changingChalkboardColor(to: preset.colorHex).storageStyleRaw
+                        } label: {
+                            colorSwatch(
+                                preset,
+                                isSelected: background.resolvedChalkboardColorHex == preset.colorHex
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(preset.name)
+                    }
+                }
+            }
+        }
+    }
+
+    private var chalkboardPatternSelection: Binding<String> {
+        Binding(
+            get: { background.resolvedChalkboardPattern.rawValue },
+            set: { rawValue in
+                let pattern = ChalkboardPattern(rawValue: rawValue) ?? .plain
+                styleRaw = background.changingChalkboardPattern(to: pattern).storageStyleRaw
+            }
+        )
+    }
+
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: 42, maximum: 42), spacing: 12)]
     }
@@ -152,7 +206,10 @@ struct NoteBackgroundPickerView: View {
         }
     }
 
-    private func colorSwatch(_ preset: NoteBackgroundColorPreset) -> some View {
+    private func colorSwatch(
+        _ preset: NoteBackgroundColorPreset,
+        isSelected: Bool
+    ) -> some View {
         ZStack {
             Circle()
                 .fill(Color(hex: preset.colorHex))
@@ -162,7 +219,7 @@ struct NoteBackgroundPickerView: View {
                         .stroke(Color.secondary.opacity(0.28), lineWidth: 1)
                 }
 
-            if colorHex.caseInsensitiveCompare(preset.colorHex) == .orderedSame {
+            if isSelected {
                 Circle()
                     .stroke(Color.accentColor, lineWidth: 3)
                     .frame(width: 42, height: 42)

@@ -120,6 +120,22 @@ enum NoteBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable 
     }
 }
 
+enum ChalkboardPattern: String, Codable, CaseIterable, Identifiable, Sendable {
+    case plain
+    case grid
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var label: String {
+        switch self {
+        case .plain:
+            "Plain"
+        case .grid:
+            "Grid"
+        }
+    }
+}
+
 struct NoteBackgroundColorPreset: Identifiable, Equatable, Sendable {
     var name: String
     var colorHex: String
@@ -148,21 +164,33 @@ struct NoteBackground: Codable, Equatable, Sendable {
         NoteBackgroundColorPreset(name: "Gray", colorHex: "#F2F4F7")
     ]
 
+    nonisolated static let chalkboardColorPresets: [NoteBackgroundColorPreset] = [
+        NoteBackgroundColorPreset(name: "Forest Green", colorHex: chalkboardColorHex),
+        NoteBackgroundColorPreset(name: "Charcoal", colorHex: "#262A2D"),
+        NoteBackgroundColorPreset(name: "Deep Navy", colorHex: "#243447")
+    ]
+
     var style: NoteBackgroundStyle
     var colorHex: String
     var spacing: Double?
     var marginWidth: Double?
+    var chalkboardPattern: ChalkboardPattern?
+    var chalkColorHex: String?
 
     nonisolated init(
         style: NoteBackgroundStyle,
         colorHex: String,
         spacing: Double? = nil,
-        marginWidth: Double? = nil
+        marginWidth: Double? = nil,
+        chalkboardPattern: ChalkboardPattern? = nil,
+        chalkColorHex: String? = nil
     ) {
         self.style = style
         self.colorHex = colorHex
         self.spacing = spacing
         self.marginWidth = marginWidth
+        self.chalkboardPattern = chalkboardPattern
+        self.chalkColorHex = chalkColorHex
     }
 
     nonisolated static func plain(colorHex: String = "#FFFFFF") -> NoteBackground {
@@ -218,7 +246,9 @@ struct NoteBackground: Codable, Equatable, Sendable {
             style: decoded.style,
             colorHex: colorHex.isEmpty ? defaultColorHex : colorHex,
             spacing: decoded.spacing,
-            marginWidth: decoded.marginWidth
+            marginWidth: decoded.marginWidth,
+            chalkboardPattern: decoded.chalkboardPattern,
+            chalkColorHex: decoded.chalkColorHex
         )
     }
 
@@ -233,11 +263,38 @@ struct NoteBackground: Codable, Equatable, Sendable {
             components.append("margin=\(Self.encodedNumber(clampedMarginWidth(marginWidth)))")
         }
 
+        if style == .chalkboard {
+            if resolvedChalkboardPattern != .plain {
+                components.append("pattern=\(resolvedChalkboardPattern.rawValue)")
+            }
+
+            if resolvedChalkboardColorHex != Self.chalkboardColorHex {
+                components.append("color=\(resolvedChalkboardColorHex)")
+            }
+        }
+
         return components.joined(separator: ";")
     }
 
     nonisolated var renderedColorHex: String {
-        style == .chalkboard ? Self.chalkboardColorHex : colorHex
+        style == .chalkboard ? resolvedChalkboardColorHex : colorHex
+    }
+
+    nonisolated var resolvedChalkboardPattern: ChalkboardPattern {
+        guard style == .chalkboard else { return .plain }
+        return chalkboardPattern ?? .plain
+    }
+
+    nonisolated var resolvedChalkboardColorHex: String {
+        guard style == .chalkboard,
+              let chalkColorHex,
+              let preset = Self.chalkboardColorPresets.first(where: {
+                  $0.colorHex.caseInsensitiveCompare(chalkColorHex) == .orderedSame
+              }) else {
+            return Self.chalkboardColorHex
+        }
+
+        return preset.colorHex
     }
 
     nonisolated var resolvedSpacing: Double {
@@ -255,7 +312,9 @@ struct NoteBackground: Codable, Equatable, Sendable {
             style: style,
             colorHex: colorHex,
             spacing: style.supportsSpacing ? clamped(spacing ?? style.defaultSpacing, to: style.spacingRange) : nil,
-            marginWidth: style.supportsMargin ? clamped(marginWidth ?? style.defaultMarginWidth, to: style.marginRange) : nil
+            marginWidth: style.supportsMargin ? clamped(marginWidth ?? style.defaultMarginWidth, to: style.marginRange) : nil,
+            chalkboardPattern: style == .chalkboard ? chalkboardPattern : nil,
+            chalkColorHex: style == .chalkboard ? chalkColorHex : nil
         )
     }
 
@@ -264,7 +323,9 @@ struct NoteBackground: Codable, Equatable, Sendable {
             style: style,
             colorHex: colorHex,
             spacing: style.supportsSpacing ? clamped(spacing, to: style.spacingRange) : nil,
-            marginWidth: marginWidth
+            marginWidth: marginWidth,
+            chalkboardPattern: chalkboardPattern,
+            chalkColorHex: chalkColorHex
         )
     }
 
@@ -273,16 +334,50 @@ struct NoteBackground: Codable, Equatable, Sendable {
             style: style,
             colorHex: colorHex,
             spacing: spacing,
-            marginWidth: style.supportsMargin ? clamped(marginWidth, to: style.marginRange) : nil
+            marginWidth: style.supportsMargin ? clamped(marginWidth, to: style.marginRange) : nil,
+            chalkboardPattern: chalkboardPattern,
+            chalkColorHex: chalkColorHex
         )
     }
 
-    nonisolated private static func decodeStyleRaw(_ styleRaw: String) -> (style: NoteBackgroundStyle, spacing: Double?, marginWidth: Double?) {
+    nonisolated func changingChalkboardPattern(to pattern: ChalkboardPattern) -> NoteBackground {
+        NoteBackground(
+            style: style,
+            colorHex: colorHex,
+            spacing: spacing,
+            marginWidth: marginWidth,
+            chalkboardPattern: style == .chalkboard ? pattern : nil,
+            chalkColorHex: chalkColorHex
+        )
+    }
+
+    nonisolated func changingChalkboardColor(to colorHex: String) -> NoteBackground {
+        NoteBackground(
+            style: style,
+            colorHex: self.colorHex,
+            spacing: spacing,
+            marginWidth: marginWidth,
+            chalkboardPattern: chalkboardPattern,
+            chalkColorHex: style == .chalkboard ? colorHex : nil
+        )
+    }
+
+    nonisolated private static func decodeStyleRaw(
+        _ styleRaw: String
+    ) -> (
+        style: NoteBackgroundStyle,
+        spacing: Double?,
+        marginWidth: Double?,
+        chalkboardPattern: ChalkboardPattern?,
+        chalkColorHex: String?
+    ) {
         let components = styleRaw.split(separator: ";", omittingEmptySubsequences: true)
         let style = components.first
             .flatMap { NoteBackgroundStyle(rawValue: String($0)) } ?? .plain
         var spacing: Double?
         var marginWidth: Double?
+        var chalkboardPattern: ChalkboardPattern?
+        var chalkColorHex: String?
 
         for component in components.dropFirst() {
             let pair = component.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
@@ -296,6 +391,10 @@ struct NoteBackground: Codable, Equatable, Sendable {
                 spacing = value
             case "margin":
                 marginWidth = value
+            case "pattern":
+                chalkboardPattern = ChalkboardPattern(rawValue: String(pair[1]))
+            case "color":
+                chalkColorHex = String(pair[1])
             default:
                 continue
             }
@@ -304,7 +403,9 @@ struct NoteBackground: Codable, Equatable, Sendable {
         return (
             style,
             style.supportsSpacing ? spacing.map { clamped($0, to: style.spacingRange) } : nil,
-            style.supportsMargin ? marginWidth.map { clamped($0, to: style.marginRange) } : nil
+            style.supportsMargin ? marginWidth.map { clamped($0, to: style.marginRange) } : nil,
+            style == .chalkboard ? chalkboardPattern : nil,
+            style == .chalkboard ? chalkColorHex : nil
         )
     }
 

@@ -312,7 +312,7 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
                 interruptionsDescription: "When enabled, Bean can pop up in the library and while you are writing. When off, Bean only checks in after you return from a 3-minute break or after a longer focus session.",
                 inviteTitle: "Invite Bean Now",
                 paperArtworkToggleTitle: "Show Bean on Note Backgrounds",
-                paperArtworkDescription: "Adds a subtle, randomly selected Bean paper design without changing your note template or color.",
+                paperArtworkDescription: "Adds subtle Bean artwork without changing your template or color. Chalkboards place the red-clothed Bean in the bottom-right.",
                 cornerTitle: "Bean's Corner",
                 cornerSubtitle: "Ready for your next idea",
                 emptyStateTitle: "Ready for a new note?",

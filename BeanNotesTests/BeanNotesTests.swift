@@ -388,10 +388,14 @@ struct BeanNotesTests {
         #expect(page.normalizedHeight == 612)
     }
 
-    @Test func paperSizesProvideValidPortraitDimensions() {
+    @Test func paperSizesProvideValidDimensionsIncludingWideChalkboard() {
         for paperSize in PaperSize.allCases {
             #expect(paperSize.dimensions.width > 0)
-            #expect(paperSize.dimensions.height > paperSize.dimensions.width)
+            if paperSize == .chalkboard {
+                #expect(paperSize.dimensions.width > paperSize.dimensions.height)
+            } else {
+                #expect(paperSize.dimensions.height > paperSize.dimensions.width)
+            }
             #expect(paperSize.dimensions.width <= NotePage.maximumPageDimension)
             #expect(paperSize.dimensions.height <= NotePage.maximumPageDimension)
         }
@@ -399,7 +403,9 @@ struct BeanNotesTests {
         #expect(PaperSize.defaultPaperSize == .letter)
         #expect(PaperSize.a4.dimensions == CGSize(width: 595, height: 842))
         #expect(PaperSize.b5.dimensions == CGSize(width: 499, height: 709))
+        #expect(PaperSize.chalkboard.dimensions == CGSize(width: 960, height: 540))
         #expect(PaperSize.matching(CGSize(width: 595, height: 842)) == .a4)
+        #expect(PaperSize.matching(CGSize(width: 960, height: 540)) == .chalkboard)
         #expect(PaperSize.matching(CGSize(width: 595.25, height: 841.75)) == .a4)
         #expect(PaperSize.matching(CGSize(width: 640, height: 900)) == nil)
     }
@@ -1196,6 +1202,31 @@ struct BeanNotesTests {
         #expect(restored.resolvedSpacing == 0)
         #expect(restored.resolvedMarginWidth == 0)
         #expect(restored.changingStyle(to: .plain).renderedColorHex == "#FFF7BF")
+
+        let configured = NoteBackground(
+            style: .chalkboard,
+            colorHex: "#FFF7BF",
+            chalkboardPattern: .grid,
+            chalkColorHex: "#262A2D"
+        )
+        let restoredConfiguration = NoteBackground.fromDefaults(
+            styleRaw: configured.storageStyleRaw,
+            colorHex: configured.colorHex
+        )
+
+        #expect(configured.storageStyleRaw == "chalkboard;pattern=grid;color=#262A2D")
+        #expect(configured.renderedColorHex == "#262A2D")
+        #expect(restoredConfiguration.resolvedChalkboardPattern == .grid)
+        #expect(restoredConfiguration.resolvedChalkboardColorHex == "#262A2D")
+        #expect(restoredConfiguration.colorHex == "#FFF7BF")
+        #expect(NoteBackground.chalkboardColorPresets.count == 3)
+
+        let invalidConfiguration = NoteBackground.fromDefaults(
+            styleRaw: "chalkboard;pattern=unknown;color=#FFFFFF",
+            colorHex: "#FFE1E8"
+        )
+        #expect(invalidConfiguration.resolvedChalkboardPattern == .plain)
+        #expect(invalidConfiguration.resolvedChalkboardColorHex == NoteBackground.chalkboardColorHex)
     }
 
     @Test func noteBackgroundTemplatesRoundTripSpacingAndMargins() {
@@ -1213,7 +1244,7 @@ struct BeanNotesTests {
         #expect(page.background.resolvedSpacing == 42)
         #expect(page.background.resolvedMarginWidth == 244)
 
-        let clampedGrid = NoteBackground.fromDefaults(styleRaw: "grid;spacing=4;margin=999", colorHex: "#FFFFFF")
+        let clampedGrid = NoteBackground.fromDefaults(styleRaw: "grid;spacing=1;margin=999", colorHex: "#FFFFFF")
         #expect(clampedGrid.resolvedSpacing == NoteBackgroundStyle.grid.spacingRange.lowerBound)
         #expect(clampedGrid.resolvedMarginWidth == NoteBackgroundStyle.grid.marginRange.upperBound)
     }
@@ -2695,6 +2726,65 @@ struct BeanNotesTests {
         #expect(
             Set([firstSelection.imageName, secondSelection.imageName])
                 == Set(["BeanWelcomeImage", "BeanTabAvatar"])
+        )
+    }
+
+    @Test func chalkboardUsesTransparentRedBeanInBottomRight() {
+        let pageRect = CGRect(x: 24, y: 40, width: 960, height: 540)
+        let artworkRect = NoteBackgroundRenderer.chalkboardBeanArtworkRect(in: pageRect)
+        let beanImage = UIImage(named: NoteBackgroundRenderer.chalkboardBeanImageName)
+
+        #expect(NoteBackgroundRenderer.chalkboardBeanImageName == "BeanWelcomeImage")
+        #expect(beanImage?.cgImage?.alphaInfo != CGImageAlphaInfo.none)
+        #expect(beanImage?.cgImage?.alphaInfo != CGImageAlphaInfo.noneSkipFirst)
+        #expect(beanImage?.cgImage?.alphaInfo != CGImageAlphaInfo.noneSkipLast)
+        #expect(pageRect.contains(artworkRect))
+        #expect(artworkRect.midX > pageRect.midX)
+        #expect(artworkRect.midY > pageRect.midY)
+        #expect(artworkRect.width <= pageRect.width * 0.22 + 0.001)
+        #expect(artworkRect.height <= pageRect.height * 0.42 + 0.001)
+    }
+
+    @Test @MainActor func chalkboardRenderingSupportsGridColorAndStableBeanArtwork() throws {
+        let size = CGSize(width: 320, height: 180)
+        let plain = NoteBackground(style: .chalkboard, colorHex: "#FFFFFF")
+        let grid = NoteBackground(
+            style: .chalkboard,
+            colorHex: "#FFFFFF",
+            chalkboardPattern: .grid
+        )
+        let charcoal = NoteBackground(
+            style: .chalkboard,
+            colorHex: "#FFFFFF",
+            chalkColorHex: "#262A2D"
+        )
+
+        func render(
+            _ background: NoteBackground,
+            showsBean: Bool = false,
+            pageID: UUID? = nil
+        ) -> Data? {
+            UIGraphicsImageRenderer(size: size).image { context in
+                NoteBackgroundRenderer.draw(
+                    background: background,
+                    theme: .bean,
+                    showsBeanArtwork: showsBean,
+                    pageID: pageID,
+                    in: CGRect(origin: .zero, size: size),
+                    context: context.cgContext
+                )
+            }.pngData()
+        }
+
+        let firstPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let secondPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+
+        #expect(render(plain) != render(grid))
+        #expect(render(plain) != render(charcoal))
+        #expect(render(grid, showsBean: true, pageID: firstPageID) != render(grid))
+        #expect(
+            render(grid, showsBean: true, pageID: firstPageID)
+                == render(grid, showsBean: true, pageID: secondPageID)
         )
     }
 
@@ -4649,10 +4739,10 @@ struct BeanNotesTests {
         #expect(beanFileName != beanArtworkFileName)
         #expect(blueberryFileName != blueberryArtworkFileName)
         #expect(beanFileName != blueberryFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-v9.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-v9.jpg"))
-        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-v9.jpg"))
-        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-v9.jpg"))
+        #expect(beanFileName.hasSuffix("-bean-off-v10.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-v10.jpg"))
+        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-v10.jpg"))
+        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-v10.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,

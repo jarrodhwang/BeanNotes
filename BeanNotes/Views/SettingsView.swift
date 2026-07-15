@@ -99,7 +99,7 @@ struct SettingsView: View {
                         Toggle("Show Bean on Note Backgrounds", isOn: $showsBeanArtwork)
                             .accessibilityIdentifier("settings.beanArtworkToggle")
 
-                        Text("Adds a subtle, randomly selected Bean paper design without changing your note template or color.")
+                        Text(selectedMoodTheme.paperArtworkDescription)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else if selectedMoodTheme == .blueberry {
@@ -150,7 +150,12 @@ struct SettingsView: View {
                 Section("Default Note Background") {
                     NoteBackgroundPickerView(
                         styleRaw: $defaultBackgroundStyleRaw,
-                        colorHex: $defaultBackgroundColorHex
+                        colorHex: $defaultBackgroundColorHex,
+                        onStyleChanged: { style in
+                            if style == .chalkboard {
+                                paperSizeRaw = PaperSize.chalkboard.rawValue
+                            }
+                        }
                     )
                     .padding(.vertical, 6)
                 }

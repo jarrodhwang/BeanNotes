@@ -60,7 +60,7 @@ enum NoteBackgroundRenderer {
         case .planner:
             drawPlanner(background: background, in: rect, context: &context)
         case .chalkboard:
-            drawChalkboard(in: rect, context: &context)
+            drawChalkboard(background: background, in: rect, context: &context)
         }
     }
 
@@ -105,7 +105,7 @@ enum NoteBackgroundRenderer {
         case .planner:
             drawPlanner(background: background, in: rect, context: context)
         case .chalkboard:
-            drawChalkboard(in: rect, context: context)
+            drawChalkboard(background: background, in: rect, context: context)
         }
     }
 
@@ -173,6 +173,26 @@ enum NoteBackgroundRenderer {
         }
         return results
     }
+
+    nonisolated static let chalkboardBeanImageName = "BeanWelcomeImage"
+
+    nonisolated static func chalkboardBeanArtworkRect(in rect: CGRect) -> CGRect {
+        guard rect.width > 0, rect.height > 0 else { return .zero }
+
+        let aspectRatio = CGFloat(418) / 560
+        let width = min(rect.width * 0.22, rect.height * 0.42 * aspectRatio)
+        let height = width / aspectRatio
+        let preferredInset = max(4, min(14, min(rect.width, rect.height) * 0.024))
+        let availableInset = max(0, min(rect.width - width, rect.height - height))
+        let inset = min(preferredInset, availableInset)
+
+        return CGRect(
+            x: rect.maxX - width - inset,
+            y: rect.maxY - height - inset,
+            width: width,
+            height: height
+        )
+    }
 }
 
 private extension NoteBackgroundRenderer {
@@ -234,9 +254,13 @@ private extension NoteBackgroundRenderer {
     nonisolated static var uiDotColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.34) }
     nonisolated static var uiCheckboxColor: UIColor { lightSecondaryLabel.withAlphaComponent(0.2) }
     static var chalkSmudgeColor: Color { Color.white.opacity(0.035) }
-    static var chalkDustColor: Color { Color.white.opacity(0.07) }
+    static var chalkDustColor: Color { Color.white.opacity(0.055) }
+    static var chalkGridColor: Color { Color.white.opacity(0.12) }
+    static var chalkboardFrameColor: Color { Color(hex: "#C9B58F").opacity(0.82) }
     nonisolated static var uiChalkSmudgeColor: UIColor { UIColor.white.withAlphaComponent(0.035) }
-    nonisolated static var uiChalkDustColor: UIColor { UIColor.white.withAlphaComponent(0.07) }
+    nonisolated static var uiChalkDustColor: UIColor { UIColor.white.withAlphaComponent(0.055) }
+    nonisolated static var uiChalkGridColor: UIColor { UIColor.white.withAlphaComponent(0.12) }
+    nonisolated static var uiChalkboardFrameColor: UIColor { UIColor(hex: "#C9B58F").withAlphaComponent(0.82) }
 
     static var lightSecondaryColor: Color { Color(uiColor: lightSecondaryLabel) }
 
@@ -262,6 +286,14 @@ private extension NoteBackgroundRenderer {
         case .standard:
             return
         case .bean:
+            if background.style == .chalkboard {
+                var artworkContext = context
+                artworkContext.opacity = 0.34
+                let image = artworkContext.resolve(Image(chalkboardBeanImageName))
+                artworkContext.draw(image, in: chalkboardBeanArtworkRect(in: rect))
+                return
+            }
+
             let artwork = beanPaperArtwork(for: pageID)
             var artworkContext = context
             artworkContext.opacity = artwork.opacity
@@ -301,6 +333,15 @@ private extension NoteBackgroundRenderer {
         case .standard:
             return
         case .bean:
+            if background.style == .chalkboard {
+                UIImage(named: chalkboardBeanImageName)?.draw(
+                    in: chalkboardBeanArtworkRect(in: rect),
+                    blendMode: .normal,
+                    alpha: 0.34
+                )
+                return
+            }
+
             let artwork = beanPaperArtwork(for: pageID)
             if let image = UIImage(named: artwork.imageName) {
                 for artworkRect in beanPaperArtworkRects(for: artwork, in: rect) {
@@ -400,9 +441,13 @@ private extension NoteBackgroundRenderer {
         return CGFloat(value) / 1008
     }
 
-    static func drawChalkboard(in rect: CGRect, context: inout GraphicsContext) {
+    static func drawChalkboard(
+        background: NoteBackground,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
         var smudges = Path()
-        for index in 0..<24 {
+        for index in 0..<18 {
             let start = chalkSmudgeStart(index: index, in: rect)
             let end = chalkSmudgeEnd(index: index, start: start, in: rect)
             smudges.move(to: start)
@@ -415,15 +460,47 @@ private extension NoteBackgroundRenderer {
         )
 
         var dust = Path()
-        for index in 0..<72 {
+        for index in 0..<48 {
             dust.addEllipse(in: chalkDustRect(index: index, in: rect))
         }
         context.fill(dust, with: .color(chalkDustColor))
+
+        if background.resolvedChalkboardPattern == .grid {
+            var grid = Path()
+            let contentRect = chalkboardContentRect(in: rect)
+            let spacing = chalkboardGridSpacing(in: rect)
+
+            stride(from: contentRect.minX, through: contentRect.maxX, by: spacing).forEach { x in
+                grid.move(to: CGPoint(x: x, y: contentRect.minY))
+                grid.addLine(to: CGPoint(x: x, y: contentRect.maxY))
+            }
+            stride(from: contentRect.minY, through: contentRect.maxY, by: spacing).forEach { y in
+                grid.move(to: CGPoint(x: contentRect.minX, y: y))
+                grid.addLine(to: CGPoint(x: contentRect.maxX, y: y))
+            }
+
+            context.stroke(grid, with: .color(chalkGridColor), lineWidth: chalkGridLineWidth(in: rect))
+        }
+
+        let frameRect = chalkboardFrameRect(in: rect)
+        let frame = Path(
+            roundedRect: frameRect,
+            cornerRadius: chalkboardFrameCornerRadius(in: rect)
+        )
+        context.stroke(
+            frame,
+            with: .color(chalkboardFrameColor),
+            lineWidth: chalkboardFrameLineWidth(in: rect)
+        )
     }
 
-    nonisolated static func drawChalkboard(in rect: CGRect, context: CGContext) {
+    nonisolated static func drawChalkboard(
+        background: NoteBackground,
+        in rect: CGRect,
+        context: CGContext
+    ) {
         context.beginPath()
-        for index in 0..<24 {
+        for index in 0..<18 {
             let start = chalkSmudgeStart(index: index, in: rect)
             let end = chalkSmudgeEnd(index: index, start: start, in: rect)
             context.move(to: start)
@@ -435,9 +512,66 @@ private extension NoteBackgroundRenderer {
         context.strokePath()
 
         context.setFillColor(uiChalkDustColor.cgColor)
-        for index in 0..<72 {
+        for index in 0..<48 {
             context.fillEllipse(in: chalkDustRect(index: index, in: rect))
         }
+
+        if background.resolvedChalkboardPattern == .grid {
+            let contentRect = chalkboardContentRect(in: rect)
+            let spacing = chalkboardGridSpacing(in: rect)
+            context.beginPath()
+            stride(from: contentRect.minX, through: contentRect.maxX, by: spacing).forEach { x in
+                context.move(to: CGPoint(x: x, y: contentRect.minY))
+                context.addLine(to: CGPoint(x: x, y: contentRect.maxY))
+            }
+            stride(from: contentRect.minY, through: contentRect.maxY, by: spacing).forEach { y in
+                context.move(to: CGPoint(x: contentRect.minX, y: y))
+                context.addLine(to: CGPoint(x: contentRect.maxX, y: y))
+            }
+            context.setStrokeColor(uiChalkGridColor.cgColor)
+            context.setLineWidth(chalkGridLineWidth(in: rect))
+            context.strokePath()
+        }
+
+        context.setStrokeColor(uiChalkboardFrameColor.cgColor)
+        context.setLineWidth(chalkboardFrameLineWidth(in: rect))
+        context.addPath(
+            UIBezierPath(
+                roundedRect: chalkboardFrameRect(in: rect),
+                cornerRadius: chalkboardFrameCornerRadius(in: rect)
+            ).cgPath
+        )
+        context.strokePath()
+    }
+
+    nonisolated static func chalkboardFrameLineWidth(in rect: CGRect) -> CGFloat {
+        max(1, min(4, min(rect.width, rect.height) * 0.004))
+    }
+
+    nonisolated static func chalkboardFrameRect(in rect: CGRect) -> CGRect {
+        let minimumDimension = max(0, min(rect.width, rect.height))
+        let preferredInset = max(2, min(10, minimumDimension * 0.012))
+        let inset = min(preferredInset, minimumDimension * 0.25)
+        return rect.insetBy(dx: inset, dy: inset)
+    }
+
+    nonisolated static func chalkboardFrameCornerRadius(in rect: CGRect) -> CGFloat {
+        max(2, min(12, min(rect.width, rect.height) * 0.014))
+    }
+
+    nonisolated static func chalkboardContentRect(in rect: CGRect) -> CGRect {
+        let minimumDimension = max(0, min(rect.width, rect.height))
+        let preferredInset = max(8, min(24, minimumDimension * 0.045))
+        let inset = min(preferredInset, minimumDimension * 0.25)
+        return rect.insetBy(dx: inset, dy: inset)
+    }
+
+    nonisolated static func chalkboardGridSpacing(in rect: CGRect) -> CGFloat {
+        max(24, min(rect.width, rect.height) * 0.065)
+    }
+
+    nonisolated static func chalkGridLineWidth(in rect: CGRect) -> CGFloat {
+        max(0.5, min(1, min(rect.width, rect.height) * 0.0015))
     }
 
     nonisolated static func chalkSmudgeStart(index: Int, in rect: CGRect) -> CGPoint {

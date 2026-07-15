@@ -19,6 +19,7 @@ enum PaperSize: String, CaseIterable, Identifiable {
     case a6
     case b4
     case b5
+    case chalkboard
 
     var id: String { rawValue }
 
@@ -33,6 +34,7 @@ enum PaperSize: String, CaseIterable, Identifiable {
         case .a6: "A6"
         case .b4: "B4"
         case .b5: "B5"
+        case .chalkboard: "Chalkboard"
         }
     }
 
@@ -47,6 +49,7 @@ enum PaperSize: String, CaseIterable, Identifiable {
         case .a6: "105 × 148 mm"
         case .b4: "250 × 353 mm"
         case .b5: "176 × 250 mm"
+        case .chalkboard: "16:9 landscape"
         }
     }
 
@@ -61,6 +64,7 @@ enum PaperSize: String, CaseIterable, Identifiable {
         case .a6: CGSize(width: 298, height: 420)
         case .b4: CGSize(width: 709, height: 1_001)
         case .b5: CGSize(width: 499, height: 709)
+        case .chalkboard: CGSize(width: 960, height: 540)
         }
     }
 

@@ -12,7 +12,7 @@ BeanNotes is a free-form, local-first notes app for iPhone and iPad. It is built
 - Bean-first visual identity with a warm paper theme, paw-marked project colors, and light, dark, and tinted app icons.
 - Note tabs for keeping multiple notes open while moving between projects.
 - PencilKit drawing with custom palettes, remembered palette placement, focus drawing mode with compact undo/redo/zoom controls, editor touch-mode switching, sub-point Light Touch ink, press-and-hold fine width nudges, one-tap Detail Writing Mode, Light Touch Focus, live zoom/ink calibration, detail resolution status, Page Ink Lock, Ultra Fine zoom presets, zoom-friendly rendering, and local autosave.
-- Page options for plain, grid, dotted, lined, Cornell, music staff, planner, and chalkboard backgrounds.
+- Page options for plain, grid, dotted, lined, Cornell, music staff, planner, and customizable plain/grid chalkboards.
 - Imports for PDFs, images, CSV files, Word documents, slides, and other files.
 - Exports for pages or whole notes as PDF, PNG, or JPEG, plus sharing of original attachments.
 - Share extension support for sending files into BeanNotes.

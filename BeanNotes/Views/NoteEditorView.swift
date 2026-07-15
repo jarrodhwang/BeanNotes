@@ -2023,12 +2023,20 @@ private struct PageBackgroundEditorSheet: View {
         NavigationStack {
             Form {
                 Section("Page Background") {
-                    NoteBackgroundPickerView(styleRaw: $styleRaw, colorHex: $colorHex)
+                    NoteBackgroundPickerView(
+                        styleRaw: $styleRaw,
+                        colorHex: $colorHex,
+                        onStyleChanged: { style in
+                            if style == .chalkboard {
+                                selectPaperSize(.chalkboard)
+                            }
+                        }
+                    )
                         .padding(.vertical, 6)
                 }
 
                 Section("Paper Size") {
-                    Picker("Paper Size", selection: $selectedPaperSizeRaw) {
+                    Picker("Paper Size", selection: paperSizeSelection) {
                         ForEach(PaperSize.allCases) { size in
                             Text("\(size.label) (\(size.dimensionsLabel))")
                                 .tag(size.rawValue)
@@ -2037,12 +2045,6 @@ private struct PageBackgroundEditorSheet: View {
                         Text(customPaperSizeLabel).tag(CustomPaperSize.selectionRawValue)
                     }
                     .accessibilityIdentifier("pageAppearance.paperSizePicker")
-                    .onChange(of: selectedPaperSizeRaw) { _, selection in
-                        guard let paperSize = PaperSize(rawValue: selection) else { return }
-                        customWidth = paperSize.dimensions.width
-                        customHeight = paperSize.dimensions.height
-                        pageSize = paperSize.dimensions
-                    }
 
                     if selectedPaperSizeRaw == CustomPaperSize.selectionRawValue {
                         TextField("Width (pt)", value: $customWidth, format: .number.precision(.fractionLength(0...2)))
@@ -2103,6 +2105,28 @@ private struct PageBackgroundEditorSheet: View {
 
     private var customPaperSizeLabel: String {
         "Custom (\(Int(pageSize.width.rounded())) × \(Int(pageSize.height.rounded())) pt)"
+    }
+
+    private var paperSizeSelection: Binding<String> {
+        Binding(
+            get: { selectedPaperSizeRaw },
+            set: { selection in
+                selectedPaperSizeRaw = selection
+                guard let paperSize = PaperSize(rawValue: selection) else { return }
+                applyPaperSize(paperSize)
+            }
+        )
+    }
+
+    private func selectPaperSize(_ paperSize: PaperSize) {
+        selectedPaperSizeRaw = paperSize.rawValue
+        applyPaperSize(paperSize)
+    }
+
+    private func applyPaperSize(_ paperSize: PaperSize) {
+        customWidth = paperSize.dimensions.width
+        customHeight = paperSize.dimensions.height
+        pageSize = paperSize.dimensions
     }
 }
 
