@@ -194,6 +194,52 @@ struct BeanNotesTests {
         #expect(notes.sorted(by: NoteDocument.libraryOrder).map(\.id) == [newerNote.id, olderNote.id])
     }
 
+    @Test func folderArchiveServiceArchivesContentsAndCanUnarchive() throws {
+        let context = try makeInMemoryModelContext()
+        let folder = NotebookFolder(name: "Completed Projects")
+        let note = NoteDocument(title: "Project Notes")
+        folder.notes.append(note)
+        context.insert(folder)
+        try context.save()
+
+        let archivedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let service = FolderArchiveService()
+
+        #expect(try service.archive(folder, at: archivedAt, in: context))
+        #expect(folder.isArchived)
+        #expect(folder.archivedAt == archivedAt)
+        #expect(folder.activeSortedNotes.map(\.id) == [note.id])
+        #expect(try !service.archive(folder, at: archivedAt.addingTimeInterval(60), in: context))
+        #expect(folder.archivedAt == archivedAt)
+
+        #expect(try service.unarchive(folder, in: context))
+        #expect(!folder.isArchived)
+        #expect(folder.archivedAt == nil)
+        #expect(folder.activeSortedNotes.map(\.id) == [note.id])
+        #expect(try !service.unarchive(folder, in: context))
+    }
+
+    @Test func archivedFoldersGroupByYearAndSortByNewestArchiveDate() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let olderDate = calendar.date(from: DateComponents(year: 2024, month: 12, day: 31))!
+        let earlierCurrentYearDate = calendar.date(from: DateComponents(year: 2025, month: 2, day: 1))!
+        let newerDate = calendar.date(from: DateComponents(year: 2025, month: 11, day: 15))!
+        let activeFolder = NotebookFolder(name: "Active")
+        let olderFolder = NotebookFolder(name: "Older", archivedAt: olderDate)
+        let earlierCurrentYearFolder = NotebookFolder(name: "Earlier", archivedAt: earlierCurrentYearDate)
+        let newerFolder = NotebookFolder(name: "Newer", archivedAt: newerDate)
+
+        let sections = ArchivedFolderOrganizer.sections(
+            from: [activeFolder, olderFolder, earlierCurrentYearFolder, newerFolder],
+            calendar: calendar
+        )
+
+        #expect(sections.map(\.year) == [2025, 2024])
+        #expect(sections[0].folders.map(\.id) == [newerFolder.id, earlierCurrentYearFolder.id])
+        #expect(sections[1].folders.map(\.id) == [olderFolder.id])
+    }
+
     @Test func trashPolicyExpiresNotesAtThirtyDays() {
         let trashedAt = Date(timeIntervalSince1970: 1_800_000_000)
         let justBeforeExpiration = trashedAt.addingTimeInterval(NoteTrashPolicy.retentionInterval - 1)
@@ -855,7 +901,14 @@ struct BeanNotesTests {
     @Test @MainActor func libraryBackupManifestCapturesWholeLibraryMetadata() throws {
         let context = try makeInMemoryModelContext()
         let createdAt = Date(timeIntervalSince1970: 1_800_000_000)
-        let folder = NotebookFolder(name: "CMPT 310", colorHex: "#4F7CFF", createdAt: createdAt, updatedAt: createdAt)
+        let archivedAt = createdAt.addingTimeInterval(600)
+        let folder = NotebookFolder(
+            name: "CMPT 310",
+            colorHex: "#4F7CFF",
+            createdAt: createdAt,
+            updatedAt: createdAt,
+            archivedAt: archivedAt
+        )
         let note = NoteDocument(title: "Weekly Activity", searchableText: "robotics notes", createdAt: createdAt, updatedAt: createdAt)
         let page = NotePage(
             pageOrder: 0,
@@ -889,12 +942,13 @@ struct BeanNotesTests {
 
         let manifest = LibraryBackupManifest(folders: [folder], createdAt: createdAt)
 
-        #expect(manifest.formatVersion == 1)
+        #expect(manifest.formatVersion == 2)
         #expect(manifest.folderCount == 1)
         #expect(manifest.noteCount == 1)
         #expect(manifest.pageCount == 1)
         #expect(manifest.attachmentCount == 1)
         #expect(manifest.folders.first?.name == "CMPT 310")
+        #expect(manifest.folders.first?.archivedAt == archivedAt)
         #expect(manifest.folders.first?.notes.first?.title == "Weekly Activity")
         #expect(manifest.folders.first?.notes.first?.pages.first?.drawingFileName == "page-1.drawing")
         #expect(manifest.folders.first?.notes.first?.pages.first?.attachments.first?.storedFileName == "Imports/lecture.pdf")

@@ -13,6 +13,7 @@ final class NotebookFolder {
     var colorHex: String
     var createdAt: Date
     var updatedAt: Date
+    var archivedAt: Date? = nil
 
     @Relationship(deleteRule: .cascade, inverse: \NoteDocument.folder)
     var notes: [NoteDocument]
@@ -23,6 +24,7 @@ final class NotebookFolder {
         colorHex: String = "#2563EB",
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
+        archivedAt: Date? = nil,
         notes: [NoteDocument] = []
     ) {
         self.id = id
@@ -30,7 +32,12 @@ final class NotebookFolder {
         self.colorHex = colorHex
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.archivedAt = archivedAt
         self.notes = notes
+    }
+
+    var isArchived: Bool {
+        archivedAt != nil
     }
 
     var sortedNotes: [NoteDocument] {
@@ -43,5 +50,18 @@ final class NotebookFolder {
 
     var activeNoteCount: Int {
         notes.lazy.filter { !$0.isInTrash }.count
+    }
+
+    static func archivedOrder(_ lhs: NotebookFolder, _ rhs: NotebookFolder) -> Bool {
+        let lhsDate = lhs.archivedAt ?? .distantPast
+        let rhsDate = rhs.archivedAt ?? .distantPast
+        if lhsDate == rhsDate {
+            let comparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            if comparison == .orderedSame {
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            return comparison == .orderedAscending
+        }
+        return lhsDate > rhsDate
     }
 }

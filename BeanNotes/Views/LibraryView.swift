@@ -35,6 +35,8 @@ struct LibraryView: View {
     @AppStorage(BeanVisitPolicy.blueberryFocusReminderIntervalKey) private var blueberryFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
 
     @State private var selectedFolderID: UUID?
+    @State private var selectedArchivedFolderID: UUID?
+    @State private var isArchivedSelected = false
     @State private var isTrashSelected = false
     @State private var searchText = ""
     @State private var openNoteTabs: [NoteDocument] = []
@@ -73,7 +75,7 @@ struct LibraryView: View {
     @State private var exportTask: Task<Void, Never>?
 
     private var sortedFolders: [NotebookFolder] {
-        folders.sorted { lhs, rhs in
+        folders.filter { !$0.isArchived }.sorted { lhs, rhs in
             let comparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
             if comparison == .orderedSame {
                 return lhs.id.uuidString < rhs.id.uuidString
@@ -82,13 +84,22 @@ struct LibraryView: View {
         }
     }
 
+    private var archivedFolders: [NotebookFolder] {
+        folders.filter(\.isArchived).sorted(by: NotebookFolder.archivedOrder)
+    }
+
     private var selectedFolder: NotebookFolder? {
         if let selectedFolderID,
-           let folder = folders.first(where: { $0.id == selectedFolderID }) {
+           let folder = sortedFolders.first(where: { $0.id == selectedFolderID }) {
             return folder
         }
 
         return sortedFolders.first
+    }
+
+    private var selectedArchivedFolder: NotebookFolder? {
+        guard let selectedArchivedFolderID else { return nil }
+        return archivedFolders.first { $0.id == selectedArchivedFolderID }
     }
 
     private var trashedNotes: [NoteDocument] {
@@ -105,7 +116,7 @@ struct LibraryView: View {
     }
 
     private var activeRecentNotes: [NoteDocument] {
-        recentNotes.filter { !$0.isInTrash }
+        recentNotes.filter { !$0.isInTrash && $0.folder?.isArchived != true }
     }
 
     private var nextTrashExpiration: Date? {
@@ -120,6 +131,8 @@ struct LibraryView: View {
         let source: [NoteDocument]
         if isTrashSelected {
             source = trashedNotes
+        } else if isArchivedSelected {
+            source = selectedArchivedFolder?.activeSortedNotes ?? []
         } else {
             source = selectedFolder?.activeSortedNotes ?? Array(activeRecentNotes.prefix(24))
         }
@@ -227,8 +240,10 @@ struct LibraryView: View {
             FolderListView(
                 folders: sortedFolders,
                 selectedFolderID: $selectedFolderID,
+                isArchivedSelected: $isArchivedSelected,
                 isTrashSelected: $isTrashSelected,
                 searchText: $searchText,
+                archivedFolderCount: archivedFolders.count,
                 trashNoteCount: trashedNotes.count,
                 createFolder: {
                     folderBeingEdited = nil
@@ -238,39 +253,21 @@ struct LibraryView: View {
                     folderBeingEdited = folder
                     isShowingFolderEditor = true
                 },
+                archiveFolder: archiveFolder,
                 deleteFolder: { folder in
                     folderPendingDeletion = folder
+                },
+                openArchived: {
+                    selectedArchivedFolderID = nil
+                    isArchivedSelected = true
+                    isTrashSelected = false
                 },
                 openSettings: {
                     isShowingSettings = true
                 }
             )
         } detail: {
-            NotesCardGridView(
-                folder: isTrashSelected ? nil : selectedFolder,
-                notes: visibleNotes,
-                searchText: searchText,
-                isTrash: isTrashSelected,
-                createNote: createNote,
-                importFiles: presentFileImporter,
-                importPhotos: { photoItems in
-                    importTask?.cancel()
-                    importTask = Task { @MainActor in
-                        await importPhotosAsNotes(photoItems)
-                        importTask = nil
-                    }
-                },
-                isImportingDocument: isImportingDocument,
-                importProgress: importProgress,
-                importProgressMessage: importProgressMessage,
-                cancelImport: cancelImport,
-                openNote: requestToOpenNote,
-                exportNotes: exportNotes,
-                moveNotesToTrash: { notesPendingTrash = $0 },
-                restoreNotes: restoreNotes,
-                permanentlyDeleteNotes: { notesPendingPermanentDeletion = $0 },
-                thumbnailRefreshVersions: thumbnailRefreshVersions
-            )
+            libraryDetail
         }
         .navigationSplitViewStyle(.balanced)
         .overlay {
@@ -444,6 +441,74 @@ struct LibraryView: View {
         }
     }
 
+    @ViewBuilder
+    private var libraryDetail: some View {
+        if isArchivedSelected {
+            if let selectedArchivedFolder {
+                notesGrid(
+                    folder: selectedArchivedFolder,
+                    isTrash: false,
+                    isArchived: true
+                )
+            } else {
+                ArchivedFoldersView(
+                    folders: archivedFolders,
+                    searchText: searchText,
+                    openFolder: { folder in
+                        selectedArchivedFolderID = folder.id
+                        searchText = ""
+                    },
+                    renameFolder: { folder in
+                        folderBeingEdited = folder
+                        isShowingFolderEditor = true
+                    },
+                    unarchiveFolder: unarchiveFolder,
+                    deleteFolder: { folderPendingDeletion = $0 }
+                )
+            }
+        } else {
+            notesGrid(
+                folder: isTrashSelected ? nil : selectedFolder,
+                isTrash: isTrashSelected,
+                isArchived: false
+            )
+        }
+    }
+
+    private func notesGrid(
+        folder: NotebookFolder?,
+        isTrash: Bool,
+        isArchived: Bool
+    ) -> some View {
+        NotesCardGridView(
+            folder: folder,
+            notes: visibleNotes,
+            searchText: searchText,
+            isTrash: isTrash,
+            isArchived: isArchived,
+            backToArchivedFolders: { selectedArchivedFolderID = nil },
+            createNote: createNote,
+            importFiles: presentFileImporter,
+            importPhotos: { photoItems in
+                importTask?.cancel()
+                importTask = Task { @MainActor in
+                    await importPhotosAsNotes(photoItems)
+                    importTask = nil
+                }
+            },
+            isImportingDocument: isImportingDocument,
+            importProgress: importProgress,
+            importProgressMessage: importProgressMessage,
+            cancelImport: cancelImport,
+            openNote: requestToOpenNote,
+            exportNotes: exportNotes,
+            moveNotesToTrash: { notesPendingTrash = $0 },
+            restoreNotes: restoreNotes,
+            permanentlyDeleteNotes: { notesPendingPermanentDeletion = $0 },
+            thumbnailRefreshVersions: thumbnailRefreshVersions
+        )
+    }
+
     private func bootstrapLibrary() {
         do {
             try LocalStorageService().prepareDirectories()
@@ -493,6 +558,8 @@ struct LibraryView: View {
             let folder = NotebookFolder(name: name, colorHex: colorHex)
             modelContext.insert(folder)
             selectedFolderID = folder.id
+            isArchivedSelected = false
+            isTrashSelected = false
             changedFolder = folder
             createdToast = FolderCreatedToast(
                 folderName: name,
@@ -512,6 +579,34 @@ struct LibraryView: View {
             LocalNotificationService.shared.notifyFolderCreated(named: createdToast.folderName)
         }
         return true
+    }
+
+    private func archiveFolder(_ folder: NotebookFolder) {
+        let wasSelected = selectedFolderID == folder.id
+        let nextFolderID = sortedFolders.first { $0.id != folder.id }?.id
+
+        do {
+            guard try FolderArchiveService().archive(folder, in: modelContext) else { return }
+            if wasSelected {
+                selectedFolderID = nextFolderID
+            }
+            syncSharedFolderIndex(excluding: [folder.id])
+        } catch {
+            errorMessage = "BeanNotes could not archive the folder. \(error.localizedDescription)"
+        }
+    }
+
+    private func unarchiveFolder(_ folder: NotebookFolder) {
+        do {
+            guard try FolderArchiveService().unarchive(folder, in: modelContext) else { return }
+            selectedArchivedFolderID = nil
+            selectedFolderID = folder.id
+            isArchivedSelected = false
+            isTrashSelected = false
+            syncSharedFolderIndex(including: [folder])
+        } catch {
+            errorMessage = "BeanNotes could not unarchive the folder. \(error.localizedDescription)"
+        }
     }
 
     private func showFolderCreatedToast(_ toast: FolderCreatedToast) {
@@ -1008,6 +1103,7 @@ struct LibraryView: View {
         trashUndoToast = nil
         let deletingFolderID = folder.id
         let deletingSelectedFolder = folder.id == selectedFolderID
+        let deletingSelectedArchivedFolder = folder.id == selectedArchivedFolderID
         let nextSelectedFolderID = sortedFolders.first { $0.id != deletingFolderID }?.id
         folderPendingDeletion = nil
 
@@ -1020,6 +1116,9 @@ struct LibraryView: View {
 
             if deletingSelectedFolder {
                 selectedFolderID = nextSelectedFolderID
+            }
+            if deletingSelectedArchivedFolder {
+                selectedArchivedFolderID = nil
             }
 
             syncSharedFolderIndex(excluding: [deletingFolderID])
@@ -1118,7 +1217,9 @@ struct LibraryView: View {
             foldersByID[folder.id] = folder
         }
 
-        let folders = foldersByID.values.filter { !excludedFolderIDs.contains($0.id) }
+        let folders = foldersByID.values.filter {
+            !$0.isArchived && !excludedFolderIDs.contains($0.id)
+        }
         try? ImportExportService().writeSharedFolderIndex(folders: Array(folders))
     }
 
@@ -1577,6 +1678,8 @@ private struct NotesCardGridView: View {
     var notes: [NoteDocument]
     var searchText: String
     var isTrash: Bool
+    var isArchived: Bool
+    var backToArchivedFolders: () -> Void
     var createNote: () -> Void
     var importFiles: (LibraryImportSource) -> Void
     var importPhotos: ([PhotosPickerItem]) -> Void
@@ -1686,6 +1789,17 @@ private struct NotesCardGridView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 18) {
+            if isArchived {
+                Button(action: backToArchivedFolders) {
+                    Image(systemName: "chevron.left")
+                        .font(.headline.weight(.bold))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityLabel("Back to archived folders")
+            }
+
             VStack(alignment: .leading, spacing: 6) {
                 Text(isTrash ? "Trash" : (folder?.name ?? "Recent Notes"))
                     .font(.system(size: 38, weight: .black, design: .rounded))
@@ -1741,7 +1855,7 @@ private struct NotesCardGridView: View {
                     .accessibilityLabel("Select notes")
                 }
 
-                if !isTrash {
+                if !isTrash && !isArchived {
                     Menu {
                         Button {
                             importFiles(.files)
@@ -1891,6 +2005,13 @@ private struct NotesCardGridView: View {
                 "Trash is Empty",
                 systemImage: "trash",
                 description: Text("Deleted notes stay here for 30 days before they are permanently removed.")
+            )
+            .frame(maxWidth: .infinity, minHeight: 360)
+        } else if isArchived {
+            ContentUnavailableView(
+                "No Notes",
+                systemImage: "archivebox",
+                description: Text("This archived folder is empty.")
             )
             .frame(maxWidth: .infinity, minHeight: 360)
         } else if beanNotesTheme == .bean {

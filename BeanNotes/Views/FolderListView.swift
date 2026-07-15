@@ -12,12 +12,16 @@ struct FolderListView: View {
 
     var folders: [NotebookFolder]
     @Binding var selectedFolderID: UUID?
+    @Binding var isArchivedSelected: Bool
     @Binding var isTrashSelected: Bool
     @Binding var searchText: String
+    var archivedFolderCount: Int
     var trashNoteCount: Int
     var createFolder: () -> Void
     var renameFolder: (NotebookFolder) -> Void
+    var archiveFolder: (NotebookFolder) -> Void
     var deleteFolder: (NotebookFolder) -> Void
+    var openArchived: () -> Void
     var openSettings: () -> Void
 
     var body: some View {
@@ -72,6 +76,7 @@ struct FolderListView: View {
                     Divider()
                         .padding(.vertical, 4)
 
+                    archivedRow
                     trashRow
                 }
                 .padding(.bottom, 20)
@@ -173,11 +178,12 @@ struct FolderListView: View {
     }
 
     private func folderRow(_ folder: NotebookFolder) -> some View {
-        let isSelected = !isTrashSelected && selectedFolderID == folder.id
+        let isSelected = !isArchivedSelected && !isTrashSelected && selectedFolderID == folder.id
         let folderColor = Color(hex: folder.colorHex)
 
         return Button {
             selectedFolderID = folder.id
+            isArchivedSelected = false
             isTrashSelected = false
         } label: {
             HStack(spacing: 12) {
@@ -225,6 +231,14 @@ struct FolderListView: View {
                 Label("Rename", systemImage: "pencil")
             }
 
+            Button {
+                archiveFolder(folder)
+            } label: {
+                Label("Archive", systemImage: "archivebox")
+            }
+
+            Divider()
+
             Button(role: .destructive) {
                 deleteFolder(folder)
             } label: {
@@ -234,8 +248,53 @@ struct FolderListView: View {
         .accessibilityLabel("\(folder.name), \(folder.activeNoteCount) notes")
     }
 
+    private var archivedRow: some View {
+        Button(action: openArchived) {
+            HStack(spacing: 12) {
+                Image(systemName: isArchivedSelected ? "archivebox.fill" : "archivebox")
+                    .font(.headline)
+                    .foregroundStyle(isArchivedSelected ? beanNotesTheme.accentColor : .secondary)
+                    .frame(width: 20)
+
+                Text("Archived")
+                    .font(.headline)
+                    .foregroundStyle(isArchivedSelected ? .primary : .secondary)
+
+                Spacer()
+
+                Text("\(archivedFolderCount)")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            .background(
+                beanNotesTheme.accentColor.opacity(isArchivedSelected ? 0.16 : 0.06),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .overlay(alignment: .leading) {
+                if isArchivedSelected {
+                    Rectangle()
+                        .fill(beanNotesTheme.accentColor)
+                        .frame(width: 4)
+                        .padding(.vertical, 7)
+                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(
+                        isArchivedSelected ? beanNotesTheme.accentColor.opacity(0.55) : Color.clear,
+                        lineWidth: 2
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Archived, \(archivedFolderCount) folders")
+    }
+
     private var trashRow: some View {
         Button {
+            isArchivedSelected = false
             isTrashSelected = true
         } label: {
             HStack(spacing: 12) {

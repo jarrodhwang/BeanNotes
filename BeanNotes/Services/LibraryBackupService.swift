@@ -53,7 +53,7 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
             }
             .map(FolderSnapshot.init(folder:))
 
-        self.formatVersion = 1
+        self.formatVersion = 2
         self.appName = "BeanNotes"
         self.archiveExtension = "beannotes"
         self.createdAt = createdAt
@@ -76,6 +76,7 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
         var colorHex: String
         var createdAt: Date
         var updatedAt: Date
+        var archivedAt: Date?
         var notes: [NoteSnapshot]
 
         init(folder: NotebookFolder) {
@@ -84,6 +85,7 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
             self.colorHex = folder.colorHex
             self.createdAt = folder.createdAt
             self.updatedAt = folder.updatedAt
+            self.archivedAt = folder.archivedAt
             self.notes = folder.sortedNotes.map(NoteSnapshot.init(note:))
         }
     }

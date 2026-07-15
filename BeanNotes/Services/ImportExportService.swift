@@ -673,6 +673,7 @@ struct ImportExportService {
 
         let index = SharedFolderIndex(
             folders: folders
+                .filter { !$0.isArchived }
                 .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
                 .map {
                     SharedFolderSummary(
@@ -959,7 +960,7 @@ struct ImportExportService {
         let folders = try modelContext.fetch(FetchDescriptor<NotebookFolder>())
 
         if let folderID,
-           let folder = folders.first(where: { $0.id == folderID }) {
+           let folder = folders.first(where: { $0.id == folderID && !$0.isArchived }) {
             return folder
         }
 
@@ -969,7 +970,7 @@ struct ImportExportService {
     private func ensureInboxFolder(in modelContext: ModelContext) throws -> NotebookFolder {
         let folders = try modelContext.fetch(FetchDescriptor<NotebookFolder>())
 
-        if let inbox = folders.first(where: { $0.name == "Inbox" }) {
+        if let inbox = folders.first(where: { $0.name == "Inbox" && !$0.isArchived }) {
             return inbox
         }
 
