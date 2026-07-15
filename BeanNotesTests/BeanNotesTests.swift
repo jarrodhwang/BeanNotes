@@ -1461,6 +1461,17 @@ struct BeanNotesTests {
         #expect(pageView.canvasView.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
     }
 
+    @Test func pageCanvasConsumesEmptyDirectTapsOnlyInPencilOnlyMode() {
+        let pageView = DrawingCanvasView.PageCanvasView()
+        let emptyPoint = CGPoint(x: 100, y: 100)
+
+        pageView.applyInputMode(.pencilOnly)
+        #expect(pageView.shouldHandleDirectTap(at: emptyPoint))
+
+        pageView.applyInputMode(.anyInput)
+        #expect(!pageView.shouldHandleDirectTap(at: emptyPoint))
+    }
+
     @Test @MainActor func pageCanvasLayoutPreservesStableCanvasOffsetUntilPageSizeChanges() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesPageCanvasLayout-\(UUID().uuidString)", isDirectory: true)
