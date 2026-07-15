@@ -36,6 +36,7 @@ struct NoteTrashService {
     @discardableResult
     func restore(
         _ notes: [NoteDocument],
+        to folder: NotebookFolder,
         at date: Date = Date(),
         in modelContext: ModelContext
     ) throws -> Set<UUID> {
@@ -43,10 +44,32 @@ struct NoteTrashService {
         guard !notes.isEmpty else { return [] }
 
         for note in notes {
-            note.trashedAt = nil
             note.folder?.updatedAt = date
+            note.folder = folder
+            note.trashedAt = nil
+        }
+        folder.updatedAt = date
+
+        try saveOrRollback(modelContext)
+        return Set(notes.map(\.id))
+    }
+
+    @discardableResult
+    func moveContentsToTrashAndDelete(
+        _ folder: NotebookFolder,
+        at date: Date = Date(),
+        in modelContext: ModelContext
+    ) throws -> Set<UUID> {
+        let notes = uniqueNotes(folder.notes)
+
+        for note in notes {
+            if !note.isInTrash {
+                note.trashedAt = date
+            }
+            note.folder = nil
         }
 
+        modelContext.delete(folder)
         try saveOrRollback(modelContext)
         return Set(notes.map(\.id))
     }

@@ -41,6 +41,7 @@ struct LibraryView: View {
     @State private var selectedOpenNoteID: UUID?
     @StateObject private var editorSessionStore = NoteEditorSessionStore()
     @State private var notesPendingTrash: [NoteDocument] = []
+    @State private var notesPendingRestore: [NoteDocument] = []
     @State private var notesPendingPermanentDeletion: [NoteDocument] = []
     @State private var isShowingFolderEditor = false
     @State private var isShowingDocumentImporter = false
@@ -188,6 +189,7 @@ struct LibraryView: View {
             && folderCreatedToast == nil
             && folderPendingDeletion == nil
             && notesPendingTrash.isEmpty
+            && notesPendingRestore.isEmpty
             && notesPendingPermanentDeletion.isEmpty
             && !isExportingNotes
             && errorMessage == nil
@@ -380,7 +382,7 @@ struct LibraryView: View {
                 folderPendingDeletion = nil
             }
         } message: {
-            Text("All notes in this folder, including notes in Trash, will be permanently deleted.")
+            Text("The folder will be deleted and its notes will be moved to Trash. Notes remain recoverable until their 30-day retention periods end.")
         }
         .alert(notesPendingTrash.count == 1 ? "Move Note to Trash?" : "Move Notes to Trash?", isPresented: Binding(
             get: { !notesPendingTrash.isEmpty },
@@ -395,6 +397,11 @@ struct LibraryView: View {
         } message: {
             Text("You can restore \(notesPendingTrash.count == 1 ? "this note" : "these notes") for 30 days before permanent deletion.")
         }
+        .modifier(RestoreDestinationDialog(
+            folders: sortedFolders,
+            notes: $notesPendingRestore,
+            restore: restoreNotes(_:to:)
+        ))
         .alert(
             notesPendingPermanentDeletion.count == 1 ? "Permanently Delete Note?" : "Permanently Delete Notes?",
             isPresented: Binding(
@@ -844,8 +851,12 @@ struct LibraryView: View {
     }
 
     private func restoreNotes(_ notes: [NoteDocument]) {
+        notesPendingRestore = notes
+    }
+
+    private func restoreNotes(_ notes: [NoteDocument], to folder: NotebookFolder) {
         do {
-            try NoteTrashService().restore(notes, in: modelContext)
+            try NoteTrashService().restore(notes, to: folder, in: modelContext)
         } catch {
             errorMessage = "BeanNotes could not restore the selected notes. \(error.localizedDescription)"
         }
@@ -896,24 +907,25 @@ struct LibraryView: View {
 
     private func deletePendingFolder() {
         guard let folder = folderPendingDeletion else { return }
-        let cleanupTarget = LocalStorageCleanupTarget(folder: folder)
         let deletingFolderID = folder.id
         let deletingSelectedFolder = folder.id == selectedFolderID
-        let deletingNoteIDs = Set(folder.notes.map(\.id))
         let nextSelectedFolderID = sortedFolders.first { $0.id != deletingFolderID }?.id
-
-        modelContext.delete(folder)
         folderPendingDeletion = nil
 
-        if saveLibraryChanges("delete the folder", rollbackOnFailure: true) {
-            closeNoteTabs(deletingNoteIDs)
+        do {
+            let movedNoteIDs = try NoteTrashService().moveContentsToTrashAndDelete(
+                folder,
+                in: modelContext
+            )
+            closeNoteTabs(movedNoteIDs)
 
             if deletingSelectedFolder {
                 selectedFolderID = nextSelectedFolderID
             }
 
-            reportCleanup(LocalStorageService().removeStoredFiles(matching: cleanupTarget))
             syncSharedFolderIndex(excluding: [deletingFolderID])
+        } catch {
+            errorMessage = "BeanNotes could not delete the folder. \(error.localizedDescription)"
         }
     }
 
@@ -1326,6 +1338,41 @@ private struct FolderCreatedToastView: View {
         .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Folder created. \(toast.message)")
+    }
+}
+
+private struct RestoreDestinationDialog: ViewModifier {
+    var folders: [NotebookFolder]
+    @Binding var notes: [NoteDocument]
+    var restore: ([NoteDocument], NotebookFolder) -> Void
+
+    func body(content: Content) -> some View {
+        let notesToRestore = notes
+
+        content.confirmationDialog(
+            notes.count == 1 ? "Restore Note" : "Restore Notes",
+            isPresented: Binding(
+                get: { !notes.isEmpty },
+                set: { if !$0 { notes = [] } }
+            ),
+            titleVisibility: .visible
+        ) {
+            ForEach(folders) { folder in
+                Button(folder.name) {
+                    notes = []
+                    restore(notesToRestore, folder)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                notes = []
+            }
+        } message: {
+            if folders.isEmpty {
+                Text("Create a folder before restoring notes.")
+            } else {
+                Text("Choose a folder for \(notes.count == 1 ? "this note" : "these notes").")
+            }
+        }
     }
 }
 

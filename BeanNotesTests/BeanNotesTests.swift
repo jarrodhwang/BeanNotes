@@ -206,13 +206,15 @@ struct BeanNotesTests {
         #expect(NoteTrashPolicy.remainingDays(trashedAt: trashedAt, now: trashedAt) == 30)
     }
 
-    @Test func trashServiceMovesAndRestoresNotesWithoutLosingFolder() throws {
+    @Test func trashServiceMovesAndRestoresNotesToSelectedFolder() throws {
         let context = try makeInMemoryModelContext()
-        let folder = NotebookFolder(name: "Inbox")
+        let sourceFolder = NotebookFolder(name: "Inbox")
+        let destinationFolder = NotebookFolder(name: "Archive")
         let firstNote = NoteDocument(title: "First")
         let secondNote = NoteDocument(title: "Second")
-        folder.notes.append(contentsOf: [firstNote, secondNote])
-        context.insert(folder)
+        sourceFolder.notes.append(contentsOf: [firstNote, secondNote])
+        context.insert(sourceFolder)
+        context.insert(destinationFolder)
         try context.save()
 
         let trashedAt = Date(timeIntervalSince1970: 1_800_000_000)
@@ -224,16 +226,53 @@ struct BeanNotesTests {
 
         #expect(movedIDs == [firstNote.id])
         #expect(firstNote.trashedAt == trashedAt)
-        #expect(firstNote.folder?.id == folder.id)
-        #expect(folder.activeSortedNotes.map(\.id) == [secondNote.id])
-        #expect(folder.activeNoteCount == 1)
+        #expect(firstNote.folder?.id == sourceFolder.id)
+        #expect(sourceFolder.activeSortedNotes.map(\.id) == [secondNote.id])
+        #expect(sourceFolder.activeNoteCount == 1)
 
-        let restoredIDs = try NoteTrashService().restore([firstNote], in: context)
+        let restoredAt = trashedAt.addingTimeInterval(60)
+        let restoredIDs = try NoteTrashService().restore(
+            [firstNote],
+            to: destinationFolder,
+            at: restoredAt,
+            in: context
+        )
 
         #expect(restoredIDs == [firstNote.id])
         #expect(firstNote.trashedAt == nil)
-        #expect(firstNote.folder?.id == folder.id)
-        #expect(folder.activeNoteCount == 2)
+        #expect(firstNote.folder?.id == destinationFolder.id)
+        #expect(sourceFolder.activeNoteCount == 1)
+        #expect(destinationFolder.activeSortedNotes.map(\.id) == [firstNote.id])
+        #expect(destinationFolder.updatedAt == restoredAt)
+    }
+
+    @Test func deletingFolderMovesItsContentsToTrashWithoutDeletingNotes() throws {
+        let context = try makeInMemoryModelContext()
+        let folder = NotebookFolder(name: "Projects")
+        let activeNote = NoteDocument(title: "Active")
+        let existingTrashDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let alreadyTrashedNote = NoteDocument(title: "Already Trashed", trashedAt: existingTrashDate)
+        folder.notes.append(contentsOf: [activeNote, alreadyTrashedNote])
+        context.insert(folder)
+        try context.save()
+
+        let activeNoteID = activeNote.id
+        let alreadyTrashedNoteID = alreadyTrashedNote.id
+        let deletionDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let movedIDs = try NoteTrashService().moveContentsToTrashAndDelete(
+            folder,
+            at: deletionDate,
+            in: context
+        )
+        let remainingFolders = try context.fetch(FetchDescriptor<NotebookFolder>())
+        let remainingNotes = try context.fetch(FetchDescriptor<NoteDocument>())
+
+        #expect(movedIDs == [activeNoteID, alreadyTrashedNoteID])
+        #expect(remainingFolders.isEmpty)
+        #expect(Set(remainingNotes.map(\.id)) == [activeNoteID, alreadyTrashedNoteID])
+        #expect(activeNote.trashedAt == deletionDate)
+        #expect(alreadyTrashedNote.trashedAt == existingTrashDate)
+        #expect(remainingNotes.allSatisfy { $0.folder == nil })
     }
 
     @Test func trashServicePurgesOnlyExpiredNotes() throws {
