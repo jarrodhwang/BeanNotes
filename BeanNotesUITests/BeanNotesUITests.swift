@@ -59,6 +59,7 @@ final class BeanNotesUITests: XCTestCase {
         app.buttons["Eraser"].tap()
         XCTAssertTrue(app.buttons["eraser-size-0"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Custom eraser size"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Rub Eraser eraser"].exists)
         XCTAssertFalse(app.buttons["Zoom in"].exists)
         XCTAssertFalse(app.buttons["Zoom out"].exists)
         XCTAssertFalse(app.buttons["Zoom resolution status"].exists)

@@ -286,6 +286,10 @@ enum DrawingEraserMode: String, CaseIterable, Identifiable {
     case object
     case rub
 
+    /// Modes currently exposed by the custom palette. Rub Eraser remains in the
+    /// model so existing drawings and stored preferences can continue to load.
+    static let paletteModes: [DrawingEraserMode] = [.pixel, .object]
+
     var id: String { rawValue }
 
     var label: String {

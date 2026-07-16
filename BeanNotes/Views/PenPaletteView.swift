@@ -60,6 +60,7 @@ struct PenPaletteView: View {
                 if toolState.widthMode != .standard {
                     toolState.selectWidthMode(.standard)
                 }
+                normalizeEraserModeForPalette()
                 restorePaletteColorCount()
                 selectionFeedback.prepare()
                 syncSelectedPaletteIndex()
@@ -274,7 +275,7 @@ struct PenPaletteView: View {
 
     private var eraserModePicker: some View {
         HStack(spacing: 3) {
-            ForEach(DrawingEraserMode.allCases) { mode in
+            ForEach(DrawingEraserMode.paletteModes) { mode in
                 eraserModeButton(mode)
             }
         }
@@ -695,6 +696,10 @@ struct PenPaletteView: View {
     private func selectTool(_ tool: DrawingTool) {
         performSelectionFeedback()
 
+        if tool == .eraser {
+            normalizeEraserModeForPalette()
+        }
+
         if toolState.selectedTool == tool {
             if tool == .eraser {
                 withAnimation(.snappy(duration: 0.16)) {
@@ -721,6 +726,11 @@ struct PenPaletteView: View {
         isShowingCustomWidth = false
         isShowingCustomEraserWidth = false
         isShowingRubEraserAngle = false
+    }
+
+    private func normalizeEraserModeForPalette() {
+        guard !DrawingEraserMode.paletteModes.contains(toolState.eraserMode) else { return }
+        toolState.eraserMode = .pixel
     }
 
     private var selectedPaletteColorBinding: Binding<Color> {
