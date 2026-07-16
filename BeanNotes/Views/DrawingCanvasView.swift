@@ -1295,13 +1295,11 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return selectedPageID.flatMap { pageFrames[$0] } ?? .zero
             }
 
-            let scale = max(scrollView.zoomScale, 0.01)
-            return CGRect(
-                x: scrollView.contentOffset.x / scale,
-                y: scrollView.contentOffset.y / scale,
-                width: scrollView.bounds.width / scale,
-                height: scrollView.bounds.height / scale
-            )
+            // UIScrollView changes the zoomed content view's transform, bounds origin,
+            // and effective insets independently. Converting the visible bounds through
+            // that view keeps the clipped PencilKit input surface aligned with what the
+            // user can actually see, including while centering or zooming settles.
+            return contentView.convert(scrollView.bounds, from: scrollView)
         }
 
         private func imageLoadingContentRect(visibleRect: CGRect) -> CGRect {

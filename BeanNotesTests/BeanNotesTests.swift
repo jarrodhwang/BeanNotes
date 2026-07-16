@@ -1847,6 +1847,72 @@ struct BeanNotesTests {
         #expect(fixture.pageView.drawingViewportView.frame == CGRect(x: 200, y: 260, width: 120, height: 150))
     }
 
+    @Test @MainActor func nativeDrawingViewportCoversTheTrailingVisiblePageEdge() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesTrailingViewport-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "trailing-viewport.drawing", width: 1_200, height: 900)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 600, height: 700)
+        )
+        coordinator.containerView = container
+        defer {
+            DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+        }
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        container.scrollView.setZoomScale(1.5, animated: false)
+        container.scrollView.setContentOffset(
+            CGPoint(
+                x: container.scrollView.contentSize.width
+                    - container.scrollView.bounds.width
+                    + container.scrollView.adjustedContentInset.right,
+                y: container.scrollView.contentOffset.y
+            ),
+            animated: false
+        )
+        container.scrollViewDidScroll(container.scrollView)
+        container.layoutIfNeeded()
+
+        let pageView = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .first)
+        let visiblePageRect = pageView.convert(container.scrollView.bounds, from: container.scrollView)
+            .intersection(pageView.bounds)
+
+        #expect(!visiblePageRect.isEmpty)
+        #expect(pageView.drawingViewportView.frame.maxX >= visiblePageRect.maxX - 1)
+
+        let trailingPoint = CGPoint(
+            x: visiblePageRect.maxX - 4,
+            y: visiblePageRect.midY
+        )
+        let hitView = pageView.hitTest(trailingPoint, with: nil)
+        #expect(
+            hitView === pageView.canvasView
+                || hitView?.isDescendant(of: pageView.canvasView) == true
+        )
+    }
+
     @Test @MainActor func documentBackgroundDoesNotBlockDrawingInput() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesPDFDrawing-\(UUID().uuidString)", isDirectory: true)
