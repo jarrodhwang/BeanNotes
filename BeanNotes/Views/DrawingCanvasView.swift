@@ -372,6 +372,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastDrawingViewportSize: CGSize = .zero
         private var lastZoomEndTime: CFTimeInterval = 0
         private var lastObservedContentOffsetY: CGFloat = 0
+        private var lastScrollToTopRequestTime: CFTimeInterval?
         private var isScrollingTowardLaterPages = true
         private var isUserScrolling = false
         private let pageGap: CGFloat = 28
@@ -397,6 +398,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let renderScaleChangeThreshold: CGFloat = 0.08
         private let fitSnapThreshold: CGFloat = 0.045
         private let tapAfterZoomIgnoreDuration: CFTimeInterval = 0.32
+        private let scrollToTopDoubleTapInterval: CFTimeInterval = 0.5
         private let settledZoomDelay: TimeInterval = 0.12
         private let programmaticZoomSettleDuration: CFTimeInterval = 0.4
         private let fingerTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -802,6 +804,26 @@ struct DrawingCanvasView: UIViewRepresentable {
             publishViewport()
         }
 
+        func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+            guard scrollView === self.scrollView else { return false }
+            return shouldAllowScrollToTop(at: CACurrentMediaTime())
+        }
+
+        /// The native status-bar gesture is normally a single tap. Keep the gesture,
+        /// but require a second nearby tap so an accidental touch cannot jump the
+        /// reader back to the first page.
+        func shouldAllowScrollToTop(at timestamp: CFTimeInterval) -> Bool {
+            guard let lastScrollToTopRequestTime,
+                  timestamp >= lastScrollToTopRequestTime,
+                  timestamp - lastScrollToTopRequestTime <= scrollToTopDoubleTapInterval else {
+                self.lastScrollToTopRequestTime = timestamp
+                return false
+            }
+
+            self.lastScrollToTopRequestTime = nil
+            return true
+        }
+
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             setUserScrolling(true)
         }
@@ -874,6 +896,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             scrollView.contentInsetAdjustmentBehavior = .never
             scrollView.showsVerticalScrollIndicator = true
             scrollView.showsHorizontalScrollIndicator = true
+            // Keep UIKit's status-bar gesture enabled so the delegate can require a
+            // deliberate double tap before it scrolls the document to page one.
+            scrollView.scrollsToTop = true
             scrollView.panGestureRecognizer.allowedTouchTypes = fingerTouchTypes
             scrollView.pinchGestureRecognizer?.allowedTouchTypes = fingerTouchTypes
             addSubview(scrollView)
@@ -2244,6 +2269,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.backgroundColor = .clear
             canvasView.isOpaque = false
             canvasView.isScrollEnabled = false
+            // The document scroll view is the only view that should respond to the
+            // status-bar scroll-to-top gesture.
+            canvasView.scrollsToTop = false
             canvasView.panGestureRecognizer.isEnabled = false
             canvasView.pinchGestureRecognizer?.isEnabled = false
             canvasView.minimumZoomScale = 1

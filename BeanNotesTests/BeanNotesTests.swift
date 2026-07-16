@@ -2028,6 +2028,24 @@ struct BeanNotesTests {
         #expect(container.activeCanvasView?.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
     }
 
+    @Test @MainActor func documentTopScrollRequiresDoubleTap() {
+        let container = DrawingCanvasView.CanvasContainerView()
+
+        #expect(container.scrollView.scrollsToTop)
+        #expect(!DrawingCanvasView.PageCanvasView().canvasView.scrollsToTop)
+        #expect(!container.scrollViewShouldScrollToTop(container.scrollView))
+        #expect(container.scrollViewShouldScrollToTop(container.scrollView))
+
+        #expect(!container.shouldAllowScrollToTop(at: 10))
+        #expect(container.shouldAllowScrollToTop(at: 10.4))
+
+        // A completed double tap resets the sequence, and a delayed second tap must
+        // start a new sequence rather than moving the reader unexpectedly.
+        #expect(!container.shouldAllowScrollToTop(at: 10.5))
+        #expect(!container.shouldAllowScrollToTop(at: 11.1))
+        #expect(container.shouldAllowScrollToTop(at: 11.5))
+    }
+
     @Test func attachmentSelectionWaitsForFingerDoubleTapZoom() throws {
         let pageView = DrawingCanvasView.PageCanvasView()
         let attachmentSelection = try #require(pageView.attachmentSelectionGesture)
