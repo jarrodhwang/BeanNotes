@@ -3141,6 +3141,126 @@ struct BeanNotesTests {
         #expect(rejoinedCanvas.drawing.strokes.count == 3)
     }
 
+    @Test @MainActor func scrollableCanvasRoutesImageSelectionAndControlsAbovePencilKit() throws {
+        let modelContext = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesScrollableImageEditing-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(
+            pageOrder: 0,
+            drawingFileName: "scrollable-image-editing.drawing",
+            width: 612,
+            height: 792
+        )
+        let image = Attachment(
+            kind: .image,
+            displayName: "Editable Image",
+            originalFileName: "editable.png",
+            storedFileName: "Imports/editable.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 80,
+            y: 100,
+            width: 240,
+            height: 180,
+            rendersBehindDrawing: true
+        )
+        modelContext.insert(page)
+        page.attachments.append(image)
+        try modelContext.save()
+
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        defer {
+            DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+        }
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .seamless,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let sectionView = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .first { $0.accessibilityIdentifier == "noteCanvasSection" })
+        let continuousView = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .first { $0.accessibilityLabel == "Continuous drawing canvas" })
+        let selectionPoint = CGPoint(
+            x: sectionView.frame.minX + image.frame.midX,
+            y: sectionView.frame.minY + image.frame.midY
+        )
+
+        #expect(container.selectSeamlessAttachment(at: selectionPoint))
+        #expect(sectionView.selectedAttachmentID == image.id)
+
+        let editingHost = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingHostView }
+            .first)
+        let overlay = try #require(editingHost.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingOverlayView }
+            .first)
+        let continuousIndex = try #require(container.contentView.subviews.firstIndex { $0 === continuousView })
+        let editingHostIndex = try #require(container.contentView.subviews.firstIndex { $0 === editingHost })
+        #expect(editingHostIndex > continuousIndex)
+
+        overlay.layoutIfNeeded()
+        let controls = overlay.subviews.compactMap { $0 as? UIButton }
+        #expect(controls.count == 4)
+        for control in controls {
+            let controlCenter = control.convert(
+                CGPoint(x: control.bounds.midX, y: control.bounds.midY),
+                to: container.contentView
+            )
+            #expect(container.contentView.hitTest(controlCenter, with: nil) === control)
+        }
+
+        let moveControl = try #require(controls.first { $0.accessibilityLabel == "Move Editable Image" })
+        let resizeControl = try #require(controls.first { $0.accessibilityLabel == "Resize Editable Image" })
+        #expect(moveControl.gestureRecognizers?.contains { $0 is UIPanGestureRecognizer } == true)
+        #expect(resizeControl.gestureRecognizers?.contains { $0 is UIPanGestureRecognizer } == true)
+
+        let doneControl = try #require(controls.first {
+            $0.accessibilityLabel == "Finish editing Editable Image"
+        })
+        doneControl.sendActions(for: .touchUpInside)
+        #expect(sectionView.selectedAttachmentID == nil)
+        #expect(!container.contentView.subviews.contains { $0 is DrawingCanvasView.AttachmentEditingHostView })
+
+        #expect(container.selectSeamlessAttachment(at: selectionPoint))
+        let deletionHost = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingHostView }
+            .first)
+        let deletionOverlay = try #require(deletionHost.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingOverlayView }
+            .first)
+        deletionOverlay.layoutIfNeeded()
+        let deleteControl = try #require(deletionOverlay.subviews
+            .compactMap { $0 as? UIButton }
+            .first { $0.accessibilityLabel == "Delete Editable Image" })
+        deleteControl.sendActions(for: .touchUpInside)
+        #expect(sectionView.selectedAttachmentID == nil)
+        #expect(!container.contentView.subviews.contains { $0 is DrawingCanvasView.AttachmentEditingHostView })
+    }
+
     @Test @MainActor func zoomedRelayoutPreservesViewportAndReachableDocumentEdges() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesZoomedRelayout-\(UUID().uuidString)", isDirectory: true)

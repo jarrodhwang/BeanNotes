@@ -348,7 +348,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         coordinator.containerView = nil
     }
 
-    final class CanvasContainerView: UIView, UIScrollViewDelegate {
+    final class CanvasContainerView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         let scrollView = UIScrollView()
         let contentView = UIView()
         let addPageFooterButton = UIButton(type: .system)
@@ -359,6 +359,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private var pageViews: [UUID: PageCanvasView] = [:]
         private var continuousPageView: PageCanvasView?
+        private var seamlessAttachmentSelectionGesture: UITapGestureRecognizer?
         private var pagesByID: [UUID: NotePage] = [:]
         private var orderedPageIDs: [UUID] = []
         private var pageFrames: [UUID: CGRect] = [:]
@@ -546,6 +547,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             self.pageFlowMode = pageFlowMode
+            seamlessAttachmentSelectionGesture?.isEnabled = pageFlowMode == .seamless
             self.inputMode = inputMode
             self.renderQuality = renderQuality
             self.theme = theme
@@ -1010,6 +1012,17 @@ struct DrawingCanvasView: UIViewRepresentable {
             contentView.layer.shouldRasterize = false
             scrollView.addSubview(contentView)
 
+            let selectSeamlessAttachment = UITapGestureRecognizer(
+                target: self,
+                action: #selector(handleSeamlessAttachmentSelection(_:))
+            )
+            selectSeamlessAttachment.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            selectSeamlessAttachment.cancelsTouchesInView = true
+            selectSeamlessAttachment.delegate = self
+            selectSeamlessAttachment.isEnabled = false
+            contentView.addGestureRecognizer(selectSeamlessAttachment)
+            seamlessAttachmentSelectionGesture = selectSeamlessAttachment
+
             var footerConfiguration = UIButton.Configuration.filled()
             footerConfiguration.image = UIImage(systemName: "plus")
             footerConfiguration.cornerStyle = .capsule
@@ -1222,6 +1235,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             for id in orderedPageIDs {
                 guard let pageView = pageViews[id], let frame = pageFrames[id] else { continue }
                 pageView.presentForegroundImages(in: contentView, documentFrame: frame)
+                pageView.presentAttachmentEditingControls(in: contentView, documentFrame: frame)
             }
             if let topContentView {
                 contentView.bringSubviewToFront(topContentView)
@@ -1233,6 +1247,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard let continuousPageView else { return }
             for pageView in pageViews.values {
                 pageView.restoreForegroundImagesToPage()
+                pageView.restoreAttachmentEditingControlsToPage()
             }
             if let page = continuousPageView.page {
                 coordinator?.unregister(
@@ -1440,8 +1455,96 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             if didChangeMaterializedPages {
+                arrangeDocumentLayers()
                 updateNativeDrawingViewports(force: true)
             }
+        }
+
+        @objc private func handleSeamlessAttachmentSelection(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            selectSeamlessAttachment(at: recognizer.location(in: contentView))
+        }
+
+        /// Routes image editing through the document-level canvas used by seamless mode.
+        /// The section views that own attachment models sit below PencilKit in this mode,
+        /// so their local tap recognizers cannot receive the touch directly.
+        @discardableResult
+        func selectSeamlessAttachment(at documentPoint: CGPoint) -> Bool {
+            guard pageFlowMode == .seamless else { return false }
+
+            let target = seamlessAttachmentTarget(at: documentPoint)
+            for pageView in pageViews.values where pageView !== target?.pageView {
+                pageView.clearAttachmentSelection()
+            }
+
+            guard let target else {
+                return false
+            }
+
+            target.pageView.beginEditingAttachment(id: target.attachment.id)
+            target.pageView.presentAttachmentEditingControls(
+                in: contentView,
+                documentFrame: target.documentFrame
+            )
+            return target.pageView.selectedAttachmentID == target.attachment.id
+        }
+
+        private func seamlessAttachmentTarget(
+            at documentPoint: CGPoint
+        ) -> (pageView: PageCanvasView, attachment: Attachment, documentFrame: CGRect)? {
+            for id in orderedPageIDs.reversed() {
+                guard let documentFrame = pageFrames[id],
+                      documentFrame.contains(documentPoint),
+                      let pageView = pageViews[id] else {
+                    continue
+                }
+
+                let pagePoint = CGPoint(
+                    x: documentPoint.x - documentFrame.minX,
+                    y: documentPoint.y - documentFrame.minY
+                )
+                if let attachment = pageView.editableAttachment(at: pagePoint) {
+                    return (pageView, attachment, documentFrame)
+                }
+            }
+
+            return nil
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            guard gestureRecognizer === seamlessAttachmentSelectionGesture,
+                  pageFlowMode == .seamless else {
+                return true
+            }
+
+            var touchedView = touch.view
+            while let view = touchedView {
+                if view is AttachmentEditingOverlayView {
+                    return false
+                }
+                touchedView = view.superview
+            }
+
+            let documentPoint = touch.location(in: contentView)
+            return seamlessAttachmentTarget(at: documentPoint) != nil
+                || pageViews.values.contains { $0.selectedAttachmentID != nil }
+                || continuousPageView?.consumesBlankCanvasTaps == true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard gestureRecognizer === seamlessAttachmentSelectionGesture,
+                  let tapGesture = otherGestureRecognizer as? UITapGestureRecognizer else {
+                return false
+            }
+
+            return tapGesture.numberOfTouchesRequired == 1
+                && tapGesture.numberOfTapsRequired > 1
         }
 
         @discardableResult
@@ -2919,6 +3022,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let eraserScopeGesture = EraserScopeGestureRecognizer()
         private(set) var attachmentSelectionGesture: UITapGestureRecognizer?
         private var attachmentEditingOverlay: AttachmentEditingOverlayView?
+        private var attachmentEditingHostView: AttachmentEditingHostView?
         private(set) var page: NotePage?
         private(set) var selectedAttachmentID: UUID?
         private var configurationSignature: String?
@@ -3203,11 +3307,42 @@ struct DrawingCanvasView: UIViewRepresentable {
             hostView.bringSubviewToFront(foregroundImageContainerView)
         }
 
+        func presentAttachmentEditingControls(in hostView: UIView, documentFrame: CGRect) {
+            guard let attachmentEditingOverlay else { return }
+
+            let editingHost = attachmentEditingHostView ?? {
+                let view = AttachmentEditingHostView()
+                attachmentEditingHostView = view
+                return view
+            }()
+            editingHost.frame = documentFrame
+            if editingHost.superview !== hostView {
+                editingHost.removeFromSuperview()
+                hostView.addSubview(editingHost)
+            }
+            if attachmentEditingOverlay.superview !== editingHost {
+                attachmentEditingOverlay.removeFromSuperview()
+                editingHost.addSubview(attachmentEditingOverlay)
+            }
+            hostView.bringSubviewToFront(editingHost)
+        }
+
         func restoreForegroundImagesToPage() {
             guard foregroundImageContainerView.superview !== self else { return }
             foregroundImageContainerView.removeFromSuperview()
             addSubview(foregroundImageContainerView)
             foregroundImageContainerView.frame = CGRect(origin: .zero, size: drawingPageSize)
+            restoreDrawingLayerOrder()
+        }
+
+        func restoreAttachmentEditingControlsToPage() {
+            guard let editingHost = attachmentEditingHostView else { return }
+            if let attachmentEditingOverlay {
+                attachmentEditingOverlay.removeFromSuperview()
+                addSubview(attachmentEditingOverlay)
+            }
+            editingHost.removeFromSuperview()
+            attachmentEditingHostView = nil
             restoreDrawingLayerOrder()
         }
 
@@ -3671,6 +3806,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             beginEditingAttachment(attachment)
         }
 
+        func editableAttachment(at point: CGPoint) -> Attachment? {
+            topmostEditableAttachment(at: point)
+        }
+
         private func beginEditingAttachment(_ attachment: Attachment) {
             guard !attachment.isLocked, let page else {
                 clearAttachmentSelection()
@@ -3708,13 +3847,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self?.clearAttachmentSelection()
                 }
             )
-            bringSubviewToFront(overlay)
+            overlay.superview?.bringSubviewToFront(overlay)
         }
 
         func clearAttachmentSelection() {
             selectedAttachmentID = nil
             attachmentEditingOverlay?.removeFromSuperview()
             attachmentEditingOverlay = nil
+            attachmentEditingHostView?.removeFromSuperview()
+            attachmentEditingHostView = nil
         }
 
         private func topmostEditableAttachment(at point: CGPoint) -> Attachment? {
@@ -4028,7 +4169,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 insertSubview(foregroundImageContainerView, aboveSubview: drawingViewportView)
             }
 
-            if let attachmentEditingOverlay {
+            if let attachmentEditingOverlay, attachmentEditingOverlay.superview === self {
                 bringSubviewToFront(attachmentEditingOverlay)
             }
             bringSubviewToFront(eraserScopeView)
@@ -4050,6 +4191,23 @@ struct DrawingCanvasView: UIViewRepresentable {
             imageViews.removeAll()
             clearAttachmentSelection()
             hasConfiguredImageAttachments = false
+        }
+    }
+
+    final class AttachmentEditingHostView: UIView {
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
+
+            for subview in subviews.reversed() {
+                let subviewPoint = subview.convert(point, from: self)
+                if let hitView = subview.hitTest(subviewPoint, with: event) {
+                    return hitView
+                }
+            }
+
+            // The host spans a whole page but only the image editing controls should
+            // intercept touches. Everything else continues to the PencilKit canvas.
+            return nil
         }
     }
 
