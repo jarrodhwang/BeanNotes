@@ -2937,7 +2937,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var appliedInputMode: DrawingInputMode?
         private var isUsingDrawingTool = false
         private var eraserPreviewDiameter: CGFloat?
-        private var usesCustomPixelEraser = false
         private var usesCustomObjectEraser = false
         private var rubEraserConfiguration: RubEraserConfiguration?
         private var objectEraserPath = ObjectEraserPathAccumulator()
@@ -2967,16 +2966,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             usesCustomObjectEraser
         }
 
-        var isUsingCustomPixelEraser: Bool {
-            usesCustomPixelEraser
-        }
-
         var isUsingCustomRubEraser: Bool {
             rubEraserConfiguration != nil
         }
 
         private var usesCustomEraserInput: Bool {
-            usesCustomPixelEraser || usesCustomObjectEraser || rubEraserConfiguration != nil
+            usesCustomObjectEraser || rubEraserConfiguration != nil
         }
 
         var consumesBlankCanvasTaps: Bool {
@@ -3823,25 +3818,21 @@ struct DrawingCanvasView: UIViewRepresentable {
         func setEraserPreviewEnabled(
             _ enabled: Bool,
             diameter: CGFloat? = nil,
-            usesCustomPixelEraser: Bool = false,
             usesCustomObjectEraser: Bool = false,
             rubEraserConfiguration: RubEraserConfiguration? = nil
         ) {
             let previewDiameterChanged = eraserPreviewDiameter != diameter
             eraserPreviewDiameter = diameter
-            let shouldUseCustomPixelEraser = enabled && usesCustomPixelEraser
             let shouldUseCustomObjectEraser = enabled && usesCustomObjectEraser
             let nextRubConfiguration = enabled && rubEraserConfiguration?.isValid == true
                 ? rubEraserConfiguration
                 : nil
-            let customConfigurationChanged = self.usesCustomPixelEraser != shouldUseCustomPixelEraser
-                || self.usesCustomObjectEraser != shouldUseCustomObjectEraser
+            let customConfigurationChanged = self.usesCustomObjectEraser != shouldUseCustomObjectEraser
                 || self.rubEraserConfiguration != nextRubConfiguration
             if customConfigurationChanged {
                 if isTrackingObjectEraser {
                     finishObjectEraser(committing: false)
                 }
-                self.usesCustomPixelEraser = shouldUseCustomPixelEraser
                 self.usesCustomObjectEraser = shouldUseCustomObjectEraser
                 self.rubEraserConfiguration = nextRubConfiguration
             }
@@ -3951,15 +3942,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                     configuration: rubEraserConfiguration,
                     from: canvasView.drawing
                 )
-            } else if usesCustomPixelEraser,
-                      let diameter = eraserPreviewDiameter,
-                      diameter.isFinite,
-                      diameter > 0 {
-                drawing = drawingByErasingInk(
-                    along: eraserPath,
-                    diameter: diameter,
-                    from: canvasView.drawing
-                )
             } else if let diameter = eraserPreviewDiameter,
                       diameter.isFinite,
                       diameter > 0 {
@@ -4006,19 +3988,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 drawing.strokes,
                 along: eraserPath,
                 configuration: configuration
-            ) else { return nil }
-            return PKDrawing(strokes: strokes)
-        }
-
-        private func drawingByErasingInk(
-            along eraserPath: [CGPoint],
-            diameter: CGFloat,
-            from drawing: PKDrawing
-        ) -> PKDrawing? {
-            guard let strokes = PartialEraserStrokeProcessor.strokesByErasing(
-                drawing.strokes,
-                along: eraserPath,
-                diameter: diameter
             ) else { return nil }
             return PKDrawing(strokes: strokes)
         }
@@ -5477,7 +5446,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasPageViews[id]?.value?.setEraserPreviewEnabled(
                 eraserTool != nil,
                 diameter: previewDiameter,
-                usesCustomPixelEraser: eraserMode == .pixel,
                 usesCustomObjectEraser: eraserMode == .object,
                 rubEraserConfiguration: rubConfiguration
             )

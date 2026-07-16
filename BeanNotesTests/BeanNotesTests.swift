@@ -5578,16 +5578,14 @@ struct BeanNotesTests {
 
         fixture.pageView.setEraserPreviewEnabled(
             true,
-            diameter: 12,
-            usesCustomPixelEraser: true
+            diameter: 12
         )
         fixture.pageView.updateEraserScope(at: location)
         #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 12, height: 12))
 
         fixture.pageView.setEraserPreviewEnabled(
             true,
-            diameter: 42,
-            usesCustomPixelEraser: true
+            diameter: 42
         )
         #expect(fixture.pageView.eraserScopeView.center == location)
         #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 42, height: 42))
@@ -5632,44 +5630,39 @@ struct BeanNotesTests {
         #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
     }
 
-    @Test @MainActor func customPixelEraserUsesTheSelectedCircleBoundary() throws {
-        let fixture = try makePageCanvasFixture(name: "CustomPixelEraser")
+    @Test @MainActor func pixelEraserUsesNativePencilKitInput() throws {
+        let fixture = try makePageCanvasFixture(name: "NativePixelEraser")
         defer { fixture.cleanup() }
+        let page = try #require(fixture.pageView.page)
         let stroke = makeTestStroke(
             from: CGPoint(x: 20, y: 100),
             to: CGPoint(x: 180, y: 100),
             width: 4
         )
         fixture.pageView.canvasView.drawing = PKDrawing(strokes: [stroke])
-        fixture.pageView.setEraserPreviewEnabled(
-            true,
-            diameter: 12,
-            usesCustomPixelEraser: true
+        let toolState = fixture.coordinator.parent.toolState
+        toolState.selectEraserMode(.pixel)
+        toolState.applyEraserWidth(26)
+        fixture.coordinator.register(
+            canvasView: fixture.pageView.canvasView,
+            page: page,
+            pageView: fixture.pageView
         )
 
-        #expect(fixture.pageView.isUsingCustomPixelEraser)
-        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        let eraser = try #require(fixture.pageView.canvasView.tool as? PKEraserTool)
+        #expect(eraser.eraserType == .fixedWidthBitmap)
+        #expect(eraser.width == 26)
+        #expect(!fixture.pageView.isUsingCustomObjectEraser)
+        #expect(!fixture.pageView.isUsingCustomRubEraser)
+        #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
 
-        let location = CGPoint(x: 100, y: 114)
-        fixture.pageView.handleEraserInteraction(.began(location))
-        fixture.pageView.handleEraserInteraction(.ended(location))
-        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
-        #expect(fixture.pageView.canvasView.drawing.strokes[0].renderBounds == stroke.renderBounds)
-
-        fixture.pageView.setEraserPreviewEnabled(
-            true,
-            diameter: 26,
-            usesCustomPixelEraser: true
-        )
-        fixture.pageView.handleEraserInteraction(.began(location))
-        fixture.pageView.handleEraserInteraction(.ended(location))
-
-        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
-        let updatedStroke = try #require(fixture.pageView.canvasView.drawing.strokes.first)
-        let updatedMask = try #require(updatedStroke.mask)
-        #expect(!updatedMask.contains(CGPoint(x: 100, y: 102)))
-        #expect(updatedMask.contains(CGPoint(x: 100, y: 100)))
-        #expect(updatedStroke.path.count == stroke.path.count)
+        // The scope recognizer may observe the touch for its cursor, but pixel erasing
+        // stays exclusively on PencilKit's optimized drawing recognizer.
+        fixture.pageView.handleEraserInteraction(.began(CGPoint(x: 100, y: 100)))
+        fixture.pageView.handleEraserInteraction(.moved(CGPoint(x: 120, y: 100)))
+        fixture.pageView.handleEraserInteraction(.ended(CGPoint(x: 140, y: 100)))
+        #expect(fixture.pageView.canvasView.drawing.strokes.first?.mask == nil)
+        #expect(fixture.pageView.canvasView.drawing.strokes.first?.renderBounds == stroke.renderBounds)
     }
 
     @Test @MainActor func customRubEraserRetainsTightMovementSamples() throws {
@@ -5762,8 +5755,12 @@ struct BeanNotesTests {
             pageView: fixture.pageView
         )
         #expect(!fixture.pageView.isUsingCustomRubEraser)
-        #expect(fixture.pageView.isUsingCustomPixelEraser)
-        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        #expect(!fixture.pageView.isUsingCustomObjectEraser)
+        #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        let pixelEraser = try #require(
+            fixture.pageView.canvasView.tool as? PKEraserTool
+        )
+        #expect(pixelEraser.eraserType == .fixedWidthBitmap)
 
         toolState.select(.pen)
         fixture.coordinator.register(
