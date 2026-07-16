@@ -2431,6 +2431,40 @@ struct BeanNotesTests {
         )
     }
 
+    @Test func paletteColorCountDefaultsMatchIPadScreenClasses() throws {
+        let elevenInchPortrait = CGSize(width: 834, height: 1_210)
+        let elevenInchLandscape = CGSize(width: 1_210, height: 834)
+        let thirteenInchPortrait = CGSize(width: 1_032, height: 1_376)
+        let thirteenInchLandscape = CGSize(width: 1_376, height: 1_032)
+
+        #expect(DrawingPaletteConfiguration.defaultColorCount(for: elevenInchPortrait) == 5)
+        #expect(DrawingPaletteConfiguration.defaultColorCount(for: elevenInchLandscape) == 5)
+        #expect(DrawingPaletteConfiguration.defaultColorCount(for: thirteenInchPortrait) == 8)
+        #expect(DrawingPaletteConfiguration.defaultColorCount(for: thirteenInchLandscape) == 8)
+        #expect(DrawingPaletteConfiguration.normalizedColorCount(0) == 1)
+        #expect(DrawingPaletteConfiguration.normalizedColorCount(6) == 6)
+        #expect(DrawingPaletteConfiguration.normalizedColorCount(99) == 8)
+
+        let elevenInchSuiteName = "BeanNotesPaletteCountDefaults11-\(UUID().uuidString)"
+        let thirteenInchSuiteName = "BeanNotesPaletteCountDefaults13-\(UUID().uuidString)"
+        let elevenInchDefaults = try #require(UserDefaults(suiteName: elevenInchSuiteName))
+        let thirteenInchDefaults = try #require(UserDefaults(suiteName: thirteenInchSuiteName))
+        defer {
+            elevenInchDefaults.removePersistentDomain(forName: elevenInchSuiteName)
+            thirteenInchDefaults.removePersistentDomain(forName: thirteenInchSuiteName)
+        }
+
+        #expect(DrawingPaletteConfiguration.persistedColorCount(for: elevenInchPortrait, in: elevenInchDefaults) == 5)
+        #expect(DrawingPaletteConfiguration.persistedColorCount(for: thirteenInchPortrait, in: thirteenInchDefaults) == 8)
+        #expect(DrawingPaletteConfiguration.persistedColorCount(for: thirteenInchPortrait, in: elevenInchDefaults) == 5)
+
+        elevenInchDefaults.set(6, forKey: DrawingPaletteConfiguration.colorCountStorageKey)
+        #expect(DrawingPaletteConfiguration.persistedColorCount(for: thirteenInchPortrait, in: elevenInchDefaults) == 6)
+
+        elevenInchDefaults.set(99, forKey: DrawingPaletteConfiguration.colorCountStorageKey)
+        #expect(DrawingPaletteConfiguration.persistedColorCount(for: thirteenInchPortrait, in: elevenInchDefaults) == 8)
+    }
+
     @Test func penPaletteEstimatesCompactCalibrationLayoutInTwoRows() {
         let compactInkSize = PenPaletteLayoutMetrics.estimatedPaletteSize(
             isCompact: true,
@@ -4901,6 +4935,36 @@ struct BeanNotesTests {
         #expect(!penPalette.contains(selectedBlueHex))
         #expect(!pencilPalette.contains(selectedGreenHex))
         #expect(!highlighterPalette.contains(selectedRedHex))
+    }
+
+    @Test @MainActor func customPaletteDisplayCountPreservesHiddenSwatches() throws {
+        let suiteName = "BeanNotesPaletteDisplayCount-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let toolState = DrawingToolState(defaults: defaults)
+        let fullPalette = toolState.paletteSwatches(for: .pen).map(\.colorHex)
+        let compactPalette = toolState.paletteSwatches(for: .pen, displaying: 5).map(\.colorHex)
+
+        #expect(fullPalette.count == DrawingPaletteConfiguration.maximumColorCount)
+        #expect(compactPalette == Array(fullPalette.prefix(5)))
+        #expect(toolState.paletteSwatches(for: .pen, displaying: 99).map(\.colorHex) == fullPalette)
+
+        toolState.select(.pen)
+        toolState.selectPaletteColor(toolState.paletteColor(at: 7, for: .pen))
+
+        let visibleSelectionIndex = toolState.ensureActivePaletteColorIsVisible(
+            for: .pen,
+            displaying: 5
+        )
+        #expect(visibleSelectionIndex == 0)
+        #expect(
+            UIColor(toolState.inkColor(for: .pen)).hexRGB
+                == UIColor(toolState.paletteColor(at: visibleSelectionIndex, for: .pen)).hexRGB
+        )
+        #expect(toolState.paletteSwatches(for: .pen).map(\.colorHex) == fullPalette)
     }
 
     @Test @MainActor func customPaletteIndexesMatchActiveColorsAcrossTools() throws {

@@ -589,8 +589,6 @@ final class DrawingToolState: ObservableObject {
         static let widthMode = "drawingToolState.widthMode"
     }
 
-    private static let maximumPaletteColorCount = 8
-
     private let defaults: UserDefaults
 
     @Published var selectedTool: DrawingTool = .pen {
@@ -804,9 +802,12 @@ final class DrawingToolState: ObservableObject {
         Self.widthCalibration(for: tool ?? activeColorTool, mode: widthMode).presets
     }
 
-    func paletteSwatches(for tool: DrawingTool? = nil) -> [DrawingColorSwatch] {
+    func paletteSwatches(
+        for tool: DrawingTool? = nil,
+        displaying colorCount: Int? = nil
+    ) -> [DrawingColorSwatch] {
         let swatchTool = tool ?? activeColorTool
-        return paletteColorHexes(for: swatchTool).enumerated().map { index, hex in
+        return paletteColorHexes(for: swatchTool, displaying: colorCount).enumerated().map { index, hex in
             DrawingColorSwatch(index: index, name: Self.colorName(for: hex), colorHex: hex)
         }
     }
@@ -815,10 +816,14 @@ final class DrawingToolState: ObservableObject {
         paletteColor(at: 0, for: tool)
     }
 
-    func paletteIndexMatchingActiveColor(for tool: DrawingTool? = nil, preferredIndex: Int? = nil) -> Int {
+    func paletteIndexMatchingActiveColor(
+        for tool: DrawingTool? = nil,
+        preferredIndex: Int? = nil,
+        displaying colorCount: Int? = nil
+    ) -> Int {
         let swatchTool = tool ?? activeColorTool
         let activeColorHex = Self.normalizedHex(UIColor(inkColor(for: swatchTool)).hexRGB)
-        let colors = paletteColorHexes(for: swatchTool)
+        let colors = paletteColorHexes(for: swatchTool, displaying: colorCount)
         if let preferredIndex,
            colors.indices.contains(preferredIndex),
            Self.normalizedHex(colors[preferredIndex]) == activeColorHex {
@@ -826,6 +831,29 @@ final class DrawingToolState: ObservableObject {
         }
 
         return colors.firstIndex { Self.normalizedHex($0) == activeColorHex } ?? 0
+    }
+
+    /// Keeps the active ink aligned with the swatches currently visible in the palette UI.
+    func ensureActivePaletteColorIsVisible(
+        for tool: DrawingTool? = nil,
+        preferredIndex: Int? = nil,
+        displaying colorCount: Int
+    ) -> Int {
+        let swatchTool = tool ?? activeColorTool
+        let selectedIndex = paletteIndexMatchingActiveColor(
+            for: swatchTool,
+            preferredIndex: preferredIndex,
+            displaying: colorCount
+        )
+        let selectedColor = paletteColor(at: selectedIndex, for: swatchTool)
+        let selectedColorHex = Self.normalizedHex(UIColor(selectedColor).hexRGB)
+        let activeColorHex = Self.normalizedHex(UIColor(inkColor(for: swatchTool)).hexRGB)
+
+        if selectedColorHex != activeColorHex {
+            setInkColor(selectedColor, for: swatchTool)
+        }
+
+        return selectedIndex
     }
 
     func paletteColor(at index: Int, for tool: DrawingTool? = nil) -> Color {
@@ -1259,17 +1287,25 @@ final class DrawingToolState: ObservableObject {
         defaultPaletteColorHexes(for: tool).first ?? "#000000"
     }
 
-    private func paletteColorHexes(for tool: DrawingTool) -> [String] {
+    private func paletteColorHexes(
+        for tool: DrawingTool,
+        displaying colorCount: Int? = nil
+    ) -> [String] {
+        let colors: [String]
+
         switch tool {
         case .pen:
-            penPaletteColorHexes
+            colors = penPaletteColorHexes
         case .pencil:
-            pencilPaletteColorHexes
+            colors = pencilPaletteColorHexes
         case .highlighter:
-            highlighterPaletteColorHexes
+            colors = highlighterPaletteColorHexes
         case .eraser, .lasso:
-            penPaletteColorHexes
+            colors = penPaletteColorHexes
         }
+
+        guard let colorCount else { return colors }
+        return Array(colors.prefix(DrawingPaletteConfiguration.normalizedColorCount(colorCount)))
     }
 
     private func setPaletteColorHexes(_ colorHexes: [String], for tool: DrawingTool) {
@@ -1344,7 +1380,7 @@ final class DrawingToolState: ObservableObject {
             normalized.append(hex)
         }
 
-        return Array(normalized.prefix(maximumPaletteColorCount))
+        return Array(normalized.prefix(DrawingPaletteConfiguration.maximumColorCount))
     }
 
     private static func normalizedHex(_ colorHex: String) -> String {

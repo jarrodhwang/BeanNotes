@@ -14,6 +14,8 @@ struct PenPaletteView: View {
 
     @AppStorage(PenPaletteLayoutMetrics.isCollapsedStorageKey) private var isCollapsed = false
     @AppStorage(PenPaletteLayoutMetrics.committedOffsetStorageKey) private var committedOffsetRaw = ""
+    @AppStorage(DrawingPaletteConfiguration.colorCountStorageKey)
+    private var paletteColorCount = DrawingPaletteConfiguration.defaultColorCountForCurrentDevice
     @State private var isShowingEraserModes = false
     @State private var committedOffset: CGSize = .zero
     @GestureState private var dragOffset: CGSize = .zero
@@ -57,6 +59,7 @@ struct PenPaletteView: View {
                 if toolState.widthMode != .standard {
                     toolState.selectWidthMode(.standard)
                 }
+                restorePaletteColorCount()
                 selectionFeedback.prepare()
                 syncSelectedPaletteIndex()
                 clampCommittedOffset()
@@ -71,6 +74,12 @@ struct PenPaletteView: View {
             .onChange(of: isCollapsed) { _, _ in
                 clampCommittedOffset(persisting: true)
             }
+            .onChange(of: paletteColorCount) { _, _ in
+                normalizePaletteColorCountIfNeeded()
+                measuredPaletteSize = .zero
+                syncSelectedPaletteIndex()
+                clampCommittedOffset(persisting: true)
+            }
             .onChange(of: activePaletteSelectionSignature) { _, _ in
                 syncSelectedPaletteIndex()
             }
@@ -82,6 +91,7 @@ struct PenPaletteView: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Pen palette")
+            .accessibilityValue("\(displayedPaletteColorCount) colors")
     }
 
     @ViewBuilder
@@ -170,7 +180,7 @@ struct PenPaletteView: View {
 
     private var colorControls: some View {
         HStack(spacing: 6) {
-            ForEach(toolState.paletteSwatches()) { swatch in
+            ForEach(displayedPaletteSwatches) { swatch in
                 swatchButton(swatch)
             }
         }
@@ -485,7 +495,11 @@ struct PenPaletteView: View {
 
     private var effectivePaletteSize: CGSize {
         measuredPaletteSize == .zero
-            ? PenPaletteLayoutMetrics.estimatedPaletteSize(isCompact: usesCompactLayout, showsInkControls: showsInkControls)
+            ? PenPaletteLayoutMetrics.estimatedPaletteSize(
+                isCompact: usesCompactLayout,
+                showsInkControls: showsInkControls,
+                paletteColorCount: displayedPaletteColorCount
+            )
             : measuredPaletteSize
     }
 
@@ -493,10 +507,21 @@ struct PenPaletteView: View {
         toolState.selectedToolUsesInkColor
     }
 
+    private var displayedPaletteColorCount: Int {
+        DrawingPaletteConfiguration.normalizedColorCount(paletteColorCount)
+    }
+
+    private var displayedPaletteSwatches: [DrawingColorSwatch] {
+        toolState.paletteSwatches(displaying: displayedPaletteColorCount)
+    }
+
     private var activePaletteSelectionSignature: String {
         let tool = toolState.activeColorTool
         let activeColorHex = UIColor(toolState.inkColor(for: tool)).hexRGB
-        let paletteSignature = toolState.paletteSwatches(for: tool)
+        let paletteSignature = toolState.paletteSwatches(
+            for: tool,
+            displaying: displayedPaletteColorCount
+        )
             .map(\.colorHex)
             .joined(separator: "|")
         return "\(tool.rawValue)#\(activeColorHex)#\(paletteSignature)"
@@ -649,7 +674,20 @@ struct PenPaletteView: View {
     }
 
     private func syncSelectedPaletteIndex() {
-        selectedPaletteIndex = toolState.paletteIndexMatchingActiveColor(preferredIndex: selectedPaletteIndex)
+        selectedPaletteIndex = toolState.ensureActivePaletteColorIsVisible(
+            preferredIndex: selectedPaletteIndex,
+            displaying: displayedPaletteColorCount
+        )
+    }
+
+    private func normalizePaletteColorCountIfNeeded() {
+        let normalized = displayedPaletteColorCount
+        guard paletteColorCount != normalized else { return }
+        paletteColorCount = normalized
+    }
+
+    private func restorePaletteColorCount() {
+        paletteColorCount = DrawingPaletteConfiguration.persistedColorCountForCurrentDevice()
     }
 
     private func widthButton(_ width: CGFloat) -> some View {
@@ -828,12 +866,23 @@ struct PenPaletteLayoutMetrics {
         )
     }
 
-    static func estimatedPaletteSize(isCompact: Bool, showsInkControls: Bool) -> CGSize {
+    static func estimatedPaletteSize(
+        isCompact: Bool,
+        showsInkControls: Bool,
+        paletteColorCount: Int = DrawingPaletteConfiguration.maximumColorCount
+    ) -> CGSize {
+        let normalizedColorCount = DrawingPaletteConfiguration.normalizedColorCount(paletteColorCount)
+        let hiddenColorCount = DrawingPaletteConfiguration.maximumColorCount - normalizedColorCount
+        let widthReduction = CGFloat(hiddenColorCount) * 44
+
         if isCompact {
-            return CGSize(width: showsInkControls ? 372 : 270, height: showsInkControls ? 118 : 58)
+            return CGSize(
+                width: showsInkControls ? max(270, 372 - widthReduction) : 270,
+                height: showsInkControls ? 118 : 58
+            )
         }
 
-        return CGSize(width: showsInkControls ? 650 : 306, height: 58)
+        return CGSize(width: showsInkControls ? 650 - widthReduction : 306, height: 58)
     }
 
     static func clampedCommittedOffset(

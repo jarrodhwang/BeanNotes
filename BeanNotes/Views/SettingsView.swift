@@ -23,6 +23,8 @@ struct SettingsView: View {
     @AppStorage(BeanVisitPolicy.blueberryAllowsInterruptionsKey) private var blueberryVisitsMayInterrupt = false
     @AppStorage(BeanVisitPolicy.blueberryFocusReminderIntervalKey) private var blueberryFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
+    @AppStorage(DrawingPaletteConfiguration.colorCountStorageKey)
+    private var paletteColorCount = DrawingPaletteConfiguration.defaultColorCountForCurrentDevice
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
@@ -74,6 +76,10 @@ struct SettingsView: View {
 
     private var selectedDrawingInputMode: DrawingInputMode {
         DrawingInputMode(rawValue: drawingInputModeRaw) ?? DrawingInputMode.defaultMode
+    }
+
+    private var selectedPenPaletteMode: PenPaletteMode {
+        PenPaletteMode(rawValue: penPaletteModeRaw) ?? .custom
     }
 
     var body: some View {
@@ -294,6 +300,19 @@ struct SettingsView: View {
                         }
                     }
 
+                    if selectedPenPaletteMode == .custom {
+                        Picker("Palette Colors", selection: $paletteColorCount) {
+                            ForEach(DrawingPaletteConfiguration.supportedColorCounts, id: \.self) { colorCount in
+                                Text("\(colorCount)").tag(colorCount)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.paletteColorCountPicker")
+
+                        Text("Choose how many colors appear in the custom palette. Hidden colors stay saved when you show fewer.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     Picker("Drawing Input", selection: $drawingInputModeRaw) {
                         ForEach(DrawingInputMode.allCases) { mode in
                             Text(mode.label).tag(mode.rawValue)
@@ -325,6 +344,7 @@ struct SettingsView: View {
             .onAppear {
                 NoteBackground.migrateLegacyThemeControlledDefaultsIfNeeded()
                 migrateLegacyPaginationSettingIfNeeded()
+                restorePaletteColorCount()
             }
             .task {
                 await refreshStorageUsage()
@@ -332,6 +352,9 @@ struct SettingsView: View {
             }
             .onChange(of: beanNotesThemeRaw) { _, _ in
                 hideBeanVisitPreview(animated: false)
+            }
+            .onChange(of: paletteColorCount) { _, _ in
+                normalizePaletteColorCountIfNeeded()
             }
             .onChange(of: folderNotificationsEnabled) { _, isEnabled in
                 guard isEnabled else { return }
@@ -508,6 +531,16 @@ struct SettingsView: View {
 
         pageLayoutModeRaw = legacyMode.layoutMode.rawValue
         pageCreationModeRaw = legacyMode.creationMode.rawValue
+    }
+
+    private func normalizePaletteColorCountIfNeeded() {
+        let normalized = DrawingPaletteConfiguration.normalizedColorCount(paletteColorCount)
+        guard paletteColorCount != normalized else { return }
+        paletteColorCount = normalized
+    }
+
+    private func restorePaletteColorCount() {
+        paletteColorCount = DrawingPaletteConfiguration.persistedColorCountForCurrentDevice()
     }
 
     private var notificationDescription: String {
