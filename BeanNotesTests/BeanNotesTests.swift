@@ -64,6 +64,7 @@ struct BeanNotesTests {
         from start: CGPoint,
         to end: CGPoint,
         width: CGFloat = 6,
+        color: UIColor = .black,
         transform: CGAffineTransform = .identity
     ) -> PKStroke {
         let points = [
@@ -88,7 +89,7 @@ struct BeanNotesTests {
         ]
         let path = PKStrokePath(controlPoints: points, creationDate: .distantPast)
         return PKStroke(
-            ink: PKInk(.pen, color: .black),
+            ink: PKInk(.pen, color: color),
             path: path,
             transform: transform,
             mask: nil
@@ -5189,20 +5190,30 @@ struct BeanNotesTests {
 
         let firstSession = DrawingToolState(defaults: defaults)
         firstSession.select(.eraser)
-        let nativeRange = PKEraserTool.EraserType.fixedWidthBitmap.validWidthRange
 
-        #expect(firstSession.eraserWidth == PKEraserTool.EraserType.fixedWidthBitmap.defaultWidth)
-        #expect(firstSession.eraserWidthCalibration.range == nativeRange)
-        #expect(!firstSession.eraserWidthPresets.isEmpty)
-        #expect(firstSession.eraserWidthPresets.allSatisfy { nativeRange.contains($0) })
+        #expect(firstSession.eraserWidth == 16)
+        #expect(firstSession.eraserWidthCalibration.minimumWidth == 4)
+        #expect(
+            firstSession.eraserWidthCalibration.maximumWidth
+                == PKEraserTool.EraserType.fixedWidthBitmap.validWidthRange.upperBound
+        )
+        #expect(firstSession.eraserWidthPresets == [12, 16, 26, 42])
+        for preset in firstSession.eraserWidthPresets {
+            firstSession.applyEraserWidth(preset)
+            #expect(firstSession.eraserWidth == preset)
+        }
 
         let initialSignature = firstSession.pkToolSignature
-        let firstSliderIncrement = nativeRange.lowerBound + firstSession.eraserWidthCalibration.step
+        let firstSliderIncrement = firstSession.eraserWidthCalibration.minimumWidth
+            + firstSession.eraserWidthCalibration.step
         firstSession.applyEraserWidth(firstSliderIncrement)
         #expect(firstSession.eraserWidth == firstSliderIncrement)
 
-        firstSession.applyEraserWidth(nativeRange.upperBound)
-        #expect(firstSession.eraserWidth == nativeRange.upperBound)
+        firstSession.applyEraserWidth(firstSession.eraserWidthCalibration.maximumWidth)
+        #expect(
+            firstSession.eraserWidth
+                == PKEraserTool.EraserType.fixedWidthBitmap.validWidthRange.upperBound
+        )
         #expect(firstSession.pkToolSignature != initialSignature)
 
         let pixelEraser = try #require(firstSession.makePKTool() as? PKEraserTool)
@@ -5210,18 +5221,18 @@ struct BeanNotesTests {
         #expect(pixelEraser.width == firstSession.eraserWidth)
 
         let restoredSession = DrawingToolState(defaults: defaults)
-        #expect(restoredSession.eraserWidth == nativeRange.upperBound)
+        #expect(restoredSession.eraserWidth == firstSession.eraserWidth)
 
         restoredSession.applyEraserWidth(.infinity)
-        #expect(restoredSession.eraserWidth == nativeRange.lowerBound)
+        #expect(restoredSession.eraserWidth == 4)
 
         restoredSession.selectEraserMode(.object)
         let objectEraser = try #require(restoredSession.makePKTool() as? PKEraserTool)
         #expect(objectEraser.eraserType == .vector)
         #expect(objectEraser.width == 0)
 
-        let selectedWidth = restoredSession.eraserWidthCalibration.clamped(nativeRange.upperBound / 2)
-        restoredSession.applyEraserWidth(nativeRange.upperBound / 2)
+        let selectedWidth = restoredSession.eraserWidthCalibration.clamped(41)
+        restoredSession.applyEraserWidth(41)
         #expect(restoredSession.eraserWidth == selectedWidth)
     }
 
@@ -5231,6 +5242,12 @@ struct BeanNotesTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let firstSession = DrawingToolState(defaults: defaults)
+        #expect(firstSession.rubEraserSize == 16)
+        #expect(firstSession.rubEraserSizePresets == [12, 16, 26, 42])
+        for preset in firstSession.rubEraserSizePresets {
+            firstSession.applyRubEraserSize(preset)
+            #expect(firstSession.rubEraserSize == preset)
+        }
         firstSession.applyEraserWidth(48)
         let pixelWidth = firstSession.eraserWidth
         firstSession.selectRubEraserShape(.wedge)
@@ -5297,17 +5314,250 @@ struct BeanNotesTests {
             width: 4
         )
         let result = try #require(
-            DrawingCanvasView.RubEraserStrokeProcessor.strokesByErasing(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
                 [rubbedStroke, retainedStroke],
                 along: [CGPoint(x: 100, y: 100)],
                 configuration: .init(shape: .rectangle, size: 32, angle: 0)
             )
         )
 
-        #expect(result.count == 3)
-        #expect(result.filter { $0.renderBounds.midY < 130 }.count == 2)
-        #expect(result.contains { $0.renderBounds == retainedStroke.renderBounds })
-        #expect(result.allSatisfy { !$0.renderBounds.contains(CGPoint(x: 100, y: 100)) })
+        #expect(result.count == 2)
+        let updatedStroke = result[0]
+        let updatedMask = try #require(updatedStroke.mask)
+        #expect(!updatedMask.contains(CGPoint(x: 100, y: 100)))
+        #expect(updatedMask.contains(CGPoint(x: 50, y: 100)))
+        #expect(updatedMask.contains(CGPoint(x: 150, y: 100)))
+        #expect(updatedStroke.path.count == rubbedStroke.path.count)
+        #expect(updatedStroke.randomSeed == rubbedStroke.randomSeed)
+        #expect(result[1].mask == nil)
+        #expect(result[1].renderBounds == retainedStroke.renderBounds)
+    }
+
+    @Test @MainActor func rubEraserAtAStrokeEndKeepsTheUncoveredInk() throws {
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 4
+        )
+        let result = try #require(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+                [stroke],
+                along: [CGPoint(x: 20, y: 100)],
+                configuration: .init(shape: .rectangle, size: 32, angle: 0)
+            )
+        )
+
+        #expect(result.count == 1)
+        let updatedMask = try #require(result[0].mask)
+        #expect(!updatedMask.contains(CGPoint(x: 20, y: 100)))
+        #expect(updatedMask.contains(CGPoint(x: 100, y: 100)))
+        #expect(result[0].path.count == stroke.path.count)
+        #expect(result[0].randomSeed == stroke.randomSeed)
+    }
+
+    @Test @MainActor func partialEraserRenderingSurvivesDrawingSerialization() throws {
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 8,
+            color: .red
+        )
+        let erasedStrokes = try #require(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+                [stroke],
+                along: [CGPoint(x: 100, y: 100)],
+                configuration: .init(shape: .rectangle, size: 32, angle: 0)
+            )
+        )
+        let restoredDrawing = try PKDrawing(
+            data: PKDrawing(strokes: erasedStrokes).dataRepresentation()
+        )
+
+        let erasedArea = restoredDrawing.image(
+            from: CGRect(x: 96, y: 96, width: 8, height: 8),
+            scale: 2
+        )
+        let retainedArea = restoredDrawing.image(
+            from: CGRect(x: 46, y: 96, width: 8, height: 8),
+            scale: 2
+        )
+
+        #expect(!imageContainsDominantRedInk(erasedArea))
+        #expect(imageContainsDominantRedInk(retainedArea))
+    }
+
+    @Test @MainActor func partialEraserRemovesAStrokeWithNoRenderedInkLeft() throws {
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 4
+        )
+        let result = try #require(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+                [stroke],
+                along: [CGPoint(x: 100, y: 100)],
+                diameter: 168
+            )
+        )
+
+        #expect(result.isEmpty)
+    }
+
+    @Test @MainActor func circularEraserUsesTheSelectedBoundary() throws {
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 4
+        )
+        let eraserLocation = CGPoint(x: 100, y: 114)
+
+        let smallResult = DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+            [stroke],
+            along: [eraserLocation],
+            diameter: 12
+        )
+        #expect(smallResult == nil)
+
+        let largeResult = try #require(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+                [stroke],
+                along: [eraserLocation],
+                diameter: 26
+            )
+        )
+        #expect(largeResult.count == 1)
+        let largeMask = try #require(largeResult[0].mask)
+        #expect(!largeMask.contains(CGPoint(x: 100, y: 102)))
+        #expect(largeMask.contains(CGPoint(x: 100, y: 100)))
+        #expect(largeResult[0].path.count == stroke.path.count)
+
+        let boundaryResult = DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+            [stroke],
+            along: [CGPoint(x: 100, y: 108)],
+            diameter: 12
+        )
+        #expect(boundaryResult != nil)
+    }
+
+    @Test @MainActor func circularEraserClipsOnlyTheRubbedPixelsOfAWideStroke() throws {
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 40
+        )
+        let result = try #require(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+                [stroke],
+                along: [CGPoint(x: 100, y: 86)],
+                diameter: 12
+            )
+        )
+
+        #expect(result.count == 1)
+        let updatedStroke = result[0]
+        let updatedMask = try #require(updatedStroke.mask)
+        #expect(!updatedMask.contains(CGPoint(x: 100, y: 86)))
+        #expect(updatedMask.contains(CGPoint(x: 100, y: 100)))
+        #expect(updatedStroke.path.count == stroke.path.count)
+        #expect(updatedStroke.randomSeed == stroke.randomSeed)
+    }
+
+    @Test @MainActor func partialEraserPreservesExistingMasksAndStrokeTransforms() throws {
+        let baseStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 12
+        )
+        let existingMask = UIBezierPath(rect: CGRect(x: 10, y: 85, width: 180, height: 30))
+        existingMask.append(UIBezierPath(rect: CGRect(x: 90, y: 85, width: 20, height: 30)))
+        existingMask.usesEvenOddFillRule = true
+        var maskedStroke = baseStroke
+        maskedStroke.mask = existingMask
+
+        let maskedResult = try #require(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+                [maskedStroke],
+                along: [CGPoint(x: 50, y: 100)],
+                diameter: 12
+            )
+        )
+        let updatedMaskedStroke = try #require(maskedResult.first)
+        let updatedMask = try #require(updatedMaskedStroke.mask)
+        #expect(!updatedMask.contains(CGPoint(x: 50, y: 100)))
+        #expect(!updatedMask.contains(CGPoint(x: 100, y: 100)))
+        #expect(updatedMask.contains(CGPoint(x: 150, y: 100)))
+        #expect(updatedMaskedStroke.randomSeed == maskedStroke.randomSeed)
+
+        let transform = CGAffineTransform(translationX: 450, y: 300)
+            .rotated(by: .pi / 7)
+            .scaledBy(x: 1.4, y: 0.75)
+        let transformedStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 12,
+            transform: transform
+        )
+        let localRubbedPoint = CGPoint(x: 100, y: 100)
+        let transformedResult = try #require(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+                [transformedStroke],
+                along: [localRubbedPoint.applying(transform)],
+                diameter: 12
+            )
+        )
+        let transformedMask = try #require(transformedResult.first?.mask)
+        #expect(!transformedMask.contains(localRubbedPoint))
+        #expect(transformedMask.contains(CGPoint(x: 50, y: 100)))
+        #expect(transformedResult[0].transform == transform)
+        #expect(transformedResult[0].path.count == transformedStroke.path.count)
+    }
+
+    @Test @MainActor func partialErasersDoNotBridgeAcrossInvalidLocations() {
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 100, y: 90),
+            to: CGPoint(x: 100, y: 110),
+            width: 4
+        )
+        let locations = [
+            CGPoint(x: 20, y: 100),
+            CGPoint(x: CGFloat.nan, y: CGFloat.nan),
+            CGPoint(x: 180, y: 100)
+        ]
+        let rubResult = DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+            [stroke],
+            along: locations,
+            configuration: .init(shape: .wedge, size: 12, angle: 0)
+        )
+        let circleResult = DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+            [stroke],
+            along: locations,
+            diameter: 12
+        )
+
+        #expect(rubResult == nil)
+        #expect(circleResult == nil)
+    }
+
+    @Test @MainActor func partialEraserIgnoresEmptyCornersOfAStrokeRenderBounds() {
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 20),
+            to: CGPoint(x: 180, y: 180),
+            width: 4
+        )
+
+        let miss = DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+            [stroke],
+            along: [CGPoint(x: 20, y: 180)],
+            diameter: 12
+        )
+        #expect(miss == nil)
+
+        let hit = DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+            [stroke],
+            along: [CGPoint(x: 100, y: 100)],
+            diameter: 12
+        )
+        #expect(hit?.first?.mask != nil)
     }
 
     @Test @MainActor func eraserScopeTracksTheActivePencilKitEraserWidth() throws {
@@ -5323,6 +5573,22 @@ struct BeanNotesTests {
         fixture.pageView.updateEraserScope(at: location)
 
         #expect(!fixture.pageView.eraserScopeView.isHidden)
+        #expect(fixture.pageView.eraserScopeView.center == location)
+        #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 42, height: 42))
+
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 12,
+            usesCustomPixelEraser: true
+        )
+        fixture.pageView.updateEraserScope(at: location)
+        #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 12, height: 12))
+
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 42,
+            usesCustomPixelEraser: true
+        )
         #expect(fixture.pageView.eraserScopeView.center == location)
         #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 42, height: 42))
 
@@ -5366,6 +5632,74 @@ struct BeanNotesTests {
         #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
     }
 
+    @Test @MainActor func customPixelEraserUsesTheSelectedCircleBoundary() throws {
+        let fixture = try makePageCanvasFixture(name: "CustomPixelEraser")
+        defer { fixture.cleanup() }
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 4
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [stroke])
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 12,
+            usesCustomPixelEraser: true
+        )
+
+        #expect(fixture.pageView.isUsingCustomPixelEraser)
+        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+
+        let location = CGPoint(x: 100, y: 114)
+        fixture.pageView.handleEraserInteraction(.began(location))
+        fixture.pageView.handleEraserInteraction(.ended(location))
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+        #expect(fixture.pageView.canvasView.drawing.strokes[0].renderBounds == stroke.renderBounds)
+
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 26,
+            usesCustomPixelEraser: true
+        )
+        fixture.pageView.handleEraserInteraction(.began(location))
+        fixture.pageView.handleEraserInteraction(.ended(location))
+
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+        let updatedStroke = try #require(fixture.pageView.canvasView.drawing.strokes.first)
+        let updatedMask = try #require(updatedStroke.mask)
+        #expect(!updatedMask.contains(CGPoint(x: 100, y: 102)))
+        #expect(updatedMask.contains(CGPoint(x: 100, y: 100)))
+        #expect(updatedStroke.path.count == stroke.path.count)
+    }
+
+    @Test @MainActor func customRubEraserRetainsTightMovementSamples() throws {
+        let fixture = try makePageCanvasFixture(name: "TightRubEraserMovement")
+        defer { fixture.cleanup() }
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 118),
+            to: CGPoint(x: 180, y: 118),
+            width: 4
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [stroke])
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 42,
+            rubEraserConfiguration: .init(shape: .rectangle, size: 42, angle: 0)
+        )
+
+        fixture.pageView.handleEraserInteraction(.began(CGPoint(x: 100, y: 100)))
+        #expect(fixture.pageView.canvasView.drawing.strokes.first?.mask == nil)
+
+        // Eight points is below the old size/4 simplification threshold, but the
+        // translated rub boundary reaches this stroke and must be retained.
+        fixture.pageView.handleEraserInteraction(.moved(CGPoint(x: 100, y: 108)))
+        let updatedStroke = try #require(fixture.pageView.canvasView.drawing.strokes.first)
+        let updatedMask = try #require(updatedStroke.mask)
+        #expect(!updatedMask.contains(CGPoint(x: 100, y: 118)))
+
+        fixture.pageView.handleEraserInteraction(.ended(CGPoint(x: 100, y: 108)))
+    }
+
     @Test @MainActor func customRubEraserSuppressesNativeInputAndShowsItsShapeScope() throws {
         let fixture = try makePageCanvasFixture(name: "CustomRubEraser")
         defer { fixture.cleanup() }
@@ -5395,13 +5729,31 @@ struct BeanNotesTests {
         #expect(fixture.pageView.isUsingCustomRubEraser)
         #expect(!fixture.pageView.isUsingCustomObjectEraser)
         #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        fixture.pageView.applyInputMode(.anyInput)
+        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        fixture.pageView.applyInputMode(.pencilOnly)
+        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
 
-        fixture.pageView.setLiveDrawingActive(true)
         let location = CGPoint(x: 120, y: 180)
-        fixture.pageView.updateEraserScope(at: location)
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 80, y: location.y),
+            to: CGPoint(x: 160, y: location.y),
+            width: 4
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [stroke])
+        fixture.pageView.handleEraserInteraction(.began(location))
+
         #expect(!fixture.pageView.eraserScopeView.isHidden)
         #expect(fixture.pageView.eraserScopeView.center == location)
         #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 44, height: 44))
+        #expect(fixture.pageView.canvasView.drawing.strokes.first?.mask != nil)
+
+        let movedLocation = CGPoint(x: location.x + 2, y: location.y)
+        fixture.pageView.handleEraserInteraction(.moved(movedLocation))
+        #expect(!fixture.pageView.eraserScopeView.isHidden)
+        #expect(fixture.pageView.eraserScopeView.center == movedLocation)
+        fixture.pageView.handleEraserInteraction(.ended(movedLocation))
+        #expect(fixture.pageView.eraserScopeView.isHidden)
 
         toolState.selectEraserMode(.pixel)
         fixture.coordinator.register(
@@ -5410,6 +5762,16 @@ struct BeanNotesTests {
             pageView: fixture.pageView
         )
         #expect(!fixture.pageView.isUsingCustomRubEraser)
+        #expect(fixture.pageView.isUsingCustomPixelEraser)
+        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+
+        toolState.select(.pen)
+        fixture.coordinator.register(
+            canvasView: fixture.pageView.canvasView,
+            page: page,
+            pageView: fixture.pageView
+        )
+        fixture.pageView.applyInputMode(.anyInput)
         #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
     }
 
@@ -5452,6 +5814,36 @@ struct BeanNotesTests {
             diameter: 20
         )
         #expect(sweptHit == IndexSet(integer: 2))
+    }
+
+    @Test @MainActor func objectEraserIncludesTheLargestAffineStrokeScale() {
+        let transform = CGAffineTransform(translationX: 100, y: 100)
+            .rotated(by: .pi / 4)
+            .scaledBy(x: 4, y: 1)
+        let stroke = makeTestStroke(
+            from: .zero,
+            to: CGPoint(x: 1, y: 0),
+            width: 10,
+            transform: transform
+        )
+        let transformedEndpoint = CGPoint(x: 1, y: 0).applying(transform)
+        let directionLength = hypot(transform.a, transform.b)
+        let majorAxisDirection = CGPoint(
+            x: transform.a / directionLength,
+            y: transform.b / directionLength
+        )
+        let boundaryPoint = CGPoint(
+            x: transformedEndpoint.x + majorAxisDirection.x * 18,
+            y: transformedEndpoint.y + majorAxisDirection.y * 18
+        )
+
+        let intersected = DrawingCanvasView.ObjectEraserHitTester.intersectedStrokeIndexes(
+            in: [stroke],
+            eraserPath: [boundaryPoint],
+            diameter: 2
+        )
+
+        #expect(intersected == IndexSet(integer: 0))
     }
 
     @Test @MainActor func objectEraserPathRetainsTouchDownAcrossGradualMovement() {
