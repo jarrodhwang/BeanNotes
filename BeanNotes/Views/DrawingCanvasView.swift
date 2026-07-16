@@ -93,6 +93,11 @@ struct DrawingCanvasViewport: Equatable {
     }
 }
 
+enum NotePageContextAction: Equatable {
+    case add(NotePagePlacement)
+    case remove
+}
+
 @MainActor
 enum DrawingCanvasStaticContentSignature {
     static func signature(for page: NotePage) -> String {
@@ -158,6 +163,10 @@ struct DrawingCanvasView: UIViewRepresentable {
     var viewportRestorationID = 0
     var viewportChanged: (DrawingCanvasViewport) -> Void = { _ in }
     var finalViewportChanged: (DrawingCanvasViewport, UUID?) -> Void = { _, _ in }
+    var selectionRevision: () -> UInt64 = { 0 }
+    var canPublishVisiblePageSelection: () -> Bool = { true }
+    var userPageSelectionStarted: () -> Void = {}
+    var pageActionRequested: (UUID, NotePageContextAction) -> Void = { _, _ in }
     var addPageAtBottom: () -> Void
     var topContent: AnyView?
     var theme: BeanNotesTheme = .defaultTheme
@@ -250,6 +259,13 @@ struct DrawingCanvasView: UIViewRepresentable {
         context.coordinator.observeToolState(toolState)
         containerView.setTopContentView(context.coordinator.updateTopContent(topContent))
         let selectionUpdate = context.coordinator.reconcileSelectedPageID(selectedPageID)
+        if selectionUpdate.shouldScroll,
+           let selectedPageID = selectionUpdate.effectivePageID {
+            // Relaying out after an add/remove can synchronously fire didScroll before
+            // the destination offset is applied. Suppress that intermediate visible
+            // page so it cannot overwrite the programmatic selection.
+            containerView.prepareForProgrammaticScroll(to: selectedPageID)
+        }
 
         containerView.configure(
             pages: pages,
@@ -375,6 +391,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastScrollToTopRequestTime: CFTimeInterval?
         private var isScrollingTowardLaterPages = true
         private var isUserScrolling = false
+        private var programmaticScrollTargetID: UUID?
+        private var programmaticScrollTargetOffset: CGPoint?
         private let pageGap: CGFloat = 28
         private let pageMargin: CGFloat = 52
         private let autoAddFooterSize: CGFloat = 56
@@ -561,8 +579,17 @@ struct DrawingCanvasView: UIViewRepresentable {
             return viewport.isValid ? viewport : nil
         }
 
+        func prepareForProgrammaticScroll(to pageID: UUID) {
+            programmaticScrollTargetID = pageID
+            programmaticScrollTargetOffset = nil
+        }
+
         func scrollToPage(id: UUID, animated: Bool) {
-            guard let frame = pageFrames[id], scrollView.bounds != .zero else { return }
+            guard let frame = pageFrames[id], scrollView.bounds != .zero else {
+                programmaticScrollTargetID = nil
+                programmaticScrollTargetOffset = nil
+                return
+            }
             selectedPageID = id
             let scaledCenterX = frame.midX * scrollView.zoomScale
             let scaledTopY = frame.minY * scrollView.zoomScale
@@ -570,7 +597,18 @@ struct DrawingCanvasView: UIViewRepresentable {
                 x: scaledCenterX - scrollView.bounds.width / 2,
                 y: scaledTopY - scrollView.adjustedContentInset.top + 12
             )
-            scrollView.setContentOffset(clampedContentOffset(target), animated: animated)
+            let clampedTarget = clampedContentOffset(target)
+            let offsetDistance = hypot(
+                clampedTarget.x - scrollView.contentOffset.x,
+                clampedTarget.y - scrollView.contentOffset.y
+            )
+            let shouldAnimate = animated && offsetDistance > 0.5
+            programmaticScrollTargetID = id
+            programmaticScrollTargetOffset = clampedTarget
+            scrollView.setContentOffset(clampedTarget, animated: shouldAnimate)
+            if !shouldAnimate {
+                cancelProgrammaticPageSelection()
+            }
             materializePagesNearViewport()
         }
 
@@ -786,6 +824,8 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             if scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
+                cancelProgrammaticPageSelection()
+                coordinator?.beginUserPageSelection()
                 setUserScrolling(true)
             }
             let offsetDelta = scrollView.contentOffset.y - lastObservedContentOffsetY
@@ -806,7 +846,12 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
             guard scrollView === self.scrollView else { return false }
-            return shouldAllowScrollToTop(at: CACurrentMediaTime())
+            let shouldScroll = shouldAllowScrollToTop(at: CACurrentMediaTime())
+            if shouldScroll {
+                cancelProgrammaticPageSelection()
+                coordinator?.beginUserPageSelection()
+            }
+            return shouldScroll
         }
 
         /// The native status-bar gesture is normally a single tap. Keep the gesture,
@@ -825,6 +870,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            programmaticScrollTargetID = nil
+            programmaticScrollTargetOffset = nil
+            coordinator?.beginUserPageSelection()
             setUserScrolling(true)
         }
 
@@ -876,6 +924,18 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+            if programmaticScrollTargetID != nil,
+               programmaticScrollTargetOffset == nil {
+                return
+            }
+            if let targetOffset = programmaticScrollTargetOffset {
+                let distance = hypot(
+                    targetOffset.x - scrollView.contentOffset.x,
+                    targetOffset.y - scrollView.contentOffset.y
+                )
+                guard distance <= 0.5 else { return }
+            }
+            cancelProgrammaticPageSelection()
             guard !isProgrammaticZooming else { return }
             setUserScrolling(false)
             materializePagesNearViewport()
@@ -1238,6 +1298,13 @@ struct DrawingCanvasView: UIViewRepresentable {
                     },
                     deleteAttachment: { [weak coordinator] attachment in
                         coordinator?.requestAttachmentDeletion(attachment)
+                    },
+                    canRemovePage: orderedPageIDs.count > 1,
+                    pageActionRequested: { [weak coordinator] pageID, action in
+                        coordinator?.requestPageAction(action, for: pageID)
+                    },
+                    pageContextMenuWillOpen: { [weak coordinator] pageID in
+                        coordinator?.selectPageForContextMenu(pageID)
                     }
                 )
             }
@@ -1308,6 +1375,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             isPinchZooming = false
             isProgrammaticZooming = false
             programmaticZoomEarliestFinishTime = 0
+            cancelProgrammaticPageSelection()
             setUserScrolling(false)
 
             for pageView in pageViews.values {
@@ -1442,7 +1510,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func updateVisiblePage() {
-            guard !defersViewStatePublishing, !pageFrames.isEmpty else { return }
+            guard !defersViewStatePublishing,
+                  programmaticScrollTargetID == nil,
+                  !pageFrames.isEmpty else { return }
 
             let visibleCenter = CGPoint(
                 x: scrollView.contentOffset.x + scrollView.bounds.midX,
@@ -1458,6 +1528,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard let nearestID, nearestID != selectedPageID else { return }
             selectedPageID = nearestID
             visiblePageChanged?(nearestID)
+        }
+
+        func cancelProgrammaticPageSelection() {
+            programmaticScrollTargetID = nil
+            programmaticScrollTargetOffset = nil
         }
 
         private func pageIDsIntersecting(_ rect: CGRect) -> [UUID] {
@@ -2056,7 +2131,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
     }
 
-    final class PageCanvasView: UIView, UIGestureRecognizerDelegate {
+    final class PageCanvasView: UIView, UIGestureRecognizerDelegate, UIEditMenuInteractionDelegate {
         private struct NativeViewportRequest {
             var rect: CGRect
             var overscan: CGFloat
@@ -2080,6 +2155,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var configurationSignature: String?
         private var attachmentChanged: (() -> Void)?
         private var deleteAttachment: ((Attachment) -> Void)?
+        private var pageActionRequested: ((UUID, NotePageContextAction) -> Void)?
+        private var pageContextMenuWillOpen: ((UUID) -> Void)?
+        private var canRemovePage = false
+        private(set) lazy var pageActionMenuInteraction = UIEditMenuInteraction(delegate: self)
+        private(set) var pageActionLongPressGesture: UILongPressGestureRecognizer?
         private var hasConfiguredImageAttachments = false
         private var lastBackgroundScale: CGFloat = 0
         private var lastImageScale: CGFloat = 0
@@ -2108,6 +2188,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             usesCustomObjectEraser
         }
 
+        var consumesBlankCanvasTaps: Bool {
+            appliedInputMode == .pencilOnly && !(canvasView.tool is PKLassoTool)
+        }
+
+        var allowsPageActionLongPress: Bool {
+            !(canvasView.tool is PKLassoTool)
+        }
+
         override init(frame: CGRect) {
             super.init(frame: frame)
             configureView()
@@ -2127,7 +2215,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             showsBeanArtwork: Bool = false,
             coordinator: Coordinator,
             attachmentChanged: @escaping () -> Void,
-            deleteAttachment: @escaping (Attachment) -> Void
+            deleteAttachment: @escaping (Attachment) -> Void,
+            canRemovePage: Bool = false,
+            pageActionRequested: @escaping (UUID, NotePageContextAction) -> Void = { _, _ in },
+            pageContextMenuWillOpen: @escaping (UUID) -> Void = { _ in }
         ) {
             let isNewPage = self.page?.id != page.id
             let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)#beanArtwork=\(showsBeanArtwork)"
@@ -2138,8 +2229,13 @@ struct DrawingCanvasView: UIViewRepresentable {
                 hasConfiguredImageAttachments = false
             }
             self.page = page
+            accessibilityIdentifier = "notePageCanvas"
+            accessibilityLabel = "Page \(page.pageOrder + 1) canvas"
             self.attachmentChanged = attachmentChanged
             self.deleteAttachment = deleteAttachment
+            self.canRemovePage = canRemovePage
+            self.pageActionRequested = pageActionRequested
+            self.pageContextMenuWillOpen = pageContextMenuWillOpen
 
             applyInputMode(inputMode)
             if !isNewPage, !needsStaticRefresh, !pageSizeChanged {
@@ -2305,6 +2401,79 @@ struct DrawingCanvasView: UIViewRepresentable {
             selectAttachmentGesture.delegate = self
             addGestureRecognizer(selectAttachmentGesture)
             attachmentSelectionGesture = selectAttachmentGesture
+
+            let pageLongPress = UILongPressGestureRecognizer(
+                target: self,
+                action: #selector(handlePageActionLongPress(_:))
+            )
+            pageLongPress.minimumPressDuration = 0.5
+            pageLongPress.allowableMovement = 12
+            pageLongPress.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            pageLongPress.cancelsTouchesInView = true
+            pageLongPress.delegate = self
+            addGestureRecognizer(pageLongPress)
+            pageActionLongPressGesture = pageLongPress
+            selectAttachmentGesture.require(toFail: pageLongPress)
+            // A stationary finger hold owns the page menu, including in Pencil or
+            // Finger mode. Ink and custom erasing resume as soon as the hold fails
+            // from movement, while Pencil input bypasses this direct-touch gesture.
+            canvasView.drawingGestureRecognizer.require(toFail: pageLongPress)
+            eraserScopeGesture.require(toFail: pageLongPress)
+
+            addInteraction(pageActionMenuInteraction)
+        }
+
+        func makePageContextMenu(for pageID: UUID, canRemovePage: Bool) -> UIMenu {
+            let addAbove = UIAction(
+                title: "Add New Page Above",
+                image: UIImage(systemName: "rectangle.stack.badge.plus")
+            ) { [weak self] _ in
+                self?.pageActionRequested?(pageID, .add(.above))
+            }
+            let addBelow = UIAction(
+                title: "Add New Page Below",
+                image: UIImage(systemName: "rectangle.stack.badge.plus")
+            ) { [weak self] _ in
+                self?.pageActionRequested?(pageID, .add(.below))
+            }
+            let remove = UIAction(
+                title: "Remove This Page",
+                image: UIImage(systemName: "trash"),
+                attributes: canRemovePage ? [.destructive] : [.destructive, .disabled]
+            ) { [weak self] _ in
+                self?.pageActionRequested?(pageID, .remove)
+            }
+
+            return UIMenu(children: [addAbove, addBelow, remove])
+        }
+
+        func editMenuInteraction(
+            _ interaction: UIEditMenuInteraction,
+            menuFor configuration: UIEditMenuConfiguration,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            guard interaction === pageActionMenuInteraction, let pageID = page?.id else { return nil }
+            return makePageContextMenu(for: pageID, canRemovePage: canRemovePage)
+        }
+
+        @objc private func handlePageActionLongPress(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer === pageActionLongPressGesture,
+                  recognizer.state == .began,
+                  let pageID = page?.id else {
+                return
+            }
+
+            clearAttachmentSelection()
+            dismissCanvasEditMenus()
+            pageContextMenuWillOpen?(pageID)
+            let configuration = UIEditMenuConfiguration(
+                identifier: pageID as NSUUID,
+                sourcePoint: recognizer.location(in: self)
+            )
+            pageActionMenuInteraction.presentEditMenu(with: configuration)
+            DispatchQueue.main.async { [weak self] in
+                self?.dismissCanvasEditMenus()
+            }
         }
 
         func updateRenderScale(
@@ -2586,6 +2755,28 @@ struct DrawingCanvasView: UIViewRepresentable {
             } else {
                 clearAttachmentSelection()
             }
+
+            // PencilKit owns a private edit menu on its tiled drawing view. Consuming
+            // the blank tap prevents it from opening; dismissing once more on the next
+            // run-loop turn closes the race on OS versions that present asynchronously.
+            dismissCanvasEditMenus()
+            DispatchQueue.main.async { [weak self] in
+                self?.dismissCanvasEditMenus()
+            }
+        }
+
+        private func dismissCanvasEditMenus() {
+            dismissEditMenus(in: canvasView)
+        }
+
+        private func dismissEditMenus(in view: UIView) {
+            for interaction in view.interactions {
+                (interaction as? UIEditMenuInteraction)?.dismissMenu()
+            }
+
+            for subview in view.subviews {
+                dismissEditMenus(in: subview)
+            }
         }
 
         func beginEditingAttachment(id: UUID) {
@@ -2671,8 +2862,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return false
             }
 
+            if gestureRecognizer === pageActionLongPressGesture {
+                return allowsPageActionLongPress
+                    && topmostEditableAttachment(at: touch.location(in: self)) == nil
+            }
+
             return selectedAttachmentID != nil
                 || topmostEditableAttachment(at: touch.location(in: self)) != nil
+                || consumesBlankCanvasTaps
         }
 
         func gestureRecognizer(
@@ -3729,6 +3926,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         var parent: DrawingCanvasView
         var selectedPageID: UUID?
         private(set) var pendingVisiblePageID: UUID?
+        private var pendingVisiblePageSelectionRevision: UInt64?
+        private var visiblePagePublicationID: UInt64 = 0
         var saveNowSignal: Int
         var exportPreparationSignal: Int
         var fitToPageSignal: Int
@@ -3806,9 +4005,28 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        private func notifyVisiblePageChanged(_ pageID: UUID) {
-            let selectedPageID = parent.$selectedPageID
+        func requestPageAction(_ action: NotePageContextAction, for pageID: UUID) {
+            let pageActionRequested = parent.pageActionRequested
             dispatchToSwiftUI {
+                pageActionRequested(pageID, action)
+            }
+        }
+
+        private func notifyVisiblePageChanged(_ pageID: UUID, selectionRevision: UInt64) {
+            let selectedPageID = parent.$selectedPageID
+            let currentSelectionRevision = parent.selectionRevision
+            visiblePagePublicationID &+= 1
+            let publicationID = visiblePagePublicationID
+            dispatchToSwiftUI { [weak self] in
+                guard let self else { return }
+                guard self.visiblePagePublicationID == publicationID,
+                      currentSelectionRevision() == selectionRevision,
+                      self.selectedPageID == pageID else {
+                    if self.visiblePagePublicationID == publicationID {
+                        self.clearPendingVisiblePageSelection()
+                    }
+                    return
+                }
                 selectedPageID.wrappedValue = pageID
             }
         }
@@ -4060,21 +4278,52 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func selectVisiblePage(_ pageID: UUID) {
+            guard parent.canPublishVisiblePageSelection() else {
+                clearPendingVisiblePageSelection()
+                selectedPageID = parent.$selectedPageID.wrappedValue
+                return
+            }
+
+            let isAlreadyPublished = parent.$selectedPageID.wrappedValue == pageID
             selectedPageID = pageID
-            pendingVisiblePageID = pageID
-            notifyVisiblePageChanged(pageID)
+            if isAlreadyPublished {
+                // A context-menu hold on the already-selected page does not produce a
+                // SwiftUI binding change. Avoid leaving a pending selection that could
+                // later override an add/remove/undo command.
+                clearPendingVisiblePageSelection()
+            } else {
+                let selectionRevision = parent.selectionRevision()
+                pendingVisiblePageID = pageID
+                pendingVisiblePageSelectionRevision = selectionRevision
+                notifyVisiblePageChanged(pageID, selectionRevision: selectionRevision)
+            }
             activeCanvasView?.becomeFirstResponder()
             applyCustomToolIfNeeded()
             configureToolPicker(mode: parent.paletteMode)
             publishUndoRedoAvailability()
         }
 
+        func selectPageForContextMenu(_ pageID: UUID) {
+            containerView?.cancelProgrammaticPageSelection()
+            beginUserPageSelection()
+            selectVisiblePage(pageID)
+        }
+
+        func beginUserPageSelection() {
+            parent.userPageSelectionStarted()
+        }
+
         /// Keeps an asynchronously published visible-page change from being undone by
         /// an intervening SwiftUI update that still contains the previous selection.
         func reconcileSelectedPageID(_ proposedPageID: UUID?) -> SelectionUpdate {
+            if pendingVisiblePageID != nil,
+               pendingVisiblePageSelectionRevision != parent.selectionRevision() {
+                clearPendingVisiblePageSelection()
+            }
+
             if let pendingVisiblePageID {
                 if proposedPageID == pendingVisiblePageID {
-                    self.pendingVisiblePageID = nil
+                    clearPendingVisiblePageSelection()
                     selectedPageID = proposedPageID
                 }
 
@@ -4090,6 +4339,12 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             selectedPageID = proposedPageID
             return SelectionUpdate(effectivePageID: proposedPageID, shouldScroll: proposedPageID != nil)
+        }
+
+        private func clearPendingVisiblePageSelection() {
+            visiblePagePublicationID &+= 1
+            pendingVisiblePageID = nil
+            pendingVisiblePageSelectionRevision = nil
         }
 
         func configureToolPicker(mode: PenPaletteMode) {

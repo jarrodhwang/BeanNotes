@@ -151,6 +151,241 @@ struct BeanNotesTests {
         #expect(folders[0].sortedNotes.first?.sortedPages.first?.attachments.first?.kind == .pdf)
     }
 
+    @Test func pageEditAddsAboveWithInheritedPaper() throws {
+        let context = try makeInMemoryModelContext()
+        let leadingPage = NotePage(pageOrder: 0)
+        let targetBackground = NoteBackground(
+            style: .grid,
+            colorHex: "#FFF7BF",
+            spacing: 24,
+            marginWidth: 42
+        )
+        let targetPage = NotePage(
+            pageOrder: 1,
+            background: targetBackground,
+            width: 612,
+            height: 792
+        )
+        let trailingPage = NotePage(pageOrder: 2)
+        let note = NoteDocument(
+            title: "Add Above",
+            pages: [trailingPage, targetPage, leadingPage]
+        )
+        context.insert(note)
+
+        let result = try #require(NotePageEditCommand.applyAdd(
+            relativeTo: targetPage,
+            placement: .above,
+            in: note,
+            selectedPageID: targetPage.id
+        ))
+        let addedPage = result.change.page
+        let expectedPageIDs = [
+            leadingPage.id,
+            addedPage.id,
+            targetPage.id,
+            trailingPage.id
+        ]
+
+        #expect(note.sortedPages.map(\.id) == expectedPageIDs)
+        #expect(note.sortedPages.map(\.pageOrder) == [0, 1, 2, 3])
+        #expect(addedPage.background == targetBackground)
+        #expect(addedPage.pageSize == targetPage.pageSize)
+        #expect(result.selectedPageID == addedPage.id)
+        #expect(result.change.originalIndex == 1)
+        #expect(result.change.priorSelectedPageID == targetPage.id)
+        #expect(result.change.kind == .added(placement: .above))
+    }
+
+    @Test func pageEditAddsBelowWithInheritedPaper() throws {
+        let context = try makeInMemoryModelContext()
+        let targetBackground = NoteBackground(
+            style: .lined,
+            colorHex: "#DDEBFF",
+            spacing: 31,
+            marginWidth: 70
+        )
+        let targetPage = NotePage(
+            pageOrder: 0,
+            background: targetBackground,
+            width: 1_200,
+            height: 900
+        )
+        let trailingPage = NotePage(pageOrder: 1)
+        let note = NoteDocument(title: "Add Below", pages: [targetPage, trailingPage])
+        context.insert(note)
+
+        let result = try #require(NotePageEditCommand.applyAdd(
+            relativeTo: targetPage,
+            placement: .below,
+            in: note,
+            selectedPageID: targetPage.id
+        ))
+        let addedPage = result.change.page
+
+        #expect(note.sortedPages.map(\.id) == [targetPage.id, addedPage.id, trailingPage.id])
+        #expect(note.sortedPages.map(\.pageOrder) == [0, 1, 2])
+        #expect(addedPage.background == targetBackground)
+        #expect(addedPage.pageSize == targetPage.pageSize)
+        #expect(result.selectedPageID == addedPage.id)
+        #expect(result.change.originalIndex == 1)
+        #expect(result.change.kind == .added(placement: .below))
+    }
+
+    @Test func pageEditRemoveChoosesFallbackAndRefusesSolePage() throws {
+        let context = try makeInMemoryModelContext()
+        let firstPage = NotePage(pageOrder: 10)
+        let middlePage = NotePage(pageOrder: 20)
+        let lastPage = NotePage(pageOrder: 30)
+        let note = NoteDocument(title: "Remove", pages: [lastPage, firstPage, middlePage])
+        context.insert(note)
+
+        let removal = try #require(NotePageEditCommand.applyRemove(
+            middlePage,
+            from: note,
+            selectedPageID: middlePage.id
+        ))
+
+        #expect(note.sortedPages.map(\.id) == [firstPage.id, lastPage.id])
+        #expect(note.sortedPages.map(\.pageOrder) == [0, 1])
+        #expect(removal.selectedPageID == lastPage.id)
+        #expect(removal.change.page.id == middlePage.id)
+        #expect(removal.change.originalIndex == 1)
+        #expect(removal.change.priorSelectedPageID == middlePage.id)
+        #expect(removal.change.kind == .removed)
+
+        let retainedSelection = try #require(NotePageEditCommand.applyRemove(
+            lastPage,
+            from: note,
+            selectedPageID: firstPage.id
+        ))
+        #expect(retainedSelection.selectedPageID == firstPage.id)
+        #expect(note.sortedPages.map(\.id) == [firstPage.id])
+        #expect(NotePageEditCommand.applyRemove(
+            firstPage,
+            from: note,
+            selectedPageID: firstPage.id
+        ) == nil)
+        #expect(note.sortedPages.map(\.id) == [firstPage.id])
+        #expect(note.sortedPages.map(\.pageOrder) == [0])
+    }
+
+    @Test func pageEditUndoAndRedoReuseExactAddedPage() throws {
+        let context = try makeInMemoryModelContext()
+        let firstPage = NotePage(pageOrder: 0)
+        let targetPage = NotePage(pageOrder: 1)
+        let note = NoteDocument(title: "Undo Add", pages: [firstPage, targetPage])
+        context.insert(note)
+        let addition = try #require(NotePageEditCommand.applyAdd(
+            relativeTo: targetPage,
+            placement: .above,
+            in: note,
+            selectedPageID: firstPage.id
+        ))
+        let addedPage = addition.change.page
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Retained image",
+            originalFileName: "retained.png",
+            storedFileName: "Imports/retained.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png"
+        )
+        addedPage.attachments.append(attachment)
+
+        let undo = try #require(NotePageEditCommand.undo(addition.change, in: note))
+        #expect(note.sortedPages.map(\.id) == [firstPage.id, targetPage.id])
+        #expect(note.sortedPages.map(\.pageOrder) == [0, 1])
+        #expect(undo.selectedPageID == firstPage.id)
+        #expect(addition.change.page.attachments.first?.id == attachment.id)
+
+        let redo = try #require(NotePageEditCommand.redo(addition.change, in: note))
+        #expect(note.sortedPages.map(\.id) == [firstPage.id, addedPage.id, targetPage.id])
+        #expect(note.sortedPages.map(\.pageOrder) == [0, 1, 2])
+        #expect(note.sortedPages[1].id == addedPage.id)
+        #expect(note.sortedPages[1].attachments.first?.id == attachment.id)
+        #expect(redo.selectedPageID == addedPage.id)
+    }
+
+    @Test func pageEditUndoAndRedoReuseExactRemovedPage() throws {
+        let context = try makeInMemoryModelContext()
+        let firstPage = NotePage(pageOrder: 0)
+        let removedPage = NotePage(pageOrder: 1)
+        let lastPage = NotePage(pageOrder: 2)
+        let attachment = Attachment(
+            kind: .pdf,
+            displayName: "Retained PDF",
+            originalFileName: "retained.pdf",
+            storedFileName: "Imports/retained.pdf",
+            contentTypeIdentifier: UTType.pdf.identifier,
+            fileExtension: "pdf"
+        )
+        removedPage.attachments.append(attachment)
+        let note = NoteDocument(title: "Undo Remove", pages: [firstPage, removedPage, lastPage])
+        context.insert(note)
+        let originalIDs = note.sortedPages.map(\.id)
+
+        let removal = try #require(NotePageEditCommand.applyRemove(
+            removedPage,
+            from: note,
+            selectedPageID: removedPage.id
+        ))
+        #expect(removal.selectedPageID == lastPage.id)
+
+        let undo = try #require(NotePageEditCommand.undo(removal.change, in: note))
+        #expect(note.sortedPages.map(\.id) == originalIDs)
+        #expect(note.sortedPages.map(\.pageOrder) == [0, 1, 2])
+        #expect(note.sortedPages[1].id == removedPage.id)
+        #expect(note.sortedPages[1].attachments.first?.id == attachment.id)
+        #expect(undo.selectedPageID == removedPage.id)
+
+        let redo = try #require(NotePageEditCommand.redo(removal.change, in: note))
+        #expect(note.sortedPages.map(\.id) == [firstPage.id, lastPage.id])
+        #expect(note.sortedPages.map(\.pageOrder) == [0, 1])
+        #expect(removal.change.page.id == removedPage.id)
+        #expect(removal.change.page.attachments.first?.id == attachment.id)
+        #expect(redo.selectedPageID == lastPage.id)
+    }
+
+    @Test func removedPageRemainsPersistedUntilUndoWindowFinalizes() throws {
+        let context = try makeInMemoryModelContext()
+        let retainedPage = NotePage(pageOrder: 0)
+        let removedPage = NotePage(pageOrder: 1, searchableText: "Keep this ink searchable")
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Undo image",
+            originalFileName: "undo.png",
+            storedFileName: "Imports/undo.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png"
+        )
+        removedPage.attachments.append(attachment)
+        let note = NoteDocument(title: "Persist Undo", pages: [retainedPage, removedPage])
+        context.insert(note)
+        try context.save()
+
+        let removal = try #require(NotePageEditCommand.applyRemove(
+            removedPage,
+            from: note,
+            selectedPageID: removedPage.id
+        ))
+        try context.save()
+
+        let detachedPage = try #require(
+            context.fetch(FetchDescriptor<NotePage>()).first(where: { $0.id == removedPage.id })
+        )
+        #expect(detachedPage.note == nil)
+        #expect(detachedPage.searchableText == "Keep this ink searchable")
+        #expect(detachedPage.attachments.first?.id == attachment.id)
+
+        let undo = try #require(NotePageEditCommand.undo(removal.change, in: note))
+        try context.save()
+
+        #expect(note.sortedPages.map(\.id) == [retainedPage.id, removedPage.id])
+        #expect(note.sortedPages[1].attachments.first?.id == attachment.id)
+        #expect(undo.selectedPageID == removedPage.id)
+    }
+
     @Test func attachmentLockAndDrawingLayerAreIndependent() {
         let attachment = Attachment(
             kind: .image,
@@ -2074,6 +2309,59 @@ struct BeanNotesTests {
             attachmentSelection,
             shouldRequireFailureOf: twoFingerDoubleTap
         ))
+    }
+
+    @Test @MainActor func pageCanvasUsesDirectLongPressForPageActions() throws {
+        let fixture = try makePageCanvasFixture(name: "PageActionMenu")
+        defer { fixture.cleanup() }
+
+        let pageView = fixture.pageView
+        let longPress = try #require(pageView.pageActionLongPressGesture)
+        let directTouch = NSNumber(value: UITouch.TouchType.direct.rawValue)
+
+        #expect(longPress.minimumPressDuration == 0.5)
+        #expect(longPress.allowedTouchTypes == [directTouch])
+        #expect(pageView.interactions.contains { $0 === pageView.pageActionMenuInteraction })
+        #expect(pageView.consumesBlankCanvasTaps)
+        #expect(pageView.allowsPageActionLongPress)
+        #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        #expect(!pageView.gestureRecognizer(
+            longPress,
+            shouldRecognizeSimultaneouslyWith: UIPanGestureRecognizer()
+        ))
+
+        let enabledMenu = pageView.makePageContextMenu(
+            for: UUID(),
+            canRemovePage: true
+        )
+        let enabledActions = enabledMenu.children.compactMap { $0 as? UIAction }
+        try #require(enabledActions.count == 3)
+        #expect(enabledActions.map(\.title) == [
+            "Add New Page Above",
+            "Add New Page Below",
+            "Remove This Page"
+        ])
+        #expect(enabledActions[2].attributes.contains(.destructive))
+        #expect(!enabledActions[2].attributes.contains(.disabled))
+
+        let solePageMenu = pageView.makePageContextMenu(
+            for: UUID(),
+            canRemovePage: false
+        )
+        let solePageActions = solePageMenu.children.compactMap { $0 as? UIAction }
+        try #require(solePageActions.count == 3)
+        #expect(solePageActions[2].attributes.contains(.destructive))
+        #expect(solePageActions[2].attributes.contains(.disabled))
+
+        pageView.applyInputMode(.anyInput)
+        #expect(!pageView.consumesBlankCanvasTaps)
+        #expect(pageView.allowsPageActionLongPress)
+        #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
+
+        pageView.canvasView.tool = PKLassoTool()
+        #expect(pageView.canvasView.tool is PKLassoTool)
+        #expect(!pageView.consumesBlankCanvasTaps)
+        #expect(!pageView.allowsPageActionLongPress)
     }
 
     @Test func drawingZoomPresetsFormatAndClampDetailTargets() {
@@ -4052,6 +4340,57 @@ struct BeanNotesTests {
         #expect(externalUpdate.shouldScroll)
     }
 
+    @Test @MainActor func selectingCurrentPageDoesNotLeavePendingSelection() {
+        let firstPage = NotePage(pageOrder: 0)
+        let secondPage = NotePage(pageOrder: 1)
+        let parent = makeDrawingCanvasView(
+            page: firstPage,
+            drawingStorage: DrawingStorageService(),
+            pages: [firstPage, secondPage]
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+
+        coordinator.selectVisiblePage(firstPage.id)
+
+        #expect(coordinator.pendingVisiblePageID == nil)
+        let externalUpdate = coordinator.reconcileSelectedPageID(secondPage.id)
+        #expect(externalUpdate.effectivePageID == secondPage.id)
+        #expect(externalUpdate.shouldScroll)
+
+        // A relayout can leave UIKit's cached selection behind the live SwiftUI
+        // binding. Re-observing the already-published page must not enqueue a stale
+        // binding write that can overwrite a subsequent undo selection.
+        coordinator.selectVisiblePage(firstPage.id)
+        #expect(coordinator.pendingVisiblePageID == nil)
+
+        let nextExternalUpdate = coordinator.reconcileSelectedPageID(secondPage.id)
+        #expect(nextExternalUpdate.effectivePageID == secondPage.id)
+        #expect(nextExternalUpdate.shouldScroll)
+    }
+
+    @Test @MainActor func programmaticSelectionCancelsQueuedVisiblePagePublication() {
+        let firstPage = NotePage(pageOrder: 0)
+        let secondPage = NotePage(pageOrder: 1)
+        var selectionRevision: UInt64 = 0
+        let parent = makeDrawingCanvasView(
+            page: firstPage,
+            drawingStorage: DrawingStorageService(),
+            pages: [firstPage, secondPage],
+            selectionRevision: { selectionRevision }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+
+        coordinator.selectVisiblePage(secondPage.id)
+        #expect(coordinator.pendingVisiblePageID == secondPage.id)
+
+        selectionRevision &+= 1
+        let programmaticUpdate = coordinator.reconcileSelectedPageID(firstPage.id)
+
+        #expect(coordinator.pendingVisiblePageID == nil)
+        #expect(programmaticUpdate.effectivePageID == firstPage.id)
+        #expect(programmaticUpdate.shouldScroll)
+    }
+
     @Test @MainActor func canvasDismantlePublishesFinalReadingState() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesFinalViewport-\(UUID().uuidString)", isDirectory: true)
@@ -4111,6 +4450,24 @@ struct BeanNotesTests {
         let finalViewport = try #require(session.viewport)
         #expect(abs(finalViewport.zoomScale - expectedViewport.zoomScale) < 0.01)
         #expect(abs(finalViewport.center.y - expectedViewport.center.y) < 1)
+    }
+
+    @Test func programmaticPageSelectionRejectsStaleCanvasUpdatesUntilUserNavigation() {
+        let firstPageID = UUID()
+        let secondPageID = UUID()
+        let session = NoteEditorSession(selectedPageID: firstPageID)
+
+        session.selectPageProgrammatically(secondPageID)
+        session.applyCanvasSelection(firstPageID)
+
+        #expect(session.selectedPageID == secondPageID)
+        #expect(session.isProgrammaticSelectionProtected)
+
+        session.beginUserPageSelection()
+        session.applyCanvasSelection(firstPageID)
+
+        #expect(session.selectedPageID == firstPageID)
+        #expect(!session.isProgrammaticSelectionProtected)
     }
 
     @Test func noteEditorSessionStoreKeepsTabStateIsolated() {
@@ -4300,6 +4657,7 @@ struct BeanNotesTests {
         drawingStorage: DrawingStorageService,
         pages: [NotePage]? = nil,
         finalViewportChanged: @escaping (DrawingCanvasViewport, UUID?) -> Void = { _, _ in },
+        selectionRevision: @escaping () -> UInt64 = { 0 },
         exportPreparationCompleted: @escaping (Int, Result<Void, Error>) -> Void = { _, _ in }
     ) -> DrawingCanvasView {
         let defaults = UserDefaults(suiteName: "BeanNotesCanvasTest-\(UUID().uuidString)")!
@@ -4333,6 +4691,7 @@ struct BeanNotesTests {
             undoRedoAvailabilityChanged: { _, _ in },
             zoomScaleChanged: { _ in },
             finalViewportChanged: finalViewportChanged,
+            selectionRevision: selectionRevision,
             addPageAtBottom: {},
             topContent: nil
         )

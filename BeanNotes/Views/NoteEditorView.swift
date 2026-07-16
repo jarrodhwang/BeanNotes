@@ -18,6 +18,8 @@ final class NoteEditorSession: ObservableObject {
     @Published var currentZoomScale: CGFloat
     @Published private(set) var viewportRestorationID = 0
     var viewport: DrawingCanvasViewport?
+    private(set) var selectionRevision: UInt64 = 0
+    private(set) var isProgrammaticSelectionProtected = false
 
     init(
         selectedPageID: UUID? = nil,
@@ -27,6 +29,21 @@ final class NoteEditorSession: ObservableObject {
         self.selectedPageID = selectedPageID
         self.currentZoomScale = currentZoomScale
         self.viewport = viewport
+    }
+
+    func selectPageProgrammatically(_ pageID: UUID?) {
+        selectionRevision &+= 1
+        isProgrammaticSelectionProtected = true
+        selectedPageID = pageID
+    }
+
+    func applyCanvasSelection(_ pageID: UUID?) {
+        guard !isProgrammaticSelectionProtected || pageID == selectedPageID else { return }
+        selectedPageID = pageID
+    }
+
+    func beginUserPageSelection() {
+        isProgrammaticSelectionProtected = false
     }
 
     func recordFinalCanvasState(
@@ -113,6 +130,8 @@ struct NoteEditorView: View {
     @State private var autoAddedPlaceholderPageID: UUID?
     @State private var attachmentPendingDeletion: Attachment?
     @State private var pagePendingDeletion: NotePage?
+    @State private var pageUndoToast: PageUndoToast?
+    @State private var pageUndoToastDismissTask: Task<Void, Never>?
     @State private var pagePendingMove: NotePage?
     @State private var isShowingPageReorder = false
     @State private var autosaveState: AutosaveIndicatorState = .saved
@@ -124,6 +143,7 @@ struct NoteEditorView: View {
 
     private let importExportService = ImportExportService()
     private let drawingMetadataSaveDelayNanoseconds: UInt64 = 700_000_000
+    private let pageUndoDurationNanoseconds: UInt64 = 8_000_000_000
 
     private var showsThemeArtwork: Bool {
         switch beanNotesTheme {
@@ -148,13 +168,13 @@ struct NoteEditorView: View {
 
     private var selectedPageID: UUID? {
         get { editorSession.selectedPageID }
-        nonmutating set { editorSession.selectedPageID = newValue }
+        nonmutating set { editorSession.selectPageProgrammatically(newValue) }
     }
 
     private var selectedPageIDBinding: Binding<UUID?> {
         Binding(
             get: { editorSession.selectedPageID },
-            set: { editorSession.selectedPageID = $0 }
+            set: { editorSession.applyCanvasSelection($0) }
         )
     }
 
@@ -267,10 +287,12 @@ struct NoteEditorView: View {
             ensurePage()
         }
         .onDisappear {
+            finalizePendingPageUndo()
             saveNow()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
+            finalizePendingPageUndo()
             saveNow()
         }
         .sheet(isPresented: $isShowingAttachmentPicker) {
@@ -367,7 +389,7 @@ struct NoteEditorView: View {
                 pagePendingDeletion = nil
             }
         } message: {
-            Text("This removes the page, handwriting, thumbnails, and page attachments from local storage.")
+            Text("This removes the page and its contents. You’ll have a short time to undo.")
         }
         .alert("BeanNotes", isPresented: Binding(
             get: { errorMessage != nil },
@@ -429,6 +451,12 @@ struct NoteEditorView: View {
                                 selectedPageID: selectedPageID
                             )
                         },
+                        selectionRevision: { editorSession.selectionRevision },
+                        canPublishVisiblePageSelection: {
+                            !editorSession.isProgrammaticSelectionProtected
+                        },
+                        userPageSelectionStarted: editorSession.beginUserPageSelection,
+                        pageActionRequested: handlePageContextAction(pageID:action:),
                         addPageAtBottom: addPageAtBottom,
                         topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page)),
                         theme: beanNotesTheme,
@@ -491,6 +519,14 @@ struct NoteEditorView: View {
                 .ignoresSafeArea()
         }
         .tint(beanNotesTheme.accentColor)
+        .overlay(alignment: .bottom) {
+            if let pageUndoToast {
+                PageUndoToastView(toast: pageUndoToast, undo: undoPendingPageChange)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .overlay {
             if isImportingFiles {
                 BeanNotesProgressOverlay(
@@ -550,6 +586,7 @@ struct NoteEditorView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .accessibilityIdentifier("editor.pageStatus")
 
                     AutosaveIndicatorView(state: autosaveState)
                 }
@@ -1013,6 +1050,20 @@ struct NoteEditorView: View {
     private func pageActionsMenu(page: NotePage) -> some View {
         Menu {
             Button {
+                addPage(relativeTo: page, placement: .above, offersUndo: true)
+            } label: {
+                Label("Add New Page Above", systemImage: "rectangle.stack.badge.plus")
+            }
+
+            Button {
+                addPage(relativeTo: page, placement: .below, offersUndo: true)
+            } label: {
+                Label("Add New Page Below", systemImage: "rectangle.stack.badge.plus")
+            }
+
+            Divider()
+
+            Button {
                 duplicatePage(page)
             } label: {
                 Label("Duplicate Page", systemImage: "plus.square.on.square")
@@ -1183,6 +1234,18 @@ struct NoteEditorView: View {
         toolShortcutSignal += 1
     }
 
+    private func handlePageContextAction(pageID: UUID, action: NotePageContextAction) {
+        guard let page = note.pages.first(where: { $0.id == pageID }) else { return }
+
+        autoAddedPlaceholderPageID = nil
+        switch action {
+        case .add(let placement):
+            addPage(relativeTo: page, placement: placement, offersUndo: true)
+        case .remove:
+            pagePendingDeletion = page
+        }
+    }
+
     private func ensurePage() {
         if let firstPage = note.sortedPages.first {
             if !note.pages.contains(where: { $0.id == selectedPageID }) {
@@ -1216,27 +1279,53 @@ struct NoteEditorView: View {
 
     @discardableResult
     private func addPage(after page: NotePage, shouldSelect: Bool = true) -> NotePage? {
-        let previousOrders = pageOrders(in: note)
-        let newPage = page.makeFollowingPage()
-        note.pages.append(newPage)
-        applyPageOrder(inserting: newPage, after: page)
-        note.touch()
+        addPage(
+            relativeTo: page,
+            placement: .below,
+            shouldSelect: shouldSelect,
+            offersUndo: shouldSelect
+        )
+    }
 
-        if shouldSelect {
-            selectedPageID = newPage.id
-        }
-
-        guard saveEditorChanges("add a page") else {
-            restorePageOrders(previousOrders)
-            note.pages.removeAll { $0.id == newPage.id }
-            modelContext.delete(newPage)
-            if selectedPageID == newPage.id {
-                selectedPageID = page.id
-            }
+    @discardableResult
+    private func addPage(
+        relativeTo page: NotePage,
+        placement: NotePagePlacement,
+        shouldSelect: Bool = true,
+        offersUndo: Bool
+    ) -> NotePage? {
+        if offersUndo, !finalizePendingPageUndo() {
             return nil
         }
 
-        return newPage
+        let selectionBeforeChange = selectedPageID
+        guard let result = NotePageEditCommand.applyAdd(
+            relativeTo: page,
+            placement: placement,
+            in: note,
+            selectedPageID: selectionBeforeChange
+        ) else {
+            return nil
+        }
+
+        note.touch()
+
+        if shouldSelect {
+            selectedPageID = result.selectedPageID
+        }
+
+        guard saveEditorChanges("add a page") else {
+            _ = NotePageEditCommand.undo(result.change, in: note)
+            modelContext.delete(result.change.page)
+            selectedPageID = selectionBeforeChange
+            return nil
+        }
+
+        if offersUndo {
+            showPageUndoToast(for: result.change)
+        }
+
+        return result.change.page
     }
 
     private func manuallyAddPage(after page: NotePage) {
@@ -1425,6 +1514,7 @@ struct NoteEditorView: View {
             errorMessage = "A note needs at least one page."
             return
         }
+        guard finalizePendingPageUndo() else { return }
 
         saveNow()
 
@@ -1436,35 +1526,156 @@ struct NoteEditorView: View {
     }
 
     private func deletePageAfterPendingSave(_ page: NotePage) {
-        let orderedPages = note.sortedPages
-        guard orderedPages.count > 1,
-              orderedPages.contains(where: { $0.id == page.id }) else {
+        let selectionBeforeChange = selectedPageID
+        guard let result = NotePageEditCommand.applyRemove(
+            page,
+            from: note,
+            selectedPageID: selectionBeforeChange
+        ) else {
             errorMessage = "A note needs at least one page."
             return
         }
 
-        var cleanupTarget = LocalStorageCleanupTarget(page: page)
-        excludeStillReferencedStorage(from: &cleanupTarget, excluding: page)
-
-        let fallbackPageID = fallbackPageID(afterRemoving: page, from: orderedPages)
-        let previousOrders = pageOrders(in: note)
-        note.pages.removeAll { $0.id == page.id }
-        modelContext.delete(page)
-        applyPageOrder(note.sortedPages)
         note.touch()
         note.markSearchIndexStale()
 
-        do {
-            try modelContext.save()
-            selectedPageID = fallbackPageID
+        if saveEditorChanges("remove the page") {
+            selectedPageID = result.selectedPageID
             autoAddedPlaceholderPageID = autoAddedPlaceholderPageID == page.id ? nil : autoAddedPlaceholderPageID
-            reportCleanup(importExportService.storage.removeStoredFiles(matching: cleanupTarget))
-        } catch {
-            modelContext.rollback()
-            restorePageOrders(previousOrders)
-            selectedPageID = page.id
-            errorMessage = "BeanNotes could not delete the page. \(error.localizedDescription)"
+            showPageUndoToast(for: result.change)
+        } else {
+            _ = NotePageEditCommand.undo(result.change, in: note)
+            selectedPageID = selectionBeforeChange
         }
+    }
+
+    private func showPageUndoToast(for change: NotePageEditChange) {
+        guard finalizePendingPageUndo() else { return }
+
+        let toast = PageUndoToast(change: change)
+        withAnimation(.snappy(duration: 0.22)) {
+            pageUndoToast = toast
+        }
+        schedulePageUndoFinalization(for: toast)
+    }
+
+    private func schedulePageUndoFinalization(for toast: PageUndoToast) {
+        pageUndoToastDismissTask?.cancel()
+        pageUndoToastDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: pageUndoDurationNanoseconds)
+            guard !Task.isCancelled else { return }
+            finalizePageUndo(id: toast.id)
+        }
+    }
+
+    private func undoPendingPageChange() {
+        guard let toast = pageUndoToast else { return }
+        pageUndoToastDismissTask?.cancel()
+        guard canUndoPageChange(toast.change) else {
+            dismissPageUndoToast(id: toast.id)
+            errorMessage = "That page change can no longer be undone."
+            return
+        }
+        dismissPageUndoToast(id: toast.id)
+
+        switch toast.change.kind {
+        case .added:
+            // Flush any ink the user added to the new page before detaching it,
+            // then clean up that page's files only after the model save succeeds.
+            saveNow()
+            runAfterPendingCanvasSave(onFailure: {
+                showPageUndoToast(for: toast.change)
+            }) {
+                performPageUndo(toast)
+            }
+        case .removed:
+            performPageUndo(toast)
+        }
+    }
+
+    private func performPageUndo(_ toast: PageUndoToast) {
+        let selectionBeforeUndo = selectedPageID
+        guard let result = NotePageEditCommand.undo(toast.change, in: note) else {
+            errorMessage = "That page change can no longer be undone."
+            return
+        }
+
+        note.touch()
+        note.markSearchIndexStale()
+        guard saveEditorChanges("undo the page change") else {
+            _ = NotePageEditCommand.redo(toast.change, in: note)
+            selectedPageID = selectionBeforeUndo
+            showPageUndoToast(for: toast.change)
+            return
+        }
+
+        selectedPageID = result.selectedPageID
+        if autoAddedPlaceholderPageID == toast.change.page.id {
+            autoAddedPlaceholderPageID = nil
+        }
+
+        if case .added = toast.change.kind {
+            _ = permanentlyDeleteDetachedPage(toast.change.page)
+        }
+    }
+
+    private func canUndoPageChange(_ change: NotePageEditChange) -> Bool {
+        switch change.kind {
+        case .added:
+            note.pages.contains(where: { $0.id == change.page.id })
+        case .removed:
+            !allNotes.flatMap(\.pages).contains(where: { $0.id == change.page.id })
+        }
+    }
+
+    private func finalizePageUndo(id: UUID) {
+        guard pageUndoToast?.id == id else { return }
+        finalizePendingPageUndo()
+    }
+
+    @discardableResult
+    private func finalizePendingPageUndo() -> Bool {
+        pageUndoToastDismissTask?.cancel()
+        pageUndoToastDismissTask = nil
+        guard let toast = pageUndoToast else { return true }
+
+        pageUndoToast = nil
+        if case .removed = toast.change.kind {
+            guard permanentlyDeleteDetachedPage(toast.change.page) else {
+                pageUndoToast = toast
+                schedulePageUndoFinalization(for: toast)
+                return false
+            }
+        }
+        return true
+    }
+
+    private func dismissPageUndoToast(id: UUID) {
+        pageUndoToastDismissTask = nil
+        withAnimation(.snappy(duration: 0.2)) {
+            if pageUndoToast?.id == id {
+                pageUndoToast = nil
+            }
+        }
+    }
+
+    private func permanentlyDeleteDetachedPage(_ page: NotePage) -> Bool {
+        let pageIsAttached = allNotes
+            .flatMap(\.pages)
+            .contains(where: { $0.id == page.id })
+        guard !pageIsAttached else { return true }
+
+        var cleanupTarget = LocalStorageCleanupTarget(page: page)
+        excludeStillReferencedStorage(from: &cleanupTarget, excluding: page)
+        modelContext.delete(page)
+
+        guard saveEditorChanges("finish removing the page") else {
+            modelContext.rollback()
+            return false
+        }
+
+        reportCleanup(importExportService.storage.removeStoredFiles(matching: cleanupTarget))
+        return true
     }
 
     private func movePage(_ page: NotePage, by offset: Int) {
@@ -1565,8 +1776,17 @@ struct NoteEditorView: View {
         return remainingPages[min(removedIndex, remainingPages.count - 1)].id
     }
 
-    private func runAfterPendingCanvasSave(_ work: @escaping () -> Void) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+    private func runAfterPendingCanvasSave(
+        onFailure: @escaping () -> Void = {},
+        _ work: @escaping () -> Void
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            guard !didDrawingSaveFail else {
+                onFailure()
+                return
+            }
+            work()
+        }
     }
 
     private func applyPageOrder(_ orderedPages: [NotePage]) {
@@ -1600,7 +1820,9 @@ struct NoteEditorView: View {
             if let thumbnailFileName = page.thumbnailFileName {
                 paths.append(thumbnailFileName)
             }
-            paths.append(contentsOf: page.attachments.map(\.storedFileName))
+            paths.append(contentsOf: page.attachments.flatMap { attachment in
+                [attachment.storedFileName, attachment.vectorSourceStoredFileName].compactMap { $0 }
+            })
             return paths
         })
         let referencedDrawingFileNames = Set(referencedPages.map(\.drawingFileName))
@@ -1615,7 +1837,9 @@ struct NoteEditorView: View {
                 .flatMap(\.pages)
                 .flatMap(\.attachments)
                 .filter { $0.id != deletedAttachment.id }
-                .map(\.storedFileName)
+                .flatMap { attachment in
+                    [attachment.storedFileName, attachment.vectorSourceStoredFileName].compactMap { $0 }
+                }
         )
 
         target.relativePaths.subtract(referencedRelativePaths)
@@ -1932,6 +2156,60 @@ struct NoteEditorView: View {
         } else {
             autosaveState = .saved
         }
+    }
+}
+
+private struct PageUndoToast: Identifiable {
+    let id = UUID()
+    var change: NotePageEditChange
+
+    var message: String {
+        switch change.kind {
+        case .added(placement: .above):
+            "Page added above"
+        case .added(placement: .below):
+            "Page added below"
+        case .removed:
+            "Page removed"
+        }
+    }
+}
+
+private struct PageUndoToastView: View {
+    @Environment(\.beanNotesTheme) private var beanNotesTheme
+
+    var toast: PageUndoToast
+    var undo: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: toast.change.kind == .removed ? "trash" : "doc.badge.plus")
+                .font(.headline)
+                .foregroundStyle(beanNotesTheme.accentColor)
+                .accessibilityHidden(true)
+
+            Text(toast.message)
+                .font(.subheadline.weight(.semibold))
+
+            Spacer(minLength: 8)
+
+            Button("Undo", action: undo)
+                .font(.subheadline.weight(.bold))
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("pageUndo.undo")
+                .accessibilityHint("Reverts the page change")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 420)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(beanNotesTheme.accentColor.opacity(0.18), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(toast.message)
     }
 }
 

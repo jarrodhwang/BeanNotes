@@ -139,6 +139,69 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
+    func testCanvasTapAndLongPressUsePageActions() throws {
+        app.launch()
+
+        let createNoteButton = app.buttons["Create note"]
+        XCTAssertTrue(createNoteButton.waitForExistence(timeout: 8))
+        createNoteButton.tap()
+
+        let canvas = try hittablePageCanvas()
+        let canvasPoint = visibleCenterCoordinate(on: canvas)
+
+        canvasPoint.tap()
+        XCTAssertFalse(app.menuItems["Select All"].waitForExistence(timeout: 1))
+        XCTAssertFalse(app.menuItems["Insert Space"].exists)
+        XCTAssertFalse(app.menuItems["Insert Tab"].exists)
+
+        canvasPoint.press(forDuration: 0.7)
+
+        let addAbove = app.menuItems["Add New Page Above"]
+        let addBelow = app.menuItems["Add New Page Below"]
+        let removePage = app.menuItems["Remove This Page"]
+        XCTAssertTrue(addAbove.waitForExistence(timeout: 4))
+        XCTAssertTrue(addBelow.exists)
+        XCTAssertTrue(removePage.exists)
+
+        addBelow.tap()
+        XCTAssertTrue(app.staticTexts["Page added below"].waitForExistence(timeout: 4))
+
+        let pageStatus = app.staticTexts["editor.pageStatus"]
+        XCTAssertTrue(pageStatus.waitForExistence(timeout: 4))
+        let addedPageSelected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Page 2 / 2"),
+            object: pageStatus
+        )
+        wait(for: [addedPageSelected], timeout: 4)
+
+        let addedCanvas = try hittablePageCanvas(pageNumber: 2)
+        visibleCenterCoordinate(on: addedCanvas).press(forDuration: 0.7)
+
+        let enabledRemovePage = app.menuItems["Remove This Page"]
+        XCTAssertTrue(enabledRemovePage.waitForExistence(timeout: 4))
+        XCTAssertTrue(enabledRemovePage.isEnabled)
+        let statusBeforeRemoval = pageStatus.label
+        enabledRemovePage.tap()
+
+        let deleteAlert = app.alerts["Delete Page?"]
+        XCTAssertTrue(deleteAlert.waitForExistence(timeout: 4))
+        deleteAlert.buttons["Delete"].tap()
+
+        XCTAssertTrue(app.staticTexts["Page removed"].waitForExistence(timeout: 4))
+        let undoButton = app.buttons["pageUndo.undo"]
+        XCTAssertTrue(undoButton.exists)
+        undoButton.tap()
+        XCTAssertFalse(app.staticTexts["Page removed"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.alerts["BeanNotes"].exists)
+        let restoredPageStatus = app.staticTexts["editor.pageStatus"]
+        let restoredStatus = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", statusBeforeRemoval),
+            object: restoredPageStatus
+        )
+        wait(for: [restoredStatus], timeout: 4)
+    }
+
+    @MainActor
     func testTitleRemainsScreenSpaceWhilePageZooms() throws {
         app.launch()
 
@@ -220,6 +283,44 @@ final class BeanNotesUITests: XCTestCase {
 
     private func tapNearTopLeadingCorner(of element: XCUIElement) {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.12)).tap()
+    }
+
+    private func hittablePageCanvas(pageNumber: Int? = nil) throws -> XCUIElement {
+        var canvases = app.descendants(matching: .any).matching(identifier: "notePageCanvas")
+        if let pageNumber {
+            canvases = canvases.matching(
+                NSPredicate(format: "label == %@", "Page \(pageNumber) canvas")
+            )
+        }
+        XCTAssertTrue(canvases.firstMatch.waitForExistence(timeout: 8))
+
+        var bestCanvas: XCUIElement?
+        var largestVisibleArea: CGFloat = 0
+        for index in 0..<canvases.count {
+            let canvas = canvases.element(boundBy: index)
+            let visibleFrame = canvas.frame.intersection(app.frame)
+            let visibleArea = visibleFrame.width * visibleFrame.height
+            if canvas.isHittable, visibleArea > largestVisibleArea {
+                bestCanvas = canvas
+                largestVisibleArea = visibleArea
+            }
+        }
+
+        if let bestCanvas {
+            return bestCanvas
+        }
+
+        throw XCTSkip("No materialized note page canvas was hittable")
+    }
+
+    private func visibleCenterCoordinate(on element: XCUIElement) -> XCUICoordinate {
+        let frame = element.frame
+        let visibleFrame = frame.intersection(app.frame)
+        let normalizedOffset = CGVector(
+            dx: (visibleFrame.midX - frame.minX) / frame.width,
+            dy: (visibleFrame.midY - frame.minY) / frame.height
+        )
+        return element.coordinate(withNormalizedOffset: normalizedOffset)
     }
 
     private func assertComfortableHitArea(for element: XCUIElement) {
