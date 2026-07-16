@@ -7,6 +7,13 @@ import SwiftData
 import SwiftUI
 
 struct SettingsView: View {
+    private enum SettingsTab: Hashable {
+        case theme
+        case noteStyle
+        case pencilStyle
+        case backup
+    }
+
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -47,6 +54,7 @@ struct SettingsView: View {
     @State private var backupTask: Task<Void, Never>?
     @State private var beanVisitPreview: BeanVisit?
     @State private var beanVisitPreviewTask: Task<Void, Never>?
+    @State private var selectedTab: SettingsTab = .theme
 
     private let oldExportAgeDays = 7
 
@@ -71,78 +79,98 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            TabView {
-                themeSettings
-                    .tabItem { Label("Theme", systemImage: "paintpalette") }
-
-                noteStyleSettings
-                    .tabItem { Label("Note Style", systemImage: "doc.text") }
-
-                pencilStyleSettings
-                    .tabItem { Label("Pencil Style", systemImage: "pencil") }
-
-                backupSettings
-                    .tabItem { Label("Backup", systemImage: "externaldrive") }
-            }
-            .background {
-                BeanNotesPaperBackground(theme: selectedMoodTheme, baseColor: selectedMoodTheme.appBackground)
-                    .ignoresSafeArea()
-            }
-            .navigationTitle("Settings")
-            .tint(selectedMoodTheme.accentColor)
-            .onAppear {
-                NoteBackground.migrateLegacyThemeControlledDefaultsIfNeeded()
-                migrateLegacyPaginationSettingIfNeeded()
-                restorePaletteColorCount()
-            }
-            .task {
-                await refreshStorageUsage()
-            }
-            .onChange(of: beanNotesThemeRaw) { _, _ in
-                hideBeanVisitPreview(animated: false)
-            }
-            .onChange(of: paletteColorCount) { _, _ in
-                normalizePaletteColorCountIfNeeded()
-            }
-            .confirmationDialog(
-                "Clean up exports older than \(oldExportAgeDays) days?",
-                isPresented: $isConfirmingExportCleanup,
-                titleVisibility: .visible
-            ) {
-                Button("Delete Old Exports", role: .destructive) {
-                    Task {
-                        await cleanOldExports()
-                    }
-                }
-
-                Button("Cancel", role: .cancel) {}
-            }
-            .sheet(item: $backupSharePayload) { payload in
-                SettingsActivityView(activityItems: [payload.url])
-            }
-            .overlay {
-                if isCreatingBackup {
-                    BeanNotesProgressOverlay(
-                        title: "Creating Backup",
-                        message: backupProgressMessage,
-                        progress: backupProgress,
-                        cancel: cancelLibraryBackup
-                    )
+        VStack(spacing: 0) {
+            settingsTabPicker
+            selectedTabContent
+        }
+        .background {
+            BeanNotesPaperBackground(theme: selectedMoodTheme, baseColor: selectedMoodTheme.appBackground)
+                .ignoresSafeArea()
+        }
+        .tint(selectedMoodTheme.accentColor)
+        .onAppear {
+            NoteBackground.migrateLegacyThemeControlledDefaultsIfNeeded()
+            migrateLegacyPaginationSettingIfNeeded()
+            restorePaletteColorCount()
+        }
+        .task {
+            await refreshStorageUsage()
+        }
+        .onChange(of: beanNotesThemeRaw) { _, _ in
+            hideBeanVisitPreview(animated: false)
+        }
+        .onChange(of: paletteColorCount) { _, _ in
+            normalizePaletteColorCountIfNeeded()
+        }
+        .confirmationDialog(
+            "Clean up exports older than \(oldExportAgeDays) days?",
+            isPresented: $isConfirmingExportCleanup,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Old Exports", role: .destructive) {
+                Task {
+                    await cleanOldExports()
                 }
             }
-            .overlay {
-                BeanVisitOverlayView(visit: beanVisitPreview)
+
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(item: $backupSharePayload) { payload in
+            SettingsActivityView(activityItems: [payload.url])
+        }
+        .overlay {
+            if isCreatingBackup {
+                BeanNotesProgressOverlay(
+                    title: "Creating Backup",
+                    message: backupProgressMessage,
+                    progress: backupProgress,
+                    cancel: cancelLibraryBackup
+                )
             }
-            .onDisappear {
-                backupTask?.cancel()
-                beanVisitPreviewTask?.cancel()
-                beanVisitPreview = nil
-            }
+        }
+        .overlay {
+            BeanVisitOverlayView(visit: beanVisitPreview)
+        }
+        .onDisappear {
+            backupTask?.cancel()
+            beanVisitPreviewTask?.cancel()
+            beanVisitPreview = nil
         }
         .environment(\.beanNotesTheme, selectedMoodTheme)
         .preferredColorScheme(selectedAppTheme.colorScheme)
         .presentationBackground(selectedMoodTheme.appBackground)
+    }
+
+    private var settingsTabPicker: some View {
+        Picker("Settings section", selection: $selectedTab) {
+            Label("Theme", systemImage: "paintpalette")
+                .tag(SettingsTab.theme)
+            Label("Note Style", systemImage: "doc.text")
+                .tag(SettingsTab.noteStyle)
+            Label("Pencil Style", systemImage: "pencil")
+                .tag(SettingsTab.pencilStyle)
+            Label("Backup", systemImage: "externaldrive")
+                .tag(SettingsTab.backup)
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("settings.sectionPicker")
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var selectedTabContent: some View {
+        switch selectedTab {
+        case .theme:
+            themeSettings
+        case .noteStyle:
+            noteStyleSettings
+        case .pencilStyle:
+            pencilStyleSettings
+        case .backup:
+            backupSettings
+        }
     }
 
     private var themeSettings: some View {

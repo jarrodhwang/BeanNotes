@@ -223,9 +223,7 @@ final class BeanNotesUITests: XCTestCase {
             startWritingButton.tap()
         }
 
-        let settingsButton = app.buttons["Settings"]
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 8))
-        settingsButton.tap()
+        openSettings()
 
         let beanArtworkToggle = app.switches["settings.beanArtworkToggle"]
         XCTAssertTrue(beanArtworkToggle.waitForExistence(timeout: 8))
@@ -241,6 +239,35 @@ final class BeanNotesUITests: XCTestCase {
         XCTAssertFalse(app.alerts.firstMatch.exists)
     }
 
+    @MainActor
+    func testSettingsSectionsUseTopSelectorWithoutNavigationTitle() throws {
+        app.launch()
+
+        let startWritingButton = app.buttons["Start Writing"]
+        if startWritingButton.waitForExistence(timeout: 2) {
+            startWritingButton.tap()
+        }
+
+        openSettings()
+
+        let sectionPicker = app.segmentedControls["settings.sectionPicker"]
+        XCTAssertTrue(sectionPicker.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.navigationBars["Settings"].exists)
+
+        let beanArtworkToggle = app.switches["settings.beanArtworkToggle"]
+        XCTAssertTrue(beanArtworkToggle.waitForExistence(timeout: 8))
+        XCTAssertLessThan(sectionPicker.frame.maxY, beanArtworkToggle.frame.minY)
+
+        sectionPicker.buttons["Note Style"].tap()
+        XCTAssertTrue(app.buttons["Template, Plain"].waitForExistence(timeout: 8))
+
+        sectionPicker.buttons["Pencil Style"].tap()
+        XCTAssertTrue(app.buttons["settings.paletteColorCountPicker"].waitForExistence(timeout: 8))
+
+        sectionPicker.buttons["Backup"].tap()
+        XCTAssertTrue(app.buttons["Refresh Usage"].waitForExistence(timeout: 8))
+    }
+
     private func makeCleanApp(skipWelcome: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
@@ -253,6 +280,19 @@ final class BeanNotesUITests: XCTestCase {
         }
 
         return app
+    }
+
+    @MainActor
+    private func openSettings() {
+        let settingsButton = app.buttons["Settings"]
+        if !settingsButton.waitForExistence(timeout: 1) {
+            let showSidebarButton = app.buttons["ToggleSidebar"]
+            XCTAssertTrue(showSidebarButton.waitForExistence(timeout: 8))
+            showSidebarButton.tap()
+        }
+
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 8))
+        settingsButton.tap()
     }
 
     private func tapNearTopLeadingCorner(of element: XCUIElement) {
