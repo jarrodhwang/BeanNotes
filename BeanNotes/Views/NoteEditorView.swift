@@ -1247,7 +1247,10 @@ struct NoteEditorView: View {
             return
         }
 
-        showPageUndoToast(for: result.change)
+        showPageUndoToast(
+            for: result.change,
+            message: pageLayoutMode == .scroll ? "Drawing space added" : nil
+        )
     }
 
     private func addPageFromFooter() {
@@ -1458,10 +1461,10 @@ struct NoteEditorView: View {
         }
     }
 
-    private func showPageUndoToast(for change: NotePageEditChange) {
+    private func showPageUndoToast(for change: NotePageEditChange, message: String? = nil) {
         guard finalizePendingPageUndo() else { return }
 
-        let toast = PageUndoToast(change: change)
+        let toast = PageUndoToast(change: change, messageOverride: message)
         withAnimation(.snappy(duration: 0.22)) {
             pageUndoToast = toast
         }
@@ -2067,9 +2070,13 @@ struct NoteEditorView: View {
 private struct PageUndoToast: Identifiable {
     let id = UUID()
     var change: NotePageEditChange
+    var messageOverride: String? = nil
 
     var message: String {
-        switch change.kind {
+        if let messageOverride {
+            return messageOverride
+        }
+        return switch change.kind {
         case .added(placement: .above):
             "Page added above"
         case .added(placement: .below):

@@ -1784,7 +1784,7 @@ struct BeanNotesTests {
         #expect(NoteEditorPageFlowMode.singlePage.migratedLayoutMode == .singlePage)
         #expect(NoteEditorPageFlowMode.continuous.migratedLayoutMode == .scroll)
         #expect(NoteEditorPageFlowMode.infinite.migratedLayoutMode == .scroll)
-        #expect(NoteEditorPageFlowMode.seamless.pageStatusText(currentPage: 2, totalPages: 4) == "Page 2 / 4")
+        #expect(NoteEditorPageFlowMode.seamless.pageStatusText(currentPage: 2, totalPages: 4) == "Continuous canvas")
     }
 
     @Test func drawingRenderQualityExposesSharperZoomBudget() {
@@ -2998,6 +2998,7 @@ struct BeanNotesTests {
         func pageFrames() throws -> [CGRect] {
             let frames = container.contentView.subviews
                 .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+                .filter { $0.accessibilityLabel != "Continuous drawing canvas" }
                 .sorted { ($0.page?.pageOrder ?? 0) < ($1.page?.pageOrder ?? 0) }
                 .map(\.frame)
             try #require(frames.count == 2)
@@ -3035,6 +3036,108 @@ struct BeanNotesTests {
         #expect(abs(seamlessFrames[1].minY - seamlessFrames[0].maxY) < 0.01)
         #expect(!container.addPageFooterButton.isHidden)
         #expect(abs(container.addPageFooterButton.frame.minY - seamlessFrames[1].maxY - 36) < 0.01)
+        #expect(container.addPageFooterButton.accessibilityLabel == "Add drawing space")
+    }
+
+    @Test @MainActor func scrollablePaginationUsesOneCanvasAcrossSectionBoundaries() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesContinuousCanvas-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = [
+            NotePage(pageOrder: 0, drawingFileName: "continuous-first.drawing", width: 612, height: 300),
+            NotePage(pageOrder: 1, drawingFileName: "continuous-second.drawing", width: 612, height: 300)
+        ]
+        try drawingStorage.save(makeTestDrawing(color: .systemRed, xOffset: 0), for: pages[0])
+        try drawingStorage.save(makeTestDrawing(color: .systemBlue, xOffset: 20), for: pages[1])
+
+        let parent = makeDrawingCanvasView(
+            page: pages[0],
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        defer {
+            DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+        }
+
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .seamless,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let continuousPageView = try #require(
+            container.contentView.subviews
+                .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+                .first { $0.accessibilityLabel == "Continuous drawing canvas" }
+        )
+        let sectionViews = container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .filter { $0.accessibilityIdentifier == "noteCanvasSection" }
+
+        #expect(container.activeCanvasView === continuousPageView.canvasView)
+        #expect(continuousPageView.frame.size == CGSize(width: 612, height: 600))
+        #expect(continuousPageView.canvasView.drawing.strokes.count == 2)
+        #expect(sectionViews.count == 2)
+        #expect(sectionViews.allSatisfy { $0.layer.shadowOpacity == 0 })
+        #expect(sectionViews.allSatisfy { !$0.canvasView.isUserInteractionEnabled })
+
+        let boundaryStroke = makeTestStroke(
+            from: CGPoint(x: 140, y: 285),
+            to: CGPoint(x: 180, y: 315),
+            width: 8
+        )
+        continuousPageView.canvasView.drawing = PKDrawing(
+            strokes: continuousPageView.canvasView.drawing.strokes + [boundaryStroke]
+        )
+        coordinator.canvasViewDrawingDidChange(continuousPageView.canvasView)
+        coordinator.saveAllCanvases(force: true)
+
+        let firstSavedDrawing = drawingStorage.loadDrawing(for: pages[0])
+        let secondSavedDrawing = drawingStorage.loadDrawing(for: pages[1])
+        #expect(firstSavedDrawing.strokes.count == 2)
+        #expect(secondSavedDrawing.strokes.count == 2)
+        #expect(firstSavedDrawing.strokes.contains { $0.renderBounds.maxY > pages[0].pageSize.height })
+        #expect(secondSavedDrawing.strokes.contains { $0.renderBounds.minY < 0 })
+
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .separated,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .seamless,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let rejoinedCanvas = try #require(container.activeCanvasView)
+        #expect(rejoinedCanvas.drawing.strokes.count == 3)
     }
 
     @Test @MainActor func zoomedRelayoutPreservesViewportAndReachableDocumentEdges() throws {

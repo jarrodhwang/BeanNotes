@@ -27,7 +27,7 @@ enum NoteEditorPageLayoutMode: String, CaseIterable, Identifiable {
         case .singlePage:
             "Keep each page visually separate while scrolling through the note."
         case .scroll:
-            "Join pages edge to edge in one continuous vertical scroll."
+            "Use one continuous drawing canvas and extend it with the add-space button."
         }
     }
 
@@ -79,7 +79,7 @@ enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
         case .separated:
             "Scroll through visually separated pages."
         case .seamless:
-            "Scroll through pages joined edge to edge."
+            "Draw across every section as one uninterrupted canvas."
         }
     }
 
@@ -93,6 +93,9 @@ enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
     }
 
     func pageStatusText(currentPage: Int, totalPages: Int) -> String {
-        "Page \(currentPage) / \(totalPages)"
+        if self == .seamless {
+            return "Continuous canvas"
+        }
+        return "Page \(currentPage) / \(totalPages)"
     }
 }

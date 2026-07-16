@@ -358,6 +358,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         var addPageRequested: (() -> Void)?
 
         private var pageViews: [UUID: PageCanvasView] = [:]
+        private var continuousPageView: PageCanvasView?
         private var pagesByID: [UUID: NotePage] = [:]
         private var orderedPageIDs: [UUID] = []
         private var pageFrames: [UUID: CGRect] = [:]
@@ -453,6 +454,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         var activeCanvasView: PKCanvasView? {
+            if pageFlowMode == .seamless {
+                return continuousPageView?.canvasView
+            }
+
             guard let selectedPageID else {
                 guard let firstPageID = orderedPageIDs.first else { return nil }
                 return pageViews[firstPageID]?.canvasView
@@ -467,7 +472,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         var canvasPagePairs: [(NotePage, PKCanvasView)] {
-            orderedPageIDs.compactMap { id in
+            if let continuousPageView,
+               let representativePage = orderedPageIDs.first.flatMap({ pagesByID[$0] }) {
+                return [(representativePage, continuousPageView.canvasView)]
+            }
+
+            return orderedPageIDs.compactMap { id in
                 guard let pageView = pageViews[id], let page = pageView.page else { return nil }
                 return (page, pageView.canvasView)
             }
@@ -475,6 +485,18 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func setActiveDrawingPage(id: UUID?) {
             activeDrawingPageID = id
+        }
+
+        func isContinuousCanvas(_ canvasView: PKCanvasView) -> Bool {
+            continuousPageView?.canvasView === canvasView
+        }
+
+        var continuousPageIDs: [UUID] {
+            isContinuousDrawingEnabled ? orderedPageIDs : []
+        }
+
+        private var isContinuousDrawingEnabled: Bool {
+            pageFlowMode == .seamless && continuousPageView != nil
         }
 
         func setTopContentView(_ view: UIView?) {
@@ -507,6 +529,22 @@ struct DrawingCanvasView: UIViewRepresentable {
             let qualityChanged = self.renderQuality != renderQuality
             let inputModeChanged = self.inputMode != inputMode
             let selectionChanged = self.selectedPageID != (selectedPageID ?? pages.first?.id)
+            let nextSignature = DrawingCanvasLayoutSignature(
+                pages: pages,
+                pageFlowMode: pageFlowMode,
+                hasTopContent: topContentView != nil
+            )
+            let shouldRelayout = nextSignature != layoutConfigurationSignature
+
+            if shouldRelayout, (continuousPageView != nil || !pageViews.isEmpty) {
+                // Persist current ink before page bounds or flow mode change, so a
+                // rebuilt canvas can translate every stroke from stable coordinates.
+                coordinator.saveAllCanvases(force: true)
+            }
+            if shouldRelayout, continuousPageView != nil {
+                releaseContinuousPageView(flushDrawingBeforeRelease: false)
+            }
+
             self.pageFlowMode = pageFlowMode
             self.inputMode = inputMode
             self.renderQuality = renderQuality
@@ -516,12 +554,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.drawingStorage = drawingStorage
             self.coordinator = coordinator
             scrollView.panGestureRecognizer.minimumNumberOfTouches = inputMode == .anyInput ? 2 : 1
-            let nextSignature = DrawingCanvasLayoutSignature(
-                pages: pages,
-                pageFlowMode: pageFlowMode,
-                hasTopContent: topContentView != nil
-            )
-            let shouldRelayout = nextSignature != layoutConfigurationSignature
             if shouldRelayout, pendingViewport == nil {
                 pendingViewport = currentViewport()
             }
@@ -551,6 +583,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 _ = restorePendingViewportIfPossible()
             }
             materializePagesNearViewport(refreshesExistingPages: true)
+            configureContinuousPageViewIfNeeded(reloadsDrawing: shouldRelayout)
+            arrangeDocumentLayers()
+            updateNativeDrawingViewports(force: shouldRelayout)
 
             if inputModeChanged {
                 applyInputModeToMaterializedPages()
@@ -1049,6 +1084,13 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             let footerY = y + addPageFooterTopPadding
             addPageFooterButton.isHidden = false
+            let extendsContinuousCanvas = pageFlowMode == .seamless
+            addPageFooterButton.accessibilityLabel = extendsContinuousCanvas
+                ? "Add drawing space"
+                : "Add page"
+            addPageFooterButton.accessibilityHint = extendsContinuousCanvas
+                ? "Extends the continuous drawing canvas"
+                : "Adds a new page to the end of this note"
             addPageFooterButton.frame = CGRect(
                 x: (maxWidth - addPageFooterSize) / 2,
                 y: footerY,
@@ -1061,6 +1103,147 @@ struct DrawingCanvasView: UIViewRepresentable {
             documentSize = CGSize(width: maxWidth, height: y)
             updateDocumentGeometry(to: documentSize)
             centerDocument()
+        }
+
+        private var continuousDrawingFrame: CGRect? {
+            let frames = orderedPageIDs.compactMap { pageFrames[$0] }
+            guard let first = frames.first else { return nil }
+            return frames.dropFirst().reduce(first) { $0.union($1) }
+        }
+
+        private func configureContinuousPageViewIfNeeded(reloadsDrawing: Bool) {
+            guard pageFlowMode == .seamless,
+                  let drawingStorage,
+                  let coordinator,
+                  let representativePage = orderedPageIDs.first.flatMap({ pagesByID[$0] }),
+                  let drawingFrame = continuousDrawingFrame,
+                  drawingFrame.width > 0,
+                  drawingFrame.height > 0 else {
+                releaseContinuousPageView(flushDrawingBeforeRelease: false)
+                return
+            }
+
+            if let continuousPageView, !reloadsDrawing {
+                continuousPageView.frame = drawingFrame
+                continuousPageView.applyInputMode(inputMode)
+                return
+            }
+
+            releaseContinuousPageView(flushDrawingBeforeRelease: false)
+            let pageView = PageCanvasView(frame: drawingFrame)
+            continuousPageView = pageView
+            contentView.addSubview(pageView)
+            pageView.configureContinuousDrawingOverlay(
+                representativePage: representativePage,
+                pageSize: drawingFrame.size,
+                drawing: joinedContinuousDrawing(storage: drawingStorage),
+                inputMode: inputMode,
+                coordinator: coordinator
+            )
+            pageView.setDocumentTraversalActive(isUserScrolling)
+        }
+
+        private func joinedContinuousDrawing(storage: DrawingStorageService) -> PKDrawing {
+            guard let drawingFrame = continuousDrawingFrame else { return PKDrawing() }
+
+            var joinedStrokes: [PKStroke] = []
+            var seenStrokes: Set<String> = []
+            for id in orderedPageIDs {
+                guard let page = pagesByID[id], let frame = pageFrames[id] else { continue }
+                let translation = CGAffineTransform(
+                    translationX: frame.minX - drawingFrame.minX,
+                    y: frame.minY - drawingFrame.minY
+                )
+                let translatedDrawing = storage.loadDrawing(for: page).transformed(using: translation)
+                for stroke in translatedDrawing.strokes {
+                    let signature = continuousStrokeSignature(stroke)
+                    if seenStrokes.insert(signature).inserted {
+                        joinedStrokes.append(stroke)
+                    }
+                }
+            }
+            return PKDrawing(strokes: joinedStrokes)
+        }
+
+        private func continuousStrokeSignature(_ stroke: PKStroke) -> String {
+            func quantized(_ value: CGFloat) -> Int64 {
+                guard value.isFinite else { return 0 }
+                return Int64((value * 10_000).rounded())
+            }
+
+            var components = [
+                stroke.ink.inkType.rawValue,
+                stroke.ink.color.hexRGB,
+                String(stroke.path.count),
+                String(stroke.path.creationDate.timeIntervalSinceReferenceDate)
+            ]
+            let transform = stroke.transform
+            for index in 0..<stroke.path.count {
+                let point = stroke.path.interpolatedPoint(at: CGFloat(index))
+                let location = point.location.applying(transform)
+                components.append(
+                    "\(quantized(location.x)),\(quantized(location.y)),"
+                        + "\(quantized(point.size.width)),\(quantized(point.size.height)),"
+                        + "\(quantized(point.opacity)),\(quantized(point.force))"
+                )
+            }
+            components.append(contentsOf: stroke.maskedPathRanges.map {
+                "mask:\(quantized($0.lowerBound))-\(quantized($0.upperBound))"
+            })
+            return components.joined(separator: "|")
+        }
+
+        func continuousPageDrawings(from drawing: PKDrawing) -> [(NotePage, PKDrawing)]? {
+            guard isContinuousDrawingEnabled,
+                  let drawingFrame = continuousDrawingFrame else { return nil }
+
+            return orderedPageIDs.compactMap { id in
+                guard let page = pagesByID[id], let frame = pageFrames[id] else { return nil }
+                let localSegmentFrame = frame.offsetBy(
+                    dx: -drawingFrame.minX,
+                    dy: -drawingFrame.minY
+                )
+                let strokes = drawing.strokes.filter { stroke in
+                    stroke.renderBounds.insetBy(dx: -0.5, dy: -0.5).intersects(localSegmentFrame)
+                }
+                let pageDrawing = PKDrawing(strokes: strokes).transformed(
+                    using: CGAffineTransform(
+                        translationX: -localSegmentFrame.minX,
+                        y: -localSegmentFrame.minY
+                    )
+                )
+                return (page, pageDrawing)
+            }
+        }
+
+        private func arrangeDocumentLayers() {
+            guard let continuousPageView else { return }
+            contentView.bringSubviewToFront(continuousPageView)
+            for id in orderedPageIDs {
+                guard let pageView = pageViews[id], let frame = pageFrames[id] else { continue }
+                pageView.presentForegroundImages(in: contentView, documentFrame: frame)
+            }
+            if let topContentView {
+                contentView.bringSubviewToFront(topContentView)
+            }
+            contentView.bringSubviewToFront(addPageFooterButton)
+        }
+
+        private func releaseContinuousPageView(flushDrawingBeforeRelease: Bool) {
+            guard let continuousPageView else { return }
+            for pageView in pageViews.values {
+                pageView.restoreForegroundImagesToPage()
+            }
+            if let page = continuousPageView.page {
+                coordinator?.unregister(
+                    canvasView: continuousPageView.canvasView,
+                    page: page,
+                    flushDrawingBeforeRelease: flushDrawingBeforeRelease
+                )
+            }
+            continuousPageView.releaseHeavyResources()
+            continuousPageView.removeFromSuperview()
+            self.continuousPageView = nil
         }
 
         /// Resizes the zoomable document without assigning `frame` while UIKit owns a
@@ -1176,6 +1359,12 @@ struct DrawingCanvasView: UIViewRepresentable {
                     force: force
                 )
             }
+            continuousPageView?.updateRenderScale(
+                backgroundScale: backgroundScale,
+                imageScale: imageScale,
+                reloadImageVariants: false,
+                force: force
+            )
         }
 
         private func materializePagesNearViewport(
@@ -1297,6 +1486,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                         coordinator?.requestAttachmentDeletion(attachment)
                     },
                     canRemovePage: orderedPageIDs.count > 1,
+                    drawingEnabled: pageFlowMode != .seamless,
+                    seamlessAppearance: pageFlowMode == .seamless,
                     pageActionRequested: { [weak coordinator] pageID, action in
                         coordinator?.requestPageAction(action, for: pageID)
                     },
@@ -1314,9 +1505,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             for pageView in pageViews.values {
                 pageView.applyInputMode(inputMode)
             }
+            continuousPageView?.applyInputMode(inputMode)
         }
 
         func releaseAllMaterializedPages(flushDrawingsBeforeRelease: Bool = true) {
+            releaseContinuousPageView(flushDrawingBeforeRelease: flushDrawingsBeforeRelease)
             for id in Array(pageViews.keys) {
                 if let pageView = pageViews[id] {
                     retirePageView(
@@ -1334,7 +1527,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             flushDrawingBeforeRelease: Bool = true,
             evictCachedImages: Bool = false
         ) {
-            if let page = pageView.page {
+            if let page = pageView.page, pageView.canvasView.delegate != nil {
                 coordinator?.unregister(
                     canvasView: pageView.canvasView,
                     page: page,
@@ -1363,6 +1556,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             for pageView in pageViews.values {
                 pageView.reduceDrawingMemoryFootprint()
             }
+            continuousPageView?.reduceDrawingMemoryFootprint()
             updateRasterScale(force: true)
         }
 
@@ -1378,6 +1572,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             for pageView in pageViews.values {
                 pageView.cancelPendingNativeViewportUpdate()
             }
+            continuousPageView?.cancelPendingNativeViewportUpdate()
         }
 
         private func visibleContentRect() -> CGRect {
@@ -1455,6 +1650,31 @@ struct DrawingCanvasView: UIViewRepresentable {
             let overscan = overscanScreenPadding / zoomScale
             let visibleRect = visibleContentRect()
 
+            if let continuousPageView {
+                for pageView in pageViews.values {
+                    pageView.deactivateDrawingViewport()
+                }
+                let visibleDrawingRect = continuousPageView.frame.intersection(visibleRect)
+                guard !visibleDrawingRect.isNull, !visibleDrawingRect.isEmpty else {
+                    continuousPageView.deactivateDrawingViewport()
+                    return
+                }
+                let localRect = visibleDrawingRect.offsetBy(
+                    dx: -continuousPageView.frame.minX,
+                    dy: -continuousPageView.frame.minY
+                )
+                let nativeZoomScale = isZoomTransitionActive
+                    ? continuousPageView.currentNativeDrawingZoomScale
+                    : settledNativeZoomScale
+                continuousPageView.updateNativeDrawingViewport(
+                    visiblePageRect: localRect,
+                    overscan: overscan,
+                    nativeZoomScale: nativeZoomScale,
+                    force: force
+                )
+                return
+            }
+
             for (id, pageView) in pageViews {
                 guard let pageFrame = pageFrames[id] else {
                     pageView.deactivateDrawingViewport()
@@ -1504,6 +1724,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             for pageView in pageViews.values {
                 pageView.setDocumentTraversalActive(isScrolling)
             }
+            continuousPageView?.setDocumentTraversalActive(isScrolling)
         }
 
         private func updateVisiblePage() {
@@ -2145,6 +2366,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var objectEraserInitialDrawing: PKDrawing?
         private var objectEraserHasChanges = false
         private var laidOutPageBounds: CGRect = .null
+        private var drawingPageSizeOverride: CGSize?
+        private var isDrawingSurfaceEnabled = true
         private var activeDrawingViewportRect: CGRect = .null
         private var nativeZoomScale: CGFloat = 1
         private var pendingNativeViewport: NativeViewportRequest?
@@ -2155,6 +2378,10 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         var currentNativeDrawingZoomScale: CGFloat {
             nativeZoomScale
+        }
+
+        private var drawingPageSize: CGSize {
+            drawingPageSizeOverride ?? page?.pageSize ?? .zero
         }
 
         var isUsingCustomObjectEraser: Bool {
@@ -2190,28 +2417,50 @@ struct DrawingCanvasView: UIViewRepresentable {
             attachmentChanged: @escaping () -> Void,
             deleteAttachment: @escaping (Attachment) -> Void,
             canRemovePage: Bool = false,
+            drawingEnabled: Bool = true,
+            seamlessAppearance: Bool = false,
             pageActionRequested: @escaping (UUID, NotePageContextAction) -> Void = { _, _ in },
             pageContextMenuWillOpen: @escaping (UUID) -> Void = { _ in }
         ) {
+            let wasDrawingSurfaceEnabled = isDrawingSurfaceEnabled
+            let wasRegisteredForDrawing = canvasView.delegate != nil
             let isNewPage = self.page?.id != page.id
             let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)#beanArtwork=\(showsBeanArtwork)"
             let needsStaticRefresh = isNewPage || signature != configurationSignature
             let pageSizeChanged = laidOutPageBounds.size != page.pageSize
+            drawingPageSizeOverride = nil
+            isDrawingSurfaceEnabled = drawingEnabled
             if isNewPage {
                 clearAttachmentSelection()
                 hasConfiguredImageAttachments = false
             }
             self.page = page
-            accessibilityIdentifier = "notePageCanvas"
-            accessibilityLabel = "Page \(page.pageOrder + 1) canvas"
+            accessibilityIdentifier = drawingEnabled ? "notePageCanvas" : "noteCanvasSection"
+            accessibilityLabel = drawingEnabled
+                ? "Page \(page.pageOrder + 1) canvas"
+                : "Drawing space section \(page.pageOrder + 1)"
             self.attachmentChanged = attachmentChanged
             self.deleteAttachment = deleteAttachment
             self.canRemovePage = canRemovePage
             self.pageActionRequested = pageActionRequested
             self.pageContextMenuWillOpen = pageContextMenuWillOpen
+            layer.shadowOpacity = seamlessAppearance ? 0 : 0.12
+            backgroundView.isHidden = false
+            behindImageContainerView.isHidden = false
+            foregroundImageContainerView.isHidden = false
+            attachmentSelectionGesture?.isEnabled = true
+            pageActionLongPressGesture?.isEnabled = true
 
             applyInputMode(inputMode)
-            if !isNewPage, !needsStaticRefresh, !pageSizeChanged {
+            canvasView.isUserInteractionEnabled = drawingEnabled
+            if !drawingEnabled {
+                drawingViewportView.isHidden = true
+                canvasView.delegate = nil
+                canvasView.drawing = PKDrawing()
+            }
+
+            if !isNewPage, !needsStaticRefresh, !pageSizeChanged,
+               wasDrawingSurfaceEnabled == drawingEnabled {
                 return
             }
 
@@ -2225,16 +2474,71 @@ struct DrawingCanvasView: UIViewRepresentable {
                 configurationSignature = signature
             }
 
-            if isNewPage {
+            if drawingEnabled, isNewPage || !wasDrawingSurfaceEnabled {
                 resetNativeCanvas(pageSize: page.pageSize)
                 canvasView.drawing = drawingStorage.loadDrawing(for: page)
-            } else if pageSizeChanged {
+            } else if drawingEnabled, pageSizeChanged {
                 resetNativeCanvas(pageSize: page.pageSize)
             }
 
-            canvasView.delegate = coordinator
-            coordinator.register(canvasView: canvasView, page: page, pageView: self)
+            if drawingEnabled {
+                canvasView.delegate = coordinator
+                coordinator.register(canvasView: canvasView, page: page, pageView: self)
+            } else if wasDrawingSurfaceEnabled, wasRegisteredForDrawing {
+                coordinator.unregister(
+                    canvasView: canvasView,
+                    page: page,
+                    flushDrawingBeforeRelease: false
+                )
+            }
 
+            layoutPage()
+            restoreDrawingLayerOrder()
+        }
+
+        func configureContinuousDrawingOverlay(
+            representativePage: NotePage,
+            pageSize: CGSize,
+            drawing: PKDrawing,
+            inputMode: DrawingInputMode,
+            coordinator: Coordinator
+        ) {
+            let needsCanvasReset = page?.id != representativePage.id
+                || drawingPageSizeOverride != pageSize
+                || !isDrawingSurfaceEnabled
+
+            page = representativePage
+            drawingPageSizeOverride = pageSize
+            isDrawingSurfaceEnabled = true
+            accessibilityIdentifier = "notePageCanvas"
+            accessibilityLabel = "Continuous drawing canvas"
+            attachmentChanged = nil
+            deleteAttachment = nil
+            canRemovePage = false
+            pageActionRequested = nil
+            pageContextMenuWillOpen = nil
+
+            layer.shadowOpacity = 0
+            backgroundView.isHidden = true
+            behindImageContainerView.isHidden = true
+            foregroundImageContainerView.isHidden = true
+            attachmentSelectionGesture?.isEnabled = false
+            pageActionLongPressGesture?.isEnabled = false
+            canvasView.isUserInteractionEnabled = true
+            applyInputMode(inputMode)
+
+            if needsCanvasReset {
+                resetNativeCanvas(
+                    pageSize: pageSize,
+                    initialViewportSize: CGSize(
+                        width: min(pageSize.width, 2_048),
+                        height: min(pageSize.height, 2_048)
+                    )
+                )
+            }
+            canvasView.drawing = drawing
+            canvasView.delegate = coordinator
+            coordinator.register(canvasView: canvasView, page: representativePage, pageView: self)
             layoutPage()
             restoreDrawingLayerOrder()
         }
@@ -2281,7 +2585,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func layoutPage() {
             guard let page else { return }
-            let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+            let pageBounds = CGRect(origin: .zero, size: drawingPageSize)
 
             if laidOutPageBounds != pageBounds {
                 backgroundView.frame = pageBounds
@@ -2302,6 +2606,23 @@ struct DrawingCanvasView: UIViewRepresentable {
                     pageSize: page.pageSize
                 )
             }
+        }
+
+        func presentForegroundImages(in hostView: UIView, documentFrame: CGRect) {
+            if foregroundImageContainerView.superview !== hostView {
+                foregroundImageContainerView.removeFromSuperview()
+                hostView.addSubview(foregroundImageContainerView)
+            }
+            foregroundImageContainerView.frame = documentFrame
+            hostView.bringSubviewToFront(foregroundImageContainerView)
+        }
+
+        func restoreForegroundImagesToPage() {
+            guard foregroundImageContainerView.superview !== self else { return }
+            foregroundImageContainerView.removeFromSuperview()
+            addSubview(foregroundImageContainerView)
+            foregroundImageContainerView.frame = CGRect(origin: .zero, size: drawingPageSize)
+            restoreDrawingLayerOrder()
         }
 
         private func configureView() {
@@ -2475,8 +2796,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             nativeZoomScale: CGFloat,
             force: Bool = false
         ) {
-            guard let page else { return }
-            let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+            guard page != nil, isDrawingSurfaceEnabled else { return }
+            let pageBounds = CGRect(origin: .zero, size: drawingPageSize)
             let requiredRect = visiblePageRect.intersection(pageBounds)
             guard !requiredRect.isNull, !requiredRect.isEmpty else {
                 deactivateDrawingViewport()
@@ -2503,7 +2824,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func deactivateDrawingViewport() {
-            guard !isUsingDrawingTool else { return }
+            guard isDrawingSurfaceEnabled, !isUsingDrawingTool else { return }
             pendingNativeViewport = nil
             drawingViewportView.isHidden = true
         }
@@ -2513,8 +2834,14 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func reduceDrawingMemoryFootprint() {
-            guard let page, !isUsingDrawingTool else { return }
-            resetNativeCanvas(pageSize: page.pageSize)
+            guard isDrawingSurfaceEnabled, !isUsingDrawingTool else { return }
+            let compactViewportSize = drawingPageSizeOverride.map { pageSize in
+                CGSize(width: min(pageSize.width, 2_048), height: min(pageSize.height, 2_048))
+            }
+            resetNativeCanvas(
+                pageSize: drawingPageSize,
+                initialViewportSize: compactViewportSize
+            )
             drawingViewportView.isHidden = true
         }
 
@@ -2540,8 +2867,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func applyNativeDrawingViewport(_ request: NativeViewportRequest) {
-            guard let page else { return }
-            let pageBounds = CGRect(origin: .zero, size: page.pageSize)
+            guard page != nil, isDrawingSurfaceEnabled else { return }
+            let pageBounds = CGRect(origin: .zero, size: drawingPageSize)
             let targetRect = request.rect
                 .insetBy(dx: -request.overscan, dy: -request.overscan)
                 .intersection(pageBounds)
@@ -2591,9 +2918,18 @@ struct DrawingCanvasView: UIViewRepresentable {
             restoreDrawingLayerOrder()
         }
 
-        private func resetNativeCanvas(pageSize: CGSize) {
+        private func resetNativeCanvas(
+            pageSize: CGSize,
+            initialViewportSize: CGSize? = nil
+        ) {
             guard pageSize.width > 0, pageSize.height > 0 else { return }
             pendingNativeViewport = nil
+            let viewportSize = initialViewportSize.map { requestedSize in
+                CGSize(
+                    width: min(max(requestedSize.width, 1), pageSize.width),
+                    height: min(max(requestedSize.height, 1), pageSize.height)
+                )
+            } ?? pageSize
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -2605,15 +2941,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.minimumZoomScale = 1
             canvasView.maximumZoomScale = 1
             canvasView.contentSize = pageSize
-            canvasView.bounds = CGRect(origin: .zero, size: pageSize)
-            canvasView.center = CGPoint(x: pageSize.width / 2, y: pageSize.height / 2)
+            canvasView.bounds = CGRect(origin: .zero, size: viewportSize)
+            canvasView.center = CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
             canvasView.contentOffset = .zero
 
-            drawingViewportView.frame = CGRect(origin: .zero, size: pageSize)
-            drawingViewportView.bounds = CGRect(origin: .zero, size: pageSize)
+            drawingViewportView.frame = CGRect(origin: .zero, size: viewportSize)
+            drawingViewportView.bounds = CGRect(origin: .zero, size: viewportSize)
             drawingViewportView.isHidden = false
             nativeZoomScale = 1
-            activeDrawingViewportRect = CGRect(origin: .zero, size: pageSize)
+            activeDrawingViewportRect = CGRect(origin: .zero, size: viewportSize)
             CATransaction.commit()
         }
 
@@ -3061,7 +3397,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             sendSubviewToBack(backgroundView)
             insertSubview(behindImageContainerView, aboveSubview: backgroundView)
             insertSubview(drawingViewportView, aboveSubview: behindImageContainerView)
-            insertSubview(foregroundImageContainerView, aboveSubview: drawingViewportView)
+            if foregroundImageContainerView.superview === self {
+                insertSubview(foregroundImageContainerView, aboveSubview: drawingViewportView)
+            }
 
             if let attachmentEditingOverlay {
                 bringSubviewToFront(attachmentEditingOverlay)
@@ -3070,6 +3408,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func releaseHeavyResources(evictCachedImages: Bool = false) {
+            restoreForegroundImagesToPage()
             pendingNativeViewport = nil
             drawingViewportView.isHidden = true
             eraserScopeView.hide()
@@ -4495,6 +4834,32 @@ struct DrawingCanvasView: UIViewRepresentable {
             let key = ObjectIdentifier(canvasView)
             guard let page = canvasPages[key] else { return }
 
+            if containerView?.isContinuousCanvas(canvasView) == true {
+                let pageIDs = containerView?.continuousPageIDs ?? [page.id]
+                let wasAlreadyDirty = pageIDs.contains {
+                    dirtyPageIDs.contains($0)
+                        || pendingSaves[$0] != nil
+                        || hasInFlightSave(for: $0)
+                }
+                dirtyPageIDs.formUnion(pageIDs)
+
+                if activeToolCanvasIDs.contains(key) {
+                    if !wasAlreadyDirty {
+                        deferredDrawingChangeNotifications.insert(page.id)
+                    }
+                    return
+                }
+
+                canvasPageViews[key]?.value?.drawingDidChange()
+                if !wasAlreadyDirty {
+                    notifyDrawingChanged(pageID: page.id)
+                    notifySaveStarted()
+                }
+                scheduleContinuousDrawingSave(canvasView)
+                publishUndoRedoAvailability()
+                return
+            }
+
             let didBecomeDirty = dirtyPageIDs.insert(page.id).inserted
             let wasAlreadyDirty = !didBecomeDirty
                 || pendingSaves[page.id] != nil
@@ -4517,7 +4882,29 @@ struct DrawingCanvasView: UIViewRepresentable {
             publishUndoRedoAvailability()
         }
 
+        private func scheduleContinuousDrawingSave(_ canvasView: PKCanvasView) {
+            guard let pageDrawings = containerView?.continuousPageDrawings(from: canvasView.drawing) else {
+                return
+            }
+            for (page, drawing) in pageDrawings {
+                scheduleDrawingSave(for: page, drawing: drawing)
+            }
+        }
+
         private func scheduleDrawingSave(for page: NotePage, canvasView: PKCanvasView) {
+            scheduleDrawingSave(for: page) { [weak canvasView] in
+                canvasView?.drawing
+            }
+        }
+
+        private func scheduleDrawingSave(for page: NotePage, drawing: PKDrawing) {
+            scheduleDrawingSave(for: page) { drawing }
+        }
+
+        private func scheduleDrawingSave(
+            for page: NotePage,
+            drawingProvider: @escaping () -> PKDrawing?
+        ) {
             let pageID = page.id
             let rootURL = parent.drawingStorage.storage.rootURL
             let drawingFileName = page.drawingFileName
@@ -4526,16 +4913,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             pendingSaves[pageID]?.cancel()
             pendingSaveTokens[pageID] = token
 
-            let save = DispatchWorkItem { [weak self, weak canvasView] in
+            let save = DispatchWorkItem { [weak self] in
                 guard let self,
                       self.pendingSaveTokens[pageID] == token,
-                      let canvasView else { return }
+                      let drawing = drawingProvider() else { return }
 
                 self.pendingSaves[pageID] = nil
                 self.pendingSaveTokens[pageID] = nil
                 self.beginInFlightSave(pageID: pageID, token: token)
 
-                let drawing = canvasView.drawing
                 DrawingStorageService.cache(drawing, fileName: drawingFileName, rootURL: rootURL)
                 Self.writeDrawing(
                     drawing,
@@ -4555,6 +4941,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func flushDrawingBeforeCanvasRelease(_ canvasView: PKCanvasView, for page: NotePage) {
+            if containerView?.isContinuousCanvas(canvasView) == true {
+                saveAllCanvases(force: true)
+                return
+            }
             guard hasPendingDrawingWork(for: page.id) else { return }
 
             pendingSaves[page.id]?.cancel()
@@ -4709,9 +5099,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                 temporaryEraserCanvasIDs.insert(id)
             }
             if let page = canvasPages[id] {
-                pendingSaves[page.id]?.cancel()
-                pendingSaves[page.id] = nil
-                pendingSaveTokens[page.id] = nil
+                let affectedPageIDs = containerView?.isContinuousCanvas(canvasView) == true
+                    ? containerView?.continuousPageIDs ?? [page.id]
+                    : [page.id]
+                for pageID in affectedPageIDs {
+                    pendingSaves[pageID]?.cancel()
+                    pendingSaves[pageID] = nil
+                    pendingSaveTokens[pageID] = nil
+                }
                 containerView?.setActiveDrawingPage(id: page.id)
             }
             canvasPageViews[id]?.value?.setLiveDrawingActive(true)
@@ -4729,7 +5124,11 @@ struct DrawingCanvasView: UIViewRepresentable {
                     notifyDrawingChanged(pageID: page.id)
                     notifySaveStarted()
                 }
-                if dirtyPageIDs.contains(page.id) {
+                if containerView?.isContinuousCanvas(canvasView) == true,
+                   (containerView?.continuousPageIDs.contains(where: dirtyPageIDs.contains) == true) {
+                    scheduleContinuousDrawingSave(canvasView)
+                    publishUndoRedoAvailability()
+                } else if dirtyPageIDs.contains(page.id) {
                     scheduleDrawingSave(for: page, canvasView: canvasView)
                     publishUndoRedoAvailability()
                 }
@@ -4939,10 +5338,19 @@ struct DrawingCanvasView: UIViewRepresentable {
             trackInFlight: Bool = true,
             invalidateInFlight: Bool = false
         ) -> [CanvasSaveRequest] {
-            let pairs = containerView?.canvasPagePairs ?? []
+            let snapshots: [(NotePage, PKDrawing)]
+            if let canvasView = containerView?.activeCanvasView,
+               containerView?.isContinuousCanvas(canvasView) == true,
+               let continuousSnapshots = containerView?.continuousPageDrawings(from: canvasView.drawing) {
+                snapshots = continuousSnapshots
+            } else {
+                snapshots = (containerView?.canvasPagePairs ?? []).map { page, canvasView in
+                    (page, canvasView.drawing)
+                }
+            }
             var requests: [CanvasSaveRequest] = []
 
-            for (page, canvasView) in pairs {
+            for (page, drawing) in snapshots {
                 guard force
                         || dirtyPageIDs.contains(page.id)
                         || pendingSaves[page.id] != nil
@@ -4959,7 +5367,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                     beginInFlightSave(pageID: page.id, token: token)
                 }
                 notifySaveStarted()
-                let drawing = canvasView.drawing
                 DrawingStorageService.cache(
                     drawing,
                     fileName: page.drawingFileName,

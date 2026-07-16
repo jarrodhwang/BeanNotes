@@ -139,7 +139,7 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
-    func testBottomPlusAddsPageAndLongPressCanRemoveIt() throws {
+    func testBottomPlusExtendsContinuousCanvas() throws {
         app.launch()
 
         let createNoteButton = app.buttons["Create note"]
@@ -161,44 +161,18 @@ final class BeanNotesUITests: XCTestCase {
         }
         XCTAssertTrue(addPage.isHittable)
         XCTAssertEqual(app.buttons.matching(identifier: "editor.addPageFooter").count, 1)
+        XCTAssertEqual(addPage.label, "Add drawing space")
         addPage.tap()
-        XCTAssertTrue(app.staticTexts["Page added below"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Drawing space added"].waitForExistence(timeout: 4))
 
         let pageStatus = app.staticTexts["editor.pageStatus"]
         XCTAssertTrue(pageStatus.waitForExistence(timeout: 4))
-        let addedPageSelected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", "Page 2 / 2"),
+        let continuousCanvasStatus = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Continuous canvas"),
             object: pageStatus
         )
-        wait(for: [addedPageSelected], timeout: 4)
-
-        let addedCanvas = try hittablePageCanvas(pageNumber: 2)
-        visibleCenterCoordinate(on: addedCanvas).press(forDuration: 0.7)
-
-        let enabledRemovePage = app.menuItems["Remove This Page"]
-        XCTAssertTrue(enabledRemovePage.waitForExistence(timeout: 4))
-        XCTAssertFalse(app.menuItems["Add New Page Above"].exists)
-        XCTAssertFalse(app.menuItems["Add New Page Below"].exists)
-        XCTAssertTrue(enabledRemovePage.isEnabled)
-        let statusBeforeRemoval = pageStatus.label
-        enabledRemovePage.tap()
-
-        let deleteAlert = app.alerts["Delete Page?"]
-        XCTAssertTrue(deleteAlert.waitForExistence(timeout: 4))
-        deleteAlert.buttons["Delete"].tap()
-
-        XCTAssertTrue(app.staticTexts["Page removed"].waitForExistence(timeout: 4))
-        let undoButton = app.buttons["pageUndo.undo"]
-        XCTAssertTrue(undoButton.exists)
-        undoButton.tap()
-        XCTAssertFalse(app.staticTexts["Page removed"].waitForExistence(timeout: 2))
-        XCTAssertFalse(app.alerts["BeanNotes"].exists)
-        let restoredPageStatus = app.staticTexts["editor.pageStatus"]
-        let restoredStatus = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", statusBeforeRemoval),
-            object: restoredPageStatus
-        )
-        wait(for: [restoredStatus], timeout: 4)
+        wait(for: [continuousCanvasStatus], timeout: 4)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "notePageCanvas").count, 1)
     }
 
     @MainActor
