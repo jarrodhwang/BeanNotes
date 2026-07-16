@@ -38,12 +38,22 @@ final class BeanNotesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Back to library"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.otherElements["Pen palette"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["1 point stroke"].exists)
-        app.buttons["Pen"].tap()
+        let penButton = app.buttons["Pen"]
+        XCTAssertTrue(penButton.waitForExistence(timeout: 8))
+        assertComfortableHitArea(for: penButton)
+        tapNearTopLeadingCorner(of: penButton)
         XCTAssertTrue(app.buttons["1 point stroke"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["3 point stroke"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["5 point stroke"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["8 point stroke"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Custom pen thickness"].waitForExistence(timeout: 8))
+        let blueSwatch = app.buttons["Blue Pen color"]
+        XCTAssertTrue(blueSwatch.waitForExistence(timeout: 8))
+        assertComfortableHitArea(for: blueSwatch)
+        tapNearTopLeadingCorner(of: blueSwatch)
+        let selectedBlueSwatch = app.colorWells["Edit Blue Pen color"]
+        XCTAssertTrue(selectedBlueSwatch.waitForExistence(timeout: 8))
+        assertComfortableHitArea(for: selectedBlueSwatch)
         XCTAssertFalse(app.buttons["Custom eraser size"].exists)
         app.buttons["Eraser"].tap()
         app.buttons["Eraser"].tap()
@@ -206,5 +216,14 @@ final class BeanNotesUITests: XCTestCase {
         }
 
         return app
+    }
+
+    private func tapNearTopLeadingCorner(of element: XCUIElement) {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.12)).tap()
+    }
+
+    private func assertComfortableHitArea(for element: XCUIElement) {
+        XCTAssertGreaterThanOrEqual(element.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44)
     }
 }

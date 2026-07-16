@@ -141,11 +141,11 @@ struct PenPaletteView: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 20)
-        .padding(.vertical, 9)
+        .padding(.vertical, 7)
     }
 
     private var compactExpandedPalette: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
                 dragHandle
                 toolButtons
@@ -167,11 +167,11 @@ struct PenPaletteView: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 20)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
     }
 
     private var toolButtons: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 0) {
             ForEach(DrawingTool.allCases) { tool in
                 toolButton(tool)
             }
@@ -179,7 +179,7 @@ struct PenPaletteView: View {
     }
 
     private var colorControls: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             ForEach(displayedPaletteSwatches) { swatch in
                 swatchButton(swatch)
             }
@@ -549,6 +549,7 @@ struct PenPaletteView: View {
                             .stroke(.blue, lineWidth: 2)
                     }
                 }
+                .palettePrimaryHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tool.label)
@@ -642,6 +643,7 @@ struct PenPaletteView: View {
                         .frame(width: 35, height: 35)
                         .allowsHitTesting(false)
                 }
+                .palettePrimaryHitTarget()
                 .accessibilityLabel("Edit \(swatch.name) \(toolState.activeColorTool.label) color")
                 .accessibilityHint("Opens the color picker for this selected swatch")
         } else {
@@ -665,6 +667,7 @@ struct PenPaletteView: View {
                     .stroke(isLightSwatch(swatch) ? Color.secondary.opacity(0.42) : Color.clear, lineWidth: 1)
             }
             .frame(width: 38, height: 38)
+            .palettePrimaryHitTarget()
     }
 
     private func selectPaletteSwatch(_ swatch: DrawingColorSwatch) {
@@ -851,6 +854,7 @@ struct PenPaletteLayoutMetrics {
     static let isCollapsedStorageKey = "penPalette.isCollapsed"
     static let committedOffsetStorageKey = "penPalette.committedOffset"
     static let compactWidthThreshold: CGFloat = 1_180
+    static let primaryControlHitSize: CGFloat = 44
     private static let minimumVisibleInset: CGFloat = 8
     private static let trailingInset: CGFloat = 16
     private static let bottomInset: CGFloat = 24
@@ -941,5 +945,15 @@ private struct PenPaletteSizePreferenceKey: PreferenceKey {
         let next = nextValue()
         guard next != .zero else { return }
         value = next
+    }
+}
+
+private extension View {
+    func palettePrimaryHitTarget() -> some View {
+        frame(
+            width: PenPaletteLayoutMetrics.primaryControlHitSize,
+            height: PenPaletteLayoutMetrics.primaryControlHitSize
+        )
+        .contentShape(.interaction, Rectangle())
     }
 }
