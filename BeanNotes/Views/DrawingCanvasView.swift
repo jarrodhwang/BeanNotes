@@ -2334,9 +2334,18 @@ struct DrawingCanvasView: UIViewRepresentable {
         let backgroundView = PageBackgroundUIView()
         let behindImageContainerView = UIView(frame: .zero)
         let drawingViewportView = UIView(frame: .zero)
-        let canvasView = PKCanvasView(frame: .zero)
+        let canvasView = MenulessCanvasView(frame: .zero)
         let foregroundImageContainerView = UIView(frame: .zero)
         let eraserScopeView = EraserScopeView(frame: .zero)
+
+        /// PencilKit exposes editing commands such as Select All and Insert Space
+        /// from its responder chain. This canvas is drawing-only, so suppress those
+        /// commands instead of allowing an empty or irrelevant edit menu to appear.
+        private final class MenulessCanvasView: PKCanvasView {
+            override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+                false
+            }
+        }
 
         private var imageViews: [UUID: AttachmentImageContainerView] = [:]
         private let eraserScopeGesture = EraserScopeGestureRecognizer()
