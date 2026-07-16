@@ -382,7 +382,7 @@ enum DrawingInputMode: String, CaseIterable, Identifiable {
         case .pencilOnly:
             "Finger touches scroll, zoom, and move around the page without leaving stray marks."
         case .anyInput:
-            "Finger touches can draw too, useful for quick markups or drawing without Apple Pencil."
+            "Finger touches can draw too; use two fingers to scroll or zoom the page."
         }
     }
 

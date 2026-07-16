@@ -28,7 +28,6 @@ struct SettingsView: View {
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
-    @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
     @AppStorage(PaperSize.storageKey) private var paperSizeRaw = PaperSize.defaultPaperSize.rawValue
     @AppStorage(CustomPaperSize.widthStorageKey) private var customPaperWidth = Double(CustomPaperSize.defaultDimensions.width)
     @AppStorage(CustomPaperSize.heightStorageKey) private var customPaperHeight = Double(CustomPaperSize.defaultDimensions.height)
@@ -68,10 +67,6 @@ struct SettingsView: View {
 
     private var selectedPageLayoutMode: NoteEditorPageLayoutMode {
         NoteEditorPageLayoutMode(rawValue: pageLayoutModeRaw) ?? .scroll
-    }
-
-    private var selectedPageCreationMode: NoteEditorPageCreationMode {
-        NoteEditorPageCreationMode(rawValue: pageCreationModeRaw) ?? .manual
     }
 
     private var selectedDrawingInputMode: DrawingInputMode {
@@ -173,21 +168,13 @@ struct SettingsView: View {
                         }
                     }
 
-                    if selectedPageLayoutMode == .scroll {
-                        Picker("New Pages", selection: $pageCreationModeRaw) {
-                            ForEach(NoteEditorPageCreationMode.allCases) { mode in
-                                Text(mode.label).tag(mode.rawValue)
-                            }
-                        }
+                    Text(selectedPageLayoutMode.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                        Text(selectedPageCreationMode.description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(selectedPageLayoutMode.description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Pages are never added automatically. Tap the plus button at the bottom to append one.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Default Paper Size") {
@@ -529,8 +516,7 @@ struct SettingsView: View {
             return
         }
 
-        pageLayoutModeRaw = legacyMode.layoutMode.rawValue
-        pageCreationModeRaw = legacyMode.creationMode.rawValue
+        pageLayoutModeRaw = legacyMode.migratedLayoutMode.rawValue
     }
 
     private func normalizePaletteColorCountIfNeeded() {

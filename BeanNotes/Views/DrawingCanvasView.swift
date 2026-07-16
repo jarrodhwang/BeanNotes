@@ -94,7 +94,6 @@ struct DrawingCanvasViewport: Equatable {
 }
 
 enum NotePageContextAction: Equatable {
-    case add(NotePagePlacement)
     case remove
 }
 
@@ -167,7 +166,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var canPublishVisiblePageSelection: () -> Bool = { true }
     var userPageSelectionStarted: () -> Void = {}
     var pageActionRequested: (UUID, NotePageContextAction) -> Void = { _, _ in }
-    var addPageAtBottom: () -> Void
+    var addPageRequested: () -> Void
     var topContent: AnyView?
     var theme: BeanNotesTheme = .defaultTheme
     var showsBeanArtwork = false
@@ -184,8 +183,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         containerView.viewportChanged = { [weak coordinator = context.coordinator] viewport, force in
             coordinator?.publishViewport(viewport, force: force)
         }
-        containerView.reachedBottom = { [weak coordinator = context.coordinator] in
-            coordinator?.requestAddPageAtBottom()
+        containerView.addPageRequested = { [weak coordinator = context.coordinator] in
+            coordinator?.requestAddPage()
         }
 
         context.coordinator.containerView = containerView
@@ -352,11 +351,11 @@ struct DrawingCanvasView: UIViewRepresentable {
     final class CanvasContainerView: UIView, UIScrollViewDelegate {
         let scrollView = UIScrollView()
         let contentView = UIView()
-        let autoAddFooterButton = UIButton(type: .system)
+        let addPageFooterButton = UIButton(type: .system)
 
         var visiblePageChanged: ((UUID) -> Void)?
         var viewportChanged: ((DrawingCanvasViewport, Bool) -> Void)?
-        var reachedBottom: (() -> Void)?
+        var addPageRequested: (() -> Void)?
 
         private var pageViews: [UUID: PageCanvasView] = [:]
         private var pagesByID: [UUID: NotePage] = [:]
@@ -364,7 +363,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var pageFrames: [UUID: CGRect] = [:]
         private var documentSize: CGSize = .zero
         private weak var topContentView: UIView?
-        private var pageFlowMode: NoteEditorPageFlowMode = .continuous
+        private var pageFlowMode: NoteEditorPageFlowMode = .seamless
         private var renderQuality: DrawingRenderQuality = .ultraFine
         private var layoutConfigurationSignature: DrawingCanvasLayoutSignature?
         private var selectedPageID: UUID?
@@ -380,7 +379,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var didSetInitialZoom = false
         private var pendingViewport: DrawingCanvasViewport?
         private var isRestoringViewport = false
-        private var bottomTriggerArmed = true
         private var isPinchZooming = false
         private var isProgrammaticZooming = false
         private var programmaticZoomEarliestFinishTime: CFTimeInterval = 0
@@ -393,11 +391,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var isUserScrolling = false
         private var programmaticScrollTargetID: UUID?
         private var programmaticScrollTargetOffset: CGPoint?
-        private let pageGap: CGFloat = 28
+        private let separatedPageGap: CGFloat = 28
         private let pageMargin: CGFloat = 52
-        private let autoAddFooterSize: CGFloat = 56
-        private let autoAddFooterTopPadding: CGFloat = 36
-        private let autoAddFooterBottomPadding: CGFloat = 42
+        private let addPageFooterSize: CGFloat = 56
+        private let addPageFooterTopPadding: CGFloat = 36
+        private let addPageFooterBottomPadding: CGFloat = 42
         private let pageForwardPreloadScreenPadding: CGFloat = 1_240
         private let pageBackwardPreloadScreenPadding: CGFloat = 420
         private let minimumPageForwardPreloadPadding: CGFloat = 880
@@ -524,6 +522,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 hasTopContent: topContentView != nil
             )
             let shouldRelayout = nextSignature != layoutConfigurationSignature
+            if shouldRelayout, pendingViewport == nil {
+                pendingViewport = currentViewport()
+            }
 
             if shouldRelayout {
                 let incomingIDs = Set(pages.map(\.id))
@@ -546,6 +547,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             updateZoomScalesIfNeeded(force: qualityChanged || selectionChanged)
+            if shouldRelayout {
+                _ = restorePendingViewportIfPossible()
+            }
             materializePagesNearViewport(refreshesExistingPages: true)
 
             if inputModeChanged {
@@ -564,6 +568,8 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func currentViewport() -> DrawingCanvasViewport? {
             guard !defersViewStatePublishing,
+                  documentSize.width > 0,
+                  documentSize.height > 0,
                   scrollView.bounds.width > 0,
                   scrollView.bounds.height > 0,
                   scrollView.zoomScale.isFinite,
@@ -840,7 +846,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             if !isPinchZooming && !isProgrammaticZooming {
                 updateVisiblePage()
             }
-            triggerBottomIfNeeded()
             publishViewport()
         }
 
@@ -975,15 +980,16 @@ struct DrawingCanvasView: UIViewRepresentable {
             footerConfiguration.cornerStyle = .capsule
             footerConfiguration.baseForegroundColor = .label
             footerConfiguration.baseBackgroundColor = UIColor.secondarySystemGroupedBackground.withAlphaComponent(0.92)
-            autoAddFooterButton.configuration = footerConfiguration
-            autoAddFooterButton.isHidden = true
-            autoAddFooterButton.accessibilityLabel = "Add page"
-            autoAddFooterButton.layer.shadowColor = UIColor.black.cgColor
-            autoAddFooterButton.layer.shadowOpacity = 0.16
-            autoAddFooterButton.layer.shadowRadius = 14
-            autoAddFooterButton.layer.shadowOffset = CGSize(width: 0, height: 8)
-            autoAddFooterButton.addTarget(self, action: #selector(handleAutoAddFooterTapped), for: .touchUpInside)
-            contentView.addSubview(autoAddFooterButton)
+            addPageFooterButton.configuration = footerConfiguration
+            addPageFooterButton.accessibilityIdentifier = "editor.addPageFooter"
+            addPageFooterButton.accessibilityLabel = "Add page"
+            addPageFooterButton.accessibilityHint = "Adds a new page to the end of this note"
+            addPageFooterButton.layer.shadowColor = UIColor.black.cgColor
+            addPageFooterButton.layer.shadowOpacity = 0.16
+            addPageFooterButton.layer.shadowRadius = 14
+            addPageFooterButton.layer.shadowOffset = CGSize(width: 0, height: 8)
+            addPageFooterButton.addTarget(self, action: #selector(handleAddPageFooterTapped), for: .touchUpInside)
+            contentView.addSubview(addPageFooterButton)
         }
 
         private func applyWorkspaceTheme(_ theme: BeanNotesTheme) {
@@ -1000,8 +1006,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func layoutDocument() {
             guard !orderedPageIDs.isEmpty else {
                 documentSize = .zero
-                contentView.frame = .zero
-                scrollView.contentSize = .zero
+                addPageFooterButton.isHidden = true
+                addPageFooterButton.frame = .zero
+                updateDocumentGeometry(to: .zero)
                 return
             }
 
@@ -1011,10 +1018,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             var y: CGFloat = 0
             var frames: [UUID: CGRect] = [:]
+            let pageGap = pageFlowMode == .seamless ? 0 : separatedPageGap
 
             if let topContentView {
                 topContentView.frame = CGRect(x: 0, y: 0, width: maxWidth, height: topContentHeight)
-                y = topContentHeight + pageGap
+                y = topContentHeight + separatedPageGap
             }
 
             for id in orderedPageIDs {
@@ -1039,45 +1047,41 @@ struct DrawingCanvasView: UIViewRepresentable {
                 y -= pageGap
             }
 
-            if pageFlowMode.autoAddsPages {
-                let footerY = y + autoAddFooterTopPadding
-                autoAddFooterButton.isHidden = false
-                autoAddFooterButton.frame = CGRect(
-                    x: (maxWidth - autoAddFooterSize) / 2,
-                    y: footerY,
-                    width: autoAddFooterSize,
-                    height: autoAddFooterSize
-                )
-                y = footerY + autoAddFooterSize + autoAddFooterBottomPadding
-            } else {
-                autoAddFooterButton.isHidden = true
-                autoAddFooterButton.frame = .zero
-            }
+            let footerY = y + addPageFooterTopPadding
+            addPageFooterButton.isHidden = false
+            addPageFooterButton.frame = CGRect(
+                x: (maxWidth - addPageFooterSize) / 2,
+                y: footerY,
+                width: addPageFooterSize,
+                height: addPageFooterSize
+            )
+            y = footerY + addPageFooterSize + addPageFooterBottomPadding
 
             pageFrames = frames
             documentSize = CGSize(width: maxWidth, height: y)
-            contentView.frame = CGRect(origin: .zero, size: documentSize)
-            scrollView.contentSize = documentSize
+            updateDocumentGeometry(to: documentSize)
             centerDocument()
+        }
+
+        /// Resizes the zoomable document without assigning `frame` while UIKit owns a
+        /// non-identity zoom transform. Updating bounds and center keeps the logical
+        /// page coordinate space intact and makes the full scaled document reachable.
+        private func updateDocumentGeometry(to size: CGSize) {
+            let scale = scrollView.zoomScale.isFinite && scrollView.zoomScale > 0
+                ? scrollView.zoomScale
+                : 1
+            let scaledSize = CGSize(width: size.width * scale, height: size.height * scale)
+
+            contentView.bounds = CGRect(origin: .zero, size: size)
+            scrollView.contentSize = scaledSize
+            contentView.center = CGPoint(x: scaledSize.width / 2, y: scaledSize.height / 2)
         }
 
         private func updateZoomScalesIfNeeded(force: Bool = false) {
             guard documentSize.width > 0, documentSize.height > 0, bounds.width > 0, bounds.height > 0 else { return }
 
-            let selectedHeight = selectedPageID.flatMap { pageFrames[$0]?.height }
-                ?? pageFrames[orderedPageIDs.first ?? UUID()]?.height
-                ?? documentSize.height
             let widthFit = (bounds.width - pageMargin * 2) / documentSize.width
-            let heightFit = (bounds.height - 148) / selectedHeight
-            let proposedFit: CGFloat
-
-            if pageFlowMode == .singlePage {
-                proposedFit = min(widthFit, heightFit)
-            } else {
-                proposedFit = widthFit
-            }
-
-            let fitScale = min(max(proposedFit, 0.18), 1.35)
+            let fitScale = min(max(widthFit, 0.18), 1.35)
             let minimumZoomScale = max(fitScale * zoomOutMultiplier, absoluteMinimumZoomScale)
             let maximumZoomScale = max(renderQuality.maximumZoomScale, fitScale * renderQuality.maximumZoomFitMultiplier)
             let wasNearFitScale = !isPinchZooming
@@ -1129,15 +1133,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard documentSize != .zero else { return }
 
             let scaledWidth = documentSize.width * scrollView.zoomScale
-            let scaledHeight = documentSize.height * scrollView.zoomScale
             let horizontalInset = max((bounds.width - scaledWidth) / 2, pageMargin)
-            let verticalInset: CGFloat
-
-            if pageFlowMode == .singlePage {
-                verticalInset = max((bounds.height - scaledHeight) / 2, 84)
-            } else {
-                verticalInset = 92
-            }
+            let verticalInset: CGFloat = 92
 
             let inset = UIEdgeInsets(
                 top: verticalInset,
@@ -1514,13 +1511,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                   programmaticScrollTargetID == nil,
                   !pageFrames.isEmpty else { return }
 
-            let visibleCenter = CGPoint(
-                x: scrollView.contentOffset.x + scrollView.bounds.midX,
-                y: scrollView.contentOffset.y + scrollView.bounds.midY
-            )
-            let contentPoint = CGPoint(
-                x: visibleCenter.x / max(scrollView.zoomScale, 0.01),
-                y: visibleCenter.y / max(scrollView.zoomScale, 0.01)
+            let contentPoint = contentView.convert(
+                CGPoint(x: scrollView.bounds.midX, y: scrollView.bounds.midY),
+                from: scrollView
             )
 
             let nearestID = nearestPageID(toY: contentPoint.y)
@@ -1602,30 +1595,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             .map { orderedPageIDs[$0] }
         }
 
-        private func triggerBottomIfNeeded() {
-            guard !defersViewStatePublishing,
-                  isUserScrolling,
-                  pageFlowMode.autoAddsPages,
-                  bottomTriggerArmed,
-                  documentSize.height > 0 else {
-                return
-            }
-
-            let visibleMaxY = (scrollView.contentOffset.y + scrollView.bounds.height) / max(scrollView.zoomScale, 0.01)
-            let triggerDistance = autoAddFooterTopPadding + autoAddFooterSize + 180
-            if visibleMaxY > documentSize.height - triggerDistance {
-                bottomTriggerArmed = false
-                reachedBottom?()
-            }
-
-            if visibleMaxY < documentSize.height - max(triggerDistance + 420, 640) {
-                bottomTriggerArmed = true
-            }
-        }
-
-        @objc private func handleAutoAddFooterTapped() {
-            bottomTriggerArmed = false
-            reachedBottom?()
+        @objc private func handleAddPageFooterTapped() {
+            addPageRequested?()
         }
 
         private func clampedContentOffset(_ proposed: CGPoint) -> CGPoint {
@@ -2424,18 +2395,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func makePageContextMenu(for pageID: UUID, canRemovePage: Bool) -> UIMenu {
-            let addAbove = UIAction(
-                title: "Add New Page Above",
-                image: UIImage(systemName: "rectangle.stack.badge.plus")
-            ) { [weak self] _ in
-                self?.pageActionRequested?(pageID, .add(.above))
-            }
-            let addBelow = UIAction(
-                title: "Add New Page Below",
-                image: UIImage(systemName: "rectangle.stack.badge.plus")
-            ) { [weak self] _ in
-                self?.pageActionRequested?(pageID, .add(.below))
-            }
             let remove = UIAction(
                 title: "Remove This Page",
                 image: UIImage(systemName: "trash"),
@@ -2444,7 +2403,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 self?.pageActionRequested?(pageID, .remove)
             }
 
-            return UIMenu(children: [addAbove, addBelow, remove])
+            return UIMenu(children: [remove])
         }
 
         func editMenuInteraction(
@@ -2812,9 +2771,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 changeCommitted: { [weak self] in
                     self?.attachmentChanged?()
                 },
-                interactionChanged: { [weak self] isInteracting in
-                    self?.setDocumentPanningEnabled(!isInteracting)
-                },
                 deleteRequested: { [weak self] in
                     guard let self,
                           self.selectedAttachmentID == attachmentID else {
@@ -2835,7 +2791,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             selectedAttachmentID = nil
             attachmentEditingOverlay?.removeFromSuperview()
             attachmentEditingOverlay = nil
-            setDocumentPanningEnabled(true)
         }
 
         private func topmostEditableAttachment(at point: CGPoint) -> Attachment? {
@@ -3033,17 +2988,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.undoManager?.setActionName("Erase")
             canvasView.drawing = drawing
             objectEraserDrawingChanged?()
-        }
-
-        private func setDocumentPanningEnabled(_ enabled: Bool) {
-            var ancestor = superview
-            while let current = ancestor {
-                if let scrollView = current as? UIScrollView {
-                    scrollView.panGestureRecognizer.isEnabled = enabled
-                    return
-                }
-                ancestor = current.superview
-            }
         }
 
         private func restoreDrawingLayerOrder() {
@@ -3272,9 +3216,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var resizeStart: CGRect?
         private var frameChanged: ((CGRect) -> Void)?
         private var changeCommitted: (() -> Void)?
-        private var interactionChanged: ((Bool) -> Void)?
         private var deleteRequested: (() -> Void)?
         private var dismiss: (() -> Void)?
+        private(set) var editingPanGestureRecognizers: [UIPanGestureRecognizer] = []
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -3291,14 +3235,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageSize: CGSize,
             frameChanged: @escaping (CGRect) -> Void,
             changeCommitted: @escaping () -> Void,
-            interactionChanged: @escaping (Bool) -> Void,
             deleteRequested: @escaping () -> Void,
             dismiss: @escaping () -> Void
         ) {
             self.attachment = attachment
             self.frameChanged = frameChanged
             self.changeCommitted = changeCommitted
-            self.interactionChanged = interactionChanged
             self.deleteRequested = deleteRequested
             self.dismiss = dismiss
             updateFrame(attachment.normalizedFrame(for: pageSize), pageSize: pageSize)
@@ -3403,7 +3345,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self?.nudge(by: CGPoint(x: 0, y: 8)) ?? false
                 }
             ]
-            configureInteractionTracking(for: moveHandle)
             addSubview(moveHandle)
 
             configureHandle(
@@ -3419,7 +3360,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self?.resize(by: CGPoint(x: -16, y: -16)) ?? false
                 }
             ]
-            configureInteractionTracking(for: resizeHandle)
             addSubview(resizeHandle)
 
             configureHandle(
@@ -3440,15 +3380,19 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             let moveGesture = UIPanGestureRecognizer(target: self, action: #selector(handleMove(_:)))
             moveGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            moveGesture.maximumNumberOfTouches = 1
             moveGesture.cancelsTouchesInView = false
             moveGesture.delegate = self
             moveHandle.addGestureRecognizer(moveGesture)
+            editingPanGestureRecognizers.append(moveGesture)
 
             let resizeGesture = UIPanGestureRecognizer(target: self, action: #selector(handleResize(_:)))
             resizeGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            resizeGesture.maximumNumberOfTouches = 1
             resizeGesture.cancelsTouchesInView = false
             resizeGesture.delegate = self
             resizeHandle.addGestureRecognizer(resizeGesture)
+            editingPanGestureRecognizers.append(resizeGesture)
         }
 
         private func configureHandle(
@@ -3467,26 +3411,19 @@ struct DrawingCanvasView: UIViewRepresentable {
             button.isAccessibilityElement = true
         }
 
-        private func configureInteractionTracking(for button: UIButton) {
-            button.addTarget(self, action: #selector(beginHandleInteraction), for: .touchDown)
-            button.addTarget(
-                self,
-                action: #selector(endHandleInteraction),
-                for: [.touchUpInside, .touchUpOutside, .touchCancel]
-            )
-        }
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard editingPanGestureRecognizers.contains(where: { $0 === gestureRecognizer }),
+                  let scrollView = otherGestureRecognizer.view as? UIScrollView,
+                  otherGestureRecognizer === scrollView.panGestureRecognizer else {
+                return false
+            }
 
-        @objc private func beginHandleInteraction() {
-            interactionChanged?(true)
-        }
-
-        @objc private func endHandleInteraction() {
-            interactionChanged?(false)
-        }
-
-        override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            interactionChanged?(true)
-            return true
+            // Give a selected image's move/resize handles priority over an ancestor
+            // document scroll without ever disabling the document pan recognizer.
+            return isDescendant(of: scrollView)
         }
 
         @objc private func finishEditing() {
@@ -3498,7 +3435,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
-            guard let attachment else { return }
+            guard let attachment else {
+                dragStart = nil
+                return
+            }
 
             switch recognizer.state {
             case .began:
@@ -3513,20 +3453,21 @@ struct DrawingCanvasView: UIViewRepresentable {
             case .ended:
                 commitChange(startingAt: dragStart)
                 dragStart = nil
-                interactionChanged?(false)
             case .cancelled, .failed:
                 if let dragStart {
                     apply(dragStart)
                 }
                 dragStart = nil
-                interactionChanged?(false)
             default:
                 break
             }
         }
 
         @objc private func handleResize(_ recognizer: UIPanGestureRecognizer) {
-            guard let attachment else { return }
+            guard let attachment else {
+                resizeStart = nil
+                return
+            }
 
             switch recognizer.state {
             case .began:
@@ -3541,13 +3482,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             case .ended:
                 commitChange(startingAt: resizeStart)
                 resizeStart = nil
-                interactionChanged?(false)
             case .cancelled, .failed:
                 if let resizeStart {
                     apply(resizeStart)
                 }
                 resizeStart = nil
-                interactionChanged?(false)
             default:
                 break
             }
@@ -3988,9 +3927,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             var token: UUID?
         }
 
-        func requestAddPageAtBottom() {
-            let addPageAtBottom = parent.addPageAtBottom
-            dispatchToSwiftUI(addPageAtBottom)
+        func requestAddPage() {
+            let addPageRequested = parent.addPageRequested
+            dispatchToSwiftUI(addPageRequested)
         }
 
         func notifyAttachmentChanged() {

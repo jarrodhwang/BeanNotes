@@ -25,46 +25,31 @@ enum NoteEditorPageLayoutMode: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .singlePage:
-            "Show one page at a time and move with page buttons."
+            "Keep each page visually separate while scrolling through the note."
         case .scroll:
-            "Stack pages vertically with a small gap between pages."
+            "Join pages edge to edge in one continuous vertical scroll."
+        }
+    }
+
+    var pageFlowMode: NoteEditorPageFlowMode {
+        switch self {
+        case .singlePage:
+            .separated
+        case .scroll:
+            .seamless
         }
     }
 }
 
-enum NoteEditorPageCreationMode: String, CaseIterable, Identifiable {
-    static let storageKey = "noteEditorPageCreationMode"
-
-    case manual
-    case auto
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .manual:
-            "Add Button"
-        case .auto:
-            "Auto Add"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .manual:
-            "Use the add-page button when you want another page."
-        case .auto:
-            "Keep a blank page ready as you scroll downward."
-        }
-    }
-}
-
+/// Internal canvas modes, including raw values retained for legacy preference migration.
 enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
     static let storageKey = "noteEditorPageFlowMode"
 
     case singlePage
     case continuous
     case infinite
+    case separated
+    case seamless
 
     var id: String { rawValue }
 
@@ -76,6 +61,10 @@ enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
             "Scrollable + Add Button"
         case .infinite:
             "Scrollable + Auto Add"
+        case .separated:
+            "One Page"
+        case .seamless:
+            "Scrollable"
         }
     }
 
@@ -87,53 +76,23 @@ enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
             "Scroll pages vertically and add pages manually."
         case .infinite:
             "Scroll downward while BeanNotes keeps one blank page ready at the bottom."
+        case .separated:
+            "Scroll through visually separated pages."
+        case .seamless:
+            "Scroll through pages joined edge to edge."
         }
     }
 
-    var layoutMode: NoteEditorPageLayoutMode {
+    var migratedLayoutMode: NoteEditorPageLayoutMode {
         switch self {
-        case .singlePage:
+        case .singlePage, .separated:
             .singlePage
-        case .continuous, .infinite:
+        case .continuous, .infinite, .seamless:
             .scroll
         }
     }
 
-    var creationMode: NoteEditorPageCreationMode {
-        switch self {
-        case .singlePage, .continuous:
-            .manual
-        case .infinite:
-            .auto
-        }
-    }
-
-    var showsOnePageAtATime: Bool {
-        self == .singlePage
-    }
-
-    var autoAddsPages: Bool {
-        self == .infinite
-    }
-
     func pageStatusText(currentPage: Int, totalPages: Int) -> String {
-        switch self {
-        case .singlePage, .continuous:
-            "Page \(currentPage) / \(totalPages)"
-        case .infinite:
-            "Page \(currentPage) / \(totalPages)+"
-        }
-    }
-
-    static func combined(
-        layoutMode: NoteEditorPageLayoutMode,
-        creationMode: NoteEditorPageCreationMode
-    ) -> NoteEditorPageFlowMode {
-        switch layoutMode {
-        case .singlePage:
-            .singlePage
-        case .scroll:
-            creationMode == .auto ? .infinite : .continuous
-        }
+        "Page \(currentPage) / \(totalPages)"
     }
 }

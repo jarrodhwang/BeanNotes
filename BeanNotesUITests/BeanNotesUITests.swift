@@ -139,7 +139,7 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
-    func testCanvasTapAndLongPressUsePageActions() throws {
+    func testBottomPlusAddsPageAndLongPressCanRemoveIt() throws {
         app.launch()
 
         let createNoteButton = app.buttons["Create note"]
@@ -154,16 +154,14 @@ final class BeanNotesUITests: XCTestCase {
         XCTAssertFalse(app.menuItems["Insert Space"].exists)
         XCTAssertFalse(app.menuItems["Insert Tab"].exists)
 
-        canvasPoint.press(forDuration: 0.7)
-
-        let addAbove = app.menuItems["Add New Page Above"]
-        let addBelow = app.menuItems["Add New Page Below"]
-        let removePage = app.menuItems["Remove This Page"]
-        XCTAssertTrue(addAbove.waitForExistence(timeout: 4))
-        XCTAssertTrue(addBelow.exists)
-        XCTAssertTrue(removePage.exists)
-
-        addBelow.tap()
+        let addPage = app.buttons["editor.addPageFooter"]
+        XCTAssertTrue(addPage.waitForExistence(timeout: 4))
+        for _ in 0..<4 where !addPage.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(addPage.isHittable)
+        XCTAssertEqual(app.buttons.matching(identifier: "editor.addPageFooter").count, 1)
+        addPage.tap()
         XCTAssertTrue(app.staticTexts["Page added below"].waitForExistence(timeout: 4))
 
         let pageStatus = app.staticTexts["editor.pageStatus"]
@@ -179,6 +177,8 @@ final class BeanNotesUITests: XCTestCase {
 
         let enabledRemovePage = app.menuItems["Remove This Page"]
         XCTAssertTrue(enabledRemovePage.waitForExistence(timeout: 4))
+        XCTAssertFalse(app.menuItems["Add New Page Above"].exists)
+        XCTAssertFalse(app.menuItems["Add New Page Below"].exists)
         XCTAssertTrue(enabledRemovePage.isEnabled)
         let statusBeforeRemoval = pageStatus.label
         enabledRemovePage.tap()

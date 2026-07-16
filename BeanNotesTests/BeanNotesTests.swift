@@ -1778,20 +1778,13 @@ struct BeanNotesTests {
     }
 
     @Test func paginationSettingsMapToEditorFlowModes() {
-        #expect(
-            NoteEditorPageFlowMode.combined(layoutMode: .singlePage, creationMode: .manual) == .singlePage
-        )
-        #expect(
-            NoteEditorPageFlowMode.combined(layoutMode: .singlePage, creationMode: .auto) == .singlePage
-        )
-        #expect(
-            NoteEditorPageFlowMode.combined(layoutMode: .scroll, creationMode: .manual) == .continuous
-        )
-        #expect(
-            NoteEditorPageFlowMode.combined(layoutMode: .scroll, creationMode: .auto) == .infinite
-        )
-        #expect(NoteEditorPageFlowMode.infinite.layoutMode == .scroll)
-        #expect(NoteEditorPageFlowMode.infinite.creationMode == .auto)
+        #expect(NoteEditorPageLayoutMode.allCases.map(\.label) == ["One Page", "Scrollable"])
+        #expect(NoteEditorPageLayoutMode.singlePage.pageFlowMode == .separated)
+        #expect(NoteEditorPageLayoutMode.scroll.pageFlowMode == .seamless)
+        #expect(NoteEditorPageFlowMode.singlePage.migratedLayoutMode == .singlePage)
+        #expect(NoteEditorPageFlowMode.continuous.migratedLayoutMode == .scroll)
+        #expect(NoteEditorPageFlowMode.infinite.migratedLayoutMode == .scroll)
+        #expect(NoteEditorPageFlowMode.seamless.pageStatusText(currentPage: 2, totalPages: 4) == "Page 2 / 4")
     }
 
     @Test func drawingRenderQualityExposesSharperZoomBudget() {
@@ -1980,6 +1973,8 @@ struct BeanNotesTests {
         let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
         let coordinator = DrawingCanvasView.Coordinator(parent: parent)
         let pageView = DrawingCanvasView.PageCanvasView()
+        let documentScrollView = UIScrollView()
+        documentScrollView.addSubview(pageView)
         var deletedAttachmentID: UUID?
         defer {
             pageView.releaseHeavyResources()
@@ -2017,9 +2012,9 @@ struct BeanNotesTests {
         pageView.beginEditingAttachment(id: behindImage.id)
 
         #expect(pageView.selectedAttachmentID == behindImage.id)
-        let overlay = try #require(pageView.subviews.first {
-            $0 is DrawingCanvasView.AttachmentEditingOverlayView
-        })
+        let overlay = try #require(pageView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingOverlayView }
+            .first)
         let overlayIndex = try #require(pageView.subviews.firstIndex { $0 === overlay })
         #expect(overlayIndex > foregroundIndex)
         overlay.layoutIfNeeded()
@@ -2040,6 +2035,15 @@ struct BeanNotesTests {
             CGPoint(x: 26, y: overlay.bounds.maxY - 26),
             with: nil
         ) is UIControl)
+        #expect(overlay.editingPanGestureRecognizers.count == 2)
+        #expect(overlay.editingPanGestureRecognizers.allSatisfy { $0.maximumNumberOfTouches == 1 })
+        #expect(overlay.editingPanGestureRecognizers.allSatisfy {
+            overlay.gestureRecognizer(
+                $0,
+                shouldBeRequiredToFailBy: documentScrollView.panGestureRecognizer
+            )
+        })
+        #expect(documentScrollView.panGestureRecognizer.isEnabled)
 
         let deleteButton = try #require(overlay.subviews
             .compactMap { $0 as? UIButton }
@@ -2052,6 +2056,7 @@ struct BeanNotesTests {
         #expect(!pageView.subviews.contains {
             $0 is DrawingCanvasView.AttachmentEditingOverlayView
         })
+        #expect(documentScrollView.panGestureRecognizer.isEnabled)
 
         pageView.beginEditingAttachment(id: behindImage.id)
 
@@ -2335,23 +2340,19 @@ struct BeanNotesTests {
             canRemovePage: true
         )
         let enabledActions = enabledMenu.children.compactMap { $0 as? UIAction }
-        try #require(enabledActions.count == 3)
-        #expect(enabledActions.map(\.title) == [
-            "Add New Page Above",
-            "Add New Page Below",
-            "Remove This Page"
-        ])
-        #expect(enabledActions[2].attributes.contains(.destructive))
-        #expect(!enabledActions[2].attributes.contains(.disabled))
+        try #require(enabledActions.count == 1)
+        #expect(enabledActions.map(\.title) == ["Remove This Page"])
+        #expect(enabledActions[0].attributes.contains(.destructive))
+        #expect(!enabledActions[0].attributes.contains(.disabled))
 
         let solePageMenu = pageView.makePageContextMenu(
             for: UUID(),
             canRemovePage: false
         )
         let solePageActions = solePageMenu.children.compactMap { $0 as? UIAction }
-        try #require(solePageActions.count == 3)
-        #expect(solePageActions[2].attributes.contains(.destructive))
-        #expect(solePageActions[2].attributes.contains(.disabled))
+        try #require(solePageActions.count == 1)
+        #expect(solePageActions[0].attributes.contains(.destructive))
+        #expect(solePageActions[0].attributes.contains(.disabled))
 
         pageView.applyInputMode(.anyInput)
         #expect(!pageView.consumesBlankCanvasTaps)
@@ -2963,6 +2964,165 @@ struct BeanNotesTests {
             pageFlowMode: .continuous,
             hasTopContent: false
         ) != baseline)
+    }
+
+    @Test @MainActor func paginationModesUseFlushOrSeparatedPageSpacing() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPaginationSpacing-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = [
+            NotePage(pageOrder: 0, drawingFileName: "spacing-first.drawing", width: 612, height: 300),
+            NotePage(pageOrder: 1, drawingFileName: "spacing-second.drawing", width: 612, height: 300)
+        ]
+        let parent = makeDrawingCanvasView(
+            page: pages[0],
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        defer {
+            DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+        }
+
+        func pageFrames() throws -> [CGRect] {
+            let frames = container.contentView.subviews
+                .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+                .sorted { ($0.page?.pageOrder ?? 0) < ($1.page?.pageOrder ?? 0) }
+                .map(\.frame)
+            try #require(frames.count == 2)
+            return frames
+        }
+
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .separated,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        let separatedFrames = try pageFrames()
+        #expect(abs(separatedFrames[1].minY - separatedFrames[0].maxY - 28) < 0.01)
+        #expect(!container.addPageFooterButton.isHidden)
+        #expect(container.addPageFooterButton.accessibilityIdentifier == "editor.addPageFooter")
+
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .seamless,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        let seamlessFrames = try pageFrames()
+        #expect(abs(seamlessFrames[1].minY - seamlessFrames[0].maxY) < 0.01)
+        #expect(!container.addPageFooterButton.isHidden)
+        #expect(abs(container.addPageFooterButton.frame.minY - seamlessFrames[1].maxY - 36) < 0.01)
+    }
+
+    @Test @MainActor func zoomedRelayoutPreservesViewportAndReachableDocumentEdges() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesZoomedRelayout-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let firstPage = NotePage(
+            pageOrder: 0,
+            drawingFileName: "relayout-first.drawing",
+            width: 1_200,
+            height: 900
+        )
+        let secondPage = NotePage(
+            pageOrder: 1,
+            drawingFileName: "relayout-second.drawing",
+            width: 1_200,
+            height: 900
+        )
+        let parent = makeDrawingCanvasView(page: firstPage, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 600, height: 700)
+        )
+        coordinator.containerView = container
+        defer {
+            DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+        }
+
+        container.configure(
+            pages: [firstPage],
+            selectedPageID: firstPage.id,
+            pageFlowMode: .seamless,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        container.scrollView.setZoomScale(2, animated: false)
+        container.scrollView.setContentOffset(CGPoint(x: 700, y: 300), animated: false)
+        let expectedViewport = try #require(container.currentViewport())
+
+        container.configure(
+            pages: [firstPage, secondPage],
+            selectedPageID: firstPage.id,
+            pageFlowMode: .seamless,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let expectedDocumentSize = CGSize(width: 1_200, height: 1_934)
+        #expect(container.contentView.bounds == CGRect(origin: .zero, size: expectedDocumentSize))
+        #expect(abs(container.contentView.center.x - 1_200) < 0.01)
+        #expect(abs(container.contentView.center.y - 1_934) < 0.01)
+        #expect(abs(container.scrollView.contentSize.width - 2_400) < 0.01)
+        #expect(abs(container.scrollView.contentSize.height - 3_868) < 0.01)
+
+        let actualViewport = try #require(container.currentViewport())
+        #expect(abs(actualViewport.zoomScale - expectedViewport.zoomScale) < 0.01)
+        #expect(abs(actualViewport.center.x - expectedViewport.center.x) < 1)
+        #expect(abs(actualViewport.center.y - expectedViewport.center.y) < 1)
+
+        let inset = container.scrollView.adjustedContentInset
+        container.scrollView.setContentOffset(
+            CGPoint(
+                x: container.scrollView.contentSize.width - container.scrollView.bounds.width + inset.right,
+                y: container.scrollView.contentSize.height - container.scrollView.bounds.height + inset.bottom
+            ),
+            animated: false
+        )
+        let trailingVisibleRect = container.contentView.convert(
+            container.scrollView.bounds,
+            from: container.scrollView
+        )
+        #expect(trailingVisibleRect.maxX >= expectedDocumentSize.width - 1)
+        #expect(trailingVisibleRect.maxY >= expectedDocumentSize.height - 1)
     }
 
     @Test func drawingCanvasLayoutSignatureNormalizesCorruptPageDimensions() {
@@ -4500,7 +4660,7 @@ struct BeanNotesTests {
         #expect(firstSession.viewportRestorationID == 1)
     }
 
-    @Test @MainActor func restoringInfiniteCanvasNearFooterDoesNotAddAPage() throws {
+    @Test @MainActor func restoringScrollableCanvasNearFooterDoesNotAddAPage() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesViewportFooter-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -4521,7 +4681,7 @@ struct BeanNotesTests {
         container.configure(
             pages: [page],
             selectedPageID: page.id,
-            pageFlowMode: .infinite,
+            pageFlowMode: .seamless,
             inputMode: .pencilOnly,
             renderQuality: .balanced,
             drawingStorage: drawingStorage,
@@ -4531,7 +4691,7 @@ struct BeanNotesTests {
         container.layoutIfNeeded()
 
         var addPageRequestCount = 0
-        container.reachedBottom = {
+        container.addPageRequested = {
             addPageRequestCount += 1
         }
         container.restoreViewport(
@@ -4544,7 +4704,7 @@ struct BeanNotesTests {
         DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
     }
 
-    @Test @MainActor func initialInfiniteCanvasLayoutDoesNotAddAPageUntilUserScrolls() {
+    @Test @MainActor func scrollingNeverAddsPageAndFooterTapAddsOnce() {
         let drawingStorage = DrawingStorageService()
         let page = NotePage(pageOrder: 0, width: 612, height: 792)
         let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
@@ -4553,7 +4713,7 @@ struct BeanNotesTests {
             frame: CGRect(x: 0, y: 0, width: 390, height: 844)
         )
         var addPageRequestCount = 0
-        container.reachedBottom = {
+        container.addPageRequested = {
             addPageRequestCount += 1
         }
         coordinator.containerView = container
@@ -4561,7 +4721,7 @@ struct BeanNotesTests {
         container.configure(
             pages: [page],
             selectedPageID: page.id,
-            pageFlowMode: .infinite,
+            pageFlowMode: .seamless,
             inputMode: .pencilOnly,
             renderQuality: .balanced,
             drawingStorage: drawingStorage,
@@ -4581,6 +4741,9 @@ struct BeanNotesTests {
             animated: false
         )
 
+        #expect(addPageRequestCount == 0)
+
+        container.addPageFooterButton.sendActions(for: .touchUpInside)
         #expect(addPageRequestCount == 1)
         DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
     }
@@ -4692,7 +4855,7 @@ struct BeanNotesTests {
             zoomScaleChanged: { _ in },
             finalViewportChanged: finalViewportChanged,
             selectionRevision: selectionRevision,
-            addPageAtBottom: {},
+            addPageRequested: {},
             topContent: nil
         )
     }
@@ -4857,7 +5020,7 @@ struct BeanNotesTests {
         #expect(!toolState.temporaryEraserActive)
     }
 
-    @Test @MainActor func pencilDoubleTapAppliesCustomToolAfterZoomSettles() throws {
+    @Test @MainActor func pencilDoubleTapAppliesCustomToolAfterZoomSettles() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesDeferredDoubleTap-\(UUID().uuidString)", isDirectory: true)
         let storage = LocalStorageService(rootURL: rootURL)
@@ -4905,11 +5068,10 @@ struct BeanNotesTests {
         coordinator.handlePencilDoubleTap()
         #expect(parent.toolState.selectedTool == .eraser)
 
-        container.scrollViewDidEndZooming(
-            container.scrollView,
-            with: container.contentView,
-            atScale: container.scrollView.maximumZoomScale
-        )
+        let deadline = ContinuousClock.now + .seconds(2)
+        while container.isZoomTransitionActive, ContinuousClock.now < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
 
         #expect(!container.isZoomTransitionActive)
         #expect(canvasView.tool is PKEraserTool)

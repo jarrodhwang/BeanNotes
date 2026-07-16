@@ -94,7 +94,6 @@ struct NoteEditorView: View {
     @AppStorage(DrawingStrokeZoomBehavior.storageKey) private var strokeZoomBehaviorRaw = DrawingStrokeZoomBehavior.defaultBehavior.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
-    @AppStorage(NoteEditorPageCreationMode.storageKey) private var pageCreationModeRaw = NoteEditorPageCreationMode.manual.rawValue
     @AppStorage(NoteBackground.defaultStyleRawKey) private var defaultBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @AppStorage(NoteBackground.defaultColorHexKey) private var defaultBackgroundColorHex = NoteBackground.defaultColorHex
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
@@ -127,7 +126,6 @@ struct NoteEditorView: View {
     @State private var errorMessage: String?
     @State private var isEditingTitle = false
     @State private var draftTitle = ""
-    @State private var autoAddedPlaceholderPageID: UUID?
     @State private var attachmentPendingDeletion: Attachment?
     @State private var pagePendingDeletion: NotePage?
     @State private var pageUndoToast: PageUndoToast?
@@ -212,42 +210,18 @@ struct NoteEditorView: View {
         if UserDefaults.standard.object(forKey: NoteEditorPageLayoutMode.storageKey) == nil,
            let rawValue = UserDefaults.standard.string(forKey: NoteEditorPageFlowMode.storageKey),
            let legacyMode = NoteEditorPageFlowMode(rawValue: rawValue) {
-            return legacyMode.layoutMode
+            return legacyMode.migratedLayoutMode
         }
 
         return NoteEditorPageLayoutMode(rawValue: pageLayoutModeRaw) ?? .scroll
     }
 
-    private var pageCreationMode: NoteEditorPageCreationMode {
-        if UserDefaults.standard.object(forKey: NoteEditorPageCreationMode.storageKey) == nil,
-           let rawValue = UserDefaults.standard.string(forKey: NoteEditorPageFlowMode.storageKey),
-           let legacyMode = NoteEditorPageFlowMode(rawValue: rawValue) {
-            return legacyMode.creationMode
-        }
-
-        return NoteEditorPageCreationMode(rawValue: pageCreationModeRaw) ?? .manual
-    }
-
     private var pageFlowMode: NoteEditorPageFlowMode {
-        NoteEditorPageFlowMode.combined(
-            layoutMode: pageLayoutMode,
-            creationMode: pageCreationMode
-        )
+        pageLayoutMode.pageFlowMode
     }
 
     private var editorPages: [NotePage] {
-        let pages = note.sortedPages
-
-        switch pageFlowMode {
-        case .singlePage:
-            if let selectedPage {
-                return [selectedPage]
-            } else {
-                return Array(pages.prefix(1))
-            }
-        case .continuous, .infinite:
-            return pages
-        }
+        note.sortedPages
     }
 
     private var currentPageIndex: Int? {
@@ -426,7 +400,6 @@ struct NoteEditorView: View {
                         redoSignal: redoSignal,
                         toolShortcutSignal: toolShortcutSignal,
                         attachmentChanged: {
-                            autoAddedPlaceholderPageID = nil
                             saveEditorChanges("save attachment changes")
                         },
                         deleteAttachment: { attachmentPendingDeletion = $0 },
@@ -457,7 +430,7 @@ struct NoteEditorView: View {
                         },
                         userPageSelectionStarted: editorSession.beginUserPageSelection,
                         pageActionRequested: handlePageContextAction(pageID:action:),
-                        addPageAtBottom: addPageAtBottom,
+                        addPageRequested: addPageFromFooter,
                         topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page)),
                         theme: beanNotesTheme,
                         showsBeanArtwork: showsThemeArtwork
@@ -659,14 +632,6 @@ struct NoteEditorView: View {
 
             Divider()
                 .frame(height: 24)
-
-            Button {
-                manuallyAddPage(after: page)
-            } label: {
-                Image(systemName: "plus.square.on.square")
-                    .frame(width: 34, height: 34)
-            }
-            .accessibilityLabel("Add page")
 
             pageActionsMenu(page: page)
 
@@ -1050,20 +1015,6 @@ struct NoteEditorView: View {
     private func pageActionsMenu(page: NotePage) -> some View {
         Menu {
             Button {
-                addPage(relativeTo: page, placement: .above, offersUndo: true)
-            } label: {
-                Label("Add New Page Above", systemImage: "rectangle.stack.badge.plus")
-            }
-
-            Button {
-                addPage(relativeTo: page, placement: .below, offersUndo: true)
-            } label: {
-                Label("Add New Page Below", systemImage: "rectangle.stack.badge.plus")
-            }
-
-            Divider()
-
-            Button {
                 duplicatePage(page)
             } label: {
                 Label("Duplicate Page", systemImage: "plus.square.on.square")
@@ -1237,10 +1188,7 @@ struct NoteEditorView: View {
     private func handlePageContextAction(pageID: UUID, action: NotePageContextAction) {
         guard let page = note.pages.first(where: { $0.id == pageID }) else { return }
 
-        autoAddedPlaceholderPageID = nil
         switch action {
-        case .add(let placement):
-            addPage(relativeTo: page, placement: placement, offersUndo: true)
         case .remove:
             pagePendingDeletion = page
         }
@@ -1273,73 +1221,38 @@ struct NoteEditorView: View {
             return
         }
 
-        pageLayoutModeRaw = legacyMode.layoutMode.rawValue
-        pageCreationModeRaw = legacyMode.creationMode.rawValue
+        pageLayoutModeRaw = legacyMode.migratedLayoutMode.rawValue
     }
 
-    @discardableResult
-    private func addPage(after page: NotePage, shouldSelect: Bool = true) -> NotePage? {
-        addPage(
-            relativeTo: page,
-            placement: .below,
-            shouldSelect: shouldSelect,
-            offersUndo: shouldSelect
-        )
-    }
-
-    @discardableResult
-    private func addPage(
-        relativeTo page: NotePage,
-        placement: NotePagePlacement,
-        shouldSelect: Bool = true,
-        offersUndo: Bool
-    ) -> NotePage? {
-        if offersUndo, !finalizePendingPageUndo() {
-            return nil
-        }
+    private func addPage(after page: NotePage) {
+        guard finalizePendingPageUndo() else { return }
 
         let selectionBeforeChange = selectedPageID
         guard let result = NotePageEditCommand.applyAdd(
             relativeTo: page,
-            placement: placement,
+            placement: .below,
             in: note,
             selectedPageID: selectionBeforeChange
         ) else {
-            return nil
+            return
         }
 
         note.touch()
-
-        if shouldSelect {
-            selectedPageID = result.selectedPageID
-        }
+        selectedPageID = result.selectedPageID
 
         guard saveEditorChanges("add a page") else {
             _ = NotePageEditCommand.undo(result.change, in: note)
             modelContext.delete(result.change.page)
             selectedPageID = selectionBeforeChange
-            return nil
+            return
         }
 
-        if offersUndo {
-            showPageUndoToast(for: result.change)
-        }
-
-        return result.change.page
+        showPageUndoToast(for: result.change)
     }
 
-    private func manuallyAddPage(after page: NotePage) {
-        autoAddedPlaceholderPageID = nil
-        addPage(after: page)
-    }
-
-    private func addPageAtBottom() {
-        guard pageFlowMode.autoAddsPages, let lastPage = note.sortedPages.last else { return }
-        guard autoAddedPlaceholderPageID != lastPage.id else { return }
-
-        if let newPage = addPage(after: lastPage, shouldSelect: false) {
-            autoAddedPlaceholderPageID = newPage.id
-        }
+    private func addPageFromFooter() {
+        guard let lastPage = note.sortedPages.last else { return }
+        addPage(after: lastPage)
     }
 
     private func handleDrawingChanged(pageID: UUID) {
@@ -1347,9 +1260,6 @@ struct NoteEditorView: View {
 
         page.touch()
         scheduleDrawingMetadataSave()
-
-        guard autoAddedPlaceholderPageID == pageID else { return }
-        autoAddedPlaceholderPageID = nil
     }
 
     private func renameAttachment(_ attachment: Attachment, to name: String) {
@@ -1541,7 +1451,6 @@ struct NoteEditorView: View {
 
         if saveEditorChanges("remove the page") {
             selectedPageID = result.selectedPageID
-            autoAddedPlaceholderPageID = autoAddedPlaceholderPageID == page.id ? nil : autoAddedPlaceholderPageID
             showPageUndoToast(for: result.change)
         } else {
             _ = NotePageEditCommand.undo(result.change, in: note)
@@ -1610,9 +1519,6 @@ struct NoteEditorView: View {
         }
 
         selectedPageID = result.selectedPageID
-        if autoAddedPlaceholderPageID == toast.change.page.id {
-            autoAddedPlaceholderPageID = nil
-        }
 
         if case .added = toast.change.kind {
             _ = permanentlyDeleteDetachedPage(toast.change.page)
@@ -1739,7 +1645,6 @@ struct NoteEditorView: View {
         do {
             try modelContext.save()
             selectedPageID = fallbackPageID
-            autoAddedPlaceholderPageID = autoAddedPlaceholderPageID == page.id ? nil : autoAddedPlaceholderPageID
         } catch {
             modelContext.rollback()
             restorePageOrders(previousSourceOrders)
