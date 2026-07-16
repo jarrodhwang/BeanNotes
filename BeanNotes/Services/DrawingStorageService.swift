@@ -49,18 +49,33 @@ struct DrawingStorageService {
         }
 
         do {
-            let url = try drawingURL(for: page)
+            // Reads do not need to create the drawings directory. This avoids a
+            // filesystem mutation and directory check on every cold page load.
+            let url = storage.rootURL
+                .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
+                .appendingPathComponent(page.drawingFileName)
             guard storage.fileManager.fileExists(atPath: url.path) else {
                 return PKDrawing()
             }
 
             let data = try Data(contentsOf: url)
             let drawing = try PKDrawing(data: data)
-            Self.cache(drawing, fileName: page.drawingFileName, rootURL: storage.rootURL, approximateBytes: data.count)
+            Self.cache(
+                drawing,
+                fileName: page.drawingFileName,
+                rootURL: storage.rootURL,
+                approximateBytes: data.count
+            )
             return drawing
         } catch {
             return PKDrawing()
         }
+    }
+
+    static func cachedDrawing(fileName: String, rootURL: URL) -> PKDrawing? {
+        ensureMemoryWarningObservation()
+        let cacheKey = Self.cacheKey(rootURL: rootURL, fileName: fileName)
+        return drawingCache.object(forKey: cacheKey)?.drawing
     }
 
     func save(_ drawing: PKDrawing, for page: NotePage) throws {

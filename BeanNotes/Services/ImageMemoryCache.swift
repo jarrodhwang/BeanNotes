@@ -6,8 +6,16 @@
 import ImageIO
 import UIKit
 
+struct ImageFileIdentity: Hashable {
+    var standardizedPath: String
+    var modifiedAt: TimeInterval
+    var byteCount: Int64
+}
+
 final class ImageMemoryCache: NSObject, NSCacheDelegate {
     static let shared = ImageMemoryCache()
+    private static let memoryCostLimit = 48 * 1024 * 1024
+    private static let maximumDecodePixelSize = 16_384
 
     private nonisolated final class BackgroundDecodeToken: @unchecked Sendable {
         private let lock = NSLock()
@@ -39,7 +47,7 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
     private override init() {
         super.init()
         cache.countLimit = 80
-        cache.totalCostLimit = 48 * 1024 * 1024
+        cache.totalCostLimit = Self.memoryCostLimit
         cache.delegate = self
 
         NotificationCenter.default.addObserver(
@@ -50,27 +58,35 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
         )
     }
 
-    func image(at url: URL, maxPixelSize: CGFloat? = nil) -> UIImage? {
-        let key = cacheKey(for: url, maxPixelSize: maxPixelSize)
+    func image(
+        at url: URL,
+        maxPixelSize: CGFloat? = nil,
+        identity suppliedIdentity: ImageFileIdentity? = nil
+    ) -> UIImage? {
+        let normalizedPixelSize = normalizedPixelSize(maxPixelSize)
+        let identity = suppliedIdentity ?? fileIdentity(for: url)
+        let key = cacheKey(for: identity, maxPixelSize: normalizedPixelSize)
         if let cached = cache.object(forKey: key) {
             return cached.image
         }
 
         let image: UIImage?
-        if let maxPixelSize, maxPixelSize > 0 {
+        if let maxPixelSize = normalizedPixelSize {
             image = downsampledImage(at: url, maxPixelSize: maxPixelSize)
         } else {
             image = UIImage(contentsOfFile: url.path)
         }
 
         if let image {
-            let path = standardizedPath(for: url)
-            cache.setObject(
-                CachedImage(image: image, key: key, path: path),
-                forKey: key,
-                cost: image.cacheCost
-            )
-            recordCachedKey(key, path: path)
+            let cost = image.cacheCost
+            if cost <= Self.memoryCostLimit {
+                cache.setObject(
+                    CachedImage(image: image, key: key, path: identity.standardizedPath),
+                    forKey: key,
+                    cost: cost
+                )
+                recordCachedKey(key, path: identity.standardizedPath)
+            }
         }
 
         return image
@@ -119,7 +135,7 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
         removeCachedKey(cachedImage.key, path: cachedImage.path)
     }
 
-    private func downsampledImage(at url: URL, maxPixelSize: CGFloat) -> UIImage? {
+    private func downsampledImage(at url: URL, maxPixelSize: Int) -> UIImage? {
         let options = [
             kCGImageSourceShouldCache: false
         ] as CFDictionary
@@ -132,7 +148,7 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: max(1, Int(maxPixelSize.rounded()))
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
         ] as CFDictionary
 
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else {
@@ -142,13 +158,29 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
         return UIImage(cgImage: cgImage)
     }
 
-    private func cacheKey(for url: URL, maxPixelSize: CGFloat?) -> NSString {
+    func fileIdentity(for url: URL) -> ImageFileIdentity {
         let path = standardizedPath(for: url)
         let attributes = try? fileManager.attributesOfItem(atPath: path)
         let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
-        let pixelSize = Int((maxPixelSize ?? 0).rounded())
-        return "\(path)|\(modified)|\(size)|\(pixelSize)" as NSString
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        return ImageFileIdentity(
+            standardizedPath: path,
+            modifiedAt: modified,
+            byteCount: size
+        )
+    }
+
+    private func cacheKey(for identity: ImageFileIdentity, maxPixelSize: Int?) -> NSString {
+        let pixelSize = maxPixelSize ?? 0
+        return "\(identity.standardizedPath)|\(identity.modifiedAt)|\(identity.byteCount)|\(pixelSize)" as NSString
+    }
+
+    private func normalizedPixelSize(_ maxPixelSize: CGFloat?) -> Int? {
+        guard let maxPixelSize, maxPixelSize.isFinite, maxPixelSize > 0 else {
+            return nil
+        }
+        let bounded = min(maxPixelSize.rounded(), CGFloat(Self.maximumDecodePixelSize))
+        return max(1, Int(bounded))
     }
 
     private func recordCachedKey(_ key: NSString, path: String) {

@@ -2985,6 +2985,237 @@ struct BeanNotesTests {
         ) != baseline)
     }
 
+    @Test func drawingCanvasConfigurationSignatureIgnoresDrawingMetadataChanges() throws {
+        let modelContext = try makeInMemoryModelContext()
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Diagram",
+            originalFileName: "diagram.png",
+            storedFileName: "Imports/diagram.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 40,
+            y: 60,
+            width: 240,
+            height: 160
+        )
+        modelContext.insert(page)
+        page.attachments.append(attachment)
+        try modelContext.save()
+
+        func signature() -> DrawingCanvasConfigurationSignature {
+            DrawingCanvasConfigurationSignature(
+                pages: [page],
+                pageFlowMode: .continuous,
+                inputMode: .pencilOnly,
+                renderQuality: .balanced,
+                storageRootURL: URL(fileURLWithPath: "/tmp/BeanNotesConfigurationSignature"),
+                theme: .bean,
+                showsBeanArtwork: false,
+                hasTopContent: false
+            )
+        }
+
+        let baseline = signature()
+        page.touch(at: Date(timeIntervalSince1970: 1_900_000_000))
+        attachment.touch(at: Date(timeIntervalSince1970: 1_900_000_001))
+
+        #expect(signature() == baseline)
+
+        attachment.x += 12
+        #expect(signature() != baseline)
+
+        attachment.x -= 12
+        page.backgroundStyleRaw = NoteBackgroundStyle.grid.rawValue
+        #expect(signature() != baseline)
+
+        attachment.x = .nan
+        attachment.y = .infinity
+        attachment.width = .nan
+        attachment.height = .infinity
+        let corruptGeometry = signature()
+        #expect(signature() == corruptGeometry)
+    }
+
+    @Test @MainActor func attachmentPreviewCommitsOnceAndSurvivesCanvasRefresh() throws {
+        let modelContext = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAttachmentPreview-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        let initialUpdate = Date(timeIntervalSince1970: 1_700_000_000)
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Movable",
+            originalFileName: "movable.png",
+            storedFileName: "Imports/movable.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 80,
+            y: 100,
+            width: 240,
+            height: 180,
+            updatedAt: initialUpdate
+        )
+        modelContext.insert(page)
+        page.attachments.append(attachment)
+        try modelContext.save()
+
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView()
+        var commitCount = 0
+        defer { pageView.releaseHeavyResources() }
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            theme: .bean,
+            coordinator: coordinator,
+            attachmentChanged: { commitCount += 1 },
+            deleteAttachment: { _ in }
+        )
+        pageView.beginEditingAttachment(id: attachment.id)
+
+        let overlay = try #require(pageView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingOverlayView }
+            .first)
+        let raster = try #require(pageView.behindImageContainerView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentImageContainerView }
+            .first)
+        let startFrame = attachment.normalizedFrame(for: page.pageSize)
+        let previewFrame = CGRect(x: 132, y: 156, width: 280, height: 210)
+
+        overlay.applyPreview(previewFrame)
+
+        #expect(attachment.normalizedFrame(for: page.pageSize) == startFrame)
+        #expect(attachment.updatedAt == initialUpdate)
+        #expect(overlay.displayedFrame == previewFrame)
+        #expect(raster.frame == previewFrame)
+        #expect(commitCount == 0)
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            theme: .blueberry,
+            coordinator: coordinator,
+            attachmentChanged: { commitCount += 1 },
+            deleteAttachment: { _ in }
+        )
+        pageView.layoutPage()
+
+        #expect(overlay.displayedFrame == previewFrame)
+        #expect(raster.frame == previewFrame)
+        #expect(attachment.normalizedFrame(for: page.pageSize) == startFrame)
+
+        overlay.commitPreview(startingAt: startFrame)
+
+        #expect(attachment.normalizedFrame(for: page.pageSize) == previewFrame)
+        #expect(attachment.updatedAt > initialUpdate)
+        #expect(commitCount == 1)
+    }
+
+    @Test @MainActor func canvasSelectionSynchronizesBeforeLayoutAndRetriesScrolling() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDeferredCanvasSelection-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = [
+            NotePage(pageOrder: 0, drawingFileName: "selection-first.drawing", width: 612, height: 500),
+            NotePage(pageOrder: 1, drawingFileName: "selection-second.drawing", width: 612, height: 500)
+        ]
+        let parent = makeDrawingCanvasView(
+            page: pages[0],
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(frame: .zero)
+        coordinator.containerView = container
+        defer { DrawingCanvasView.dismantleUIView(container, coordinator: coordinator) }
+
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .separated,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        container.synchronizeSelectedPageID(nil)
+        #expect(container.currentSelectedPageID == pages[0].id)
+
+        container.prepareForProgrammaticScroll(to: pages[1].id)
+        container.synchronizeSelectedPageID(pages[1].id)
+        container.scrollToPage(id: pages[1].id, animated: true)
+        #expect(container.currentSelectedPageID == pages[1].id)
+
+        container.frame = CGRect(x: 0, y: 0, width: 700, height: 640)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        #expect(container.currentSelectedPageID == pages[1].id)
+        #expect(container.scrollView.contentOffset.y > 0)
+    }
+
+    @Test @MainActor func lightweightCanvasRefreshReassertsDrawingInteraction() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCanvasInteractionRefresh-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "interaction-refresh.drawing")
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        defer { DrawingCanvasView.dismantleUIView(container, coordinator: coordinator) }
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .separated,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.layoutIfNeeded()
+        let canvas = try #require(container.activeCanvasView)
+        canvas.drawingGestureRecognizer.isEnabled = false
+
+        container.reassertInteractionState()
+
+        #expect(canvas.drawingGestureRecognizer.isEnabled)
+    }
+
     @Test @MainActor func paginationModesUseFlushOrSeparatedPageSpacing() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesPaginationSpacing-\(UUID().uuidString)", isDirectory: true)
@@ -3513,6 +3744,48 @@ struct BeanNotesTests {
 
         #expect(max(cgImage.width, cgImage.height) <= 80)
         #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
+    }
+
+    @Test func imageMemoryCacheNormalizesInvalidAndExtremePixelBudgets() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesImageBudgetNormalization-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let imageURL = rootURL.appendingPathComponent("budget.png")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 16)).image { context in
+            UIColor.systemPink.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 32, height: 16))
+        }
+        try #require(image.pngData()).write(to: imageURL)
+
+        ImageMemoryCache.shared.removeAllImages()
+        #expect(ImageMemoryCache.shared.image(at: imageURL) != nil)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
+
+        for invalidBudget in [CGFloat.nan, .infinity, -.infinity, -1, 0] {
+            #expect(ImageMemoryCache.shared.image(
+                at: imageURL,
+                maxPixelSize: invalidBudget
+            ) != nil)
+        }
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 1)
+
+        let onePixelImage = try #require(ImageMemoryCache.shared.image(
+            at: imageURL,
+            maxPixelSize: 0.4
+        ))
+        let onePixelRaster = try #require(onePixelImage.cgImage)
+        #expect(max(onePixelRaster.width, onePixelRaster.height) <= 1)
+
+        #expect(ImageMemoryCache.shared.image(
+            at: imageURL,
+            maxPixelSize: .greatestFiniteMagnitude
+        ) != nil)
+        #expect(ImageMemoryCache.shared.cachedVariantCount(for: imageURL) == 3)
     }
 
     @Test func imageMemoryCacheLoadsThumbnailsInBackground() async throws {
@@ -4116,6 +4389,7 @@ struct BeanNotesTests {
             pageSize: CGSize(width: 612, height: 792),
             changed: {}
         )
+        #expect(!imageContainer.hasVectorPDFView)
         #expect(!imageContainer.isRasterImageLoaded)
 
         imageContainer.setImageLoadingEnabled(true)
@@ -6959,12 +7233,21 @@ struct BeanNotesTests {
             changed: {}
         )
         try await waitForRasterImage(in: imageContainer)
+        #expect(imageContainer.hasVectorPDFView)
         #expect(imageContainer.isVectorPDFVisible)
 
         imageContainer.setDocumentTraversalActive(true)
         #expect(!imageContainer.isVectorPDFVisible)
 
         imageContainer.setDocumentTraversalActive(false)
+        #expect(imageContainer.isVectorPDFVisible)
+
+        imageContainer.setImageLoadingEnabled(false)
+        #expect(!imageContainer.hasVectorPDFView)
+        #expect(!imageContainer.isVectorPDFVisible)
+
+        imageContainer.setImageLoadingEnabled(true)
+        #expect(imageContainer.hasVectorPDFView)
         #expect(imageContainer.isVectorPDFVisible)
     }
 

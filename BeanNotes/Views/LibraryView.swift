@@ -2230,7 +2230,6 @@ private struct NoteCardView: View {
     var thumbnailRefreshVersion: Int
 
     @State private var thumbnailImage: UIImage?
-    @State private var isLoadingThumbnail = false
     @State private var errorMessage: String?
     @State private var thumbnailLoadTask: Task<Void, Never>?
     @State private var thumbnailLoadRequestID: UUID?
@@ -2420,14 +2419,12 @@ private struct NoteCardView: View {
 
         let requestID = UUID()
         thumbnailLoadRequestID = requestID
-        isLoadingThumbnail = true
 
         thumbnailLoadTask = Task { @MainActor in
             defer {
                 if thumbnailLoadRequestID == requestID {
                     thumbnailLoadRequestID = nil
                     thumbnailLoadTask = nil
-                    isLoadingThumbnail = false
                 }
             }
 
@@ -2487,7 +2484,6 @@ private struct NoteCardView: View {
         thumbnailLoadTask?.cancel()
         thumbnailLoadTask = nil
         thumbnailLoadRequestID = nil
-        isLoadingThumbnail = false
     }
 
     private func currentThumbnailURL(

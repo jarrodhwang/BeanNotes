@@ -109,6 +109,14 @@ struct NotePageRenderSnapshot: Sendable {
 }
 
 struct ThumbnailService {
+    nonisolated private final class CachedDrawingReference: @unchecked Sendable {
+        let drawing: PKDrawing
+
+        init(_ drawing: PKDrawing) {
+            self.drawing = drawing
+        }
+    }
+
     nonisolated private static let thumbnailRenderVersion = 10
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
@@ -194,10 +202,12 @@ struct ThumbnailService {
             theme: resolvedTheme,
             showsBeanArtwork: resolvedShowsArtwork
         )
-        // Prefer the coordinated drawing cache so a preview cannot lag behind live
-        // ink while its debounced disk save is still in flight.
-        let drawingData = drawingStorage.loadDrawing(for: page).dataRepresentation()
         let rootURL = storage.rootURL
+        let drawingFileName = page.drawingFileName
+        let cachedDrawing = DrawingStorageService.cachedDrawing(
+            fileName: drawingFileName,
+            rootURL: rootURL
+        ).map(CachedDrawingReference.init)
         let fileName = Self.thumbnailFileName(
             pageID: page.id,
             theme: resolvedTheme,
@@ -205,7 +215,8 @@ struct ThumbnailService {
         )
         let data = try await Self.renderThumbnailData(
             snapshot: snapshot,
-            drawingData: drawingData,
+            drawingFileName: drawingFileName,
+            cachedDrawing: cachedDrawing,
             rootURL: rootURL,
             maxDimension: maxDimension
         )
@@ -411,14 +422,22 @@ struct ThumbnailService {
 
     nonisolated private static func renderThumbnailData(
         snapshot: NotePageRenderSnapshot,
-        drawingData: Data,
+        drawingFileName: String,
+        cachedDrawing: CachedDrawingReference?,
         rootURL: URL,
         maxDimension: CGFloat
     ) async throws -> Data {
         let renderTask = Task.detached(priority: .utility) {
             try autoreleasepool {
                 try Task.checkCancellation()
-                let drawing = try PKDrawing(data: drawingData)
+                // Capture live cached ink at request time so cache eviction cannot make
+                // a preview lag behind its debounced disk save. Cache misses perform all
+                // file I/O and decoding here on the detached utility task.
+                let drawing = cachedDrawing?.drawing
+                    ?? loadDrawing(
+                        fileName: drawingFileName,
+                        rootURL: rootURL
+                    )
                 try Task.checkCancellation()
                 let thumbnail = renderThumbnailImage(
                     snapshot: snapshot,
