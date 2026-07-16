@@ -23,6 +23,7 @@ struct PenPaletteView: View {
     @State private var isShowingWidthControls = false
     @State private var isShowingCustomWidth = false
     @State private var isShowingCustomEraserWidth = false
+    @State private var isShowingRubEraserAngle = false
     @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
     @State private var hasLoadedCommittedOffset = false
@@ -87,6 +88,7 @@ struct PenPaletteView: View {
                 isShowingWidthControls = false
                 isShowingCustomWidth = false
                 isShowingCustomEraserWidth = false
+                isShowingRubEraserAngle = false
                 isShowingEraserModes = false
             }
             .accessibilityElement(children: .contain)
@@ -296,6 +298,19 @@ struct PenPaletteView: View {
                 customEraserWidthSlider
                     .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
+
+            if toolState.eraserMode == .rub {
+                Divider()
+                    .frame(height: 30)
+
+                rubEraserShapePicker
+                rubEraserAngleButton
+
+                if isShowingRubEraserAngle {
+                    rubEraserAngleSlider
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Eraser controls")
@@ -314,6 +329,18 @@ struct PenPaletteView: View {
                 customEraserWidthSlider
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
+
+            if toolState.eraserMode == .rub {
+                HStack(spacing: 6) {
+                    rubEraserShapePicker
+                    rubEraserAngleButton
+                }
+
+                if isShowingRubEraserAngle {
+                    rubEraserAngleSlider
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Eraser controls")
@@ -321,14 +348,14 @@ struct PenPaletteView: View {
 
     private var eraserWidthPresetControls: some View {
         HStack(spacing: 6) {
-            ForEach(Array(toolState.eraserWidthPresets.enumerated()), id: \.offset) { index, width in
+            ForEach(Array(activeEraserSizePresets.enumerated()), id: \.offset) { index, width in
                 eraserWidthButton(width)
                     .accessibilityIdentifier("eraser-size-\(index)")
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Eraser size")
-        .accessibilityValue("\(eraserWidthText) points")
+        .accessibilityValue("\(activeEraserSizeText) points")
     }
 
     private var customEraserWidthButton: some View {
@@ -353,22 +380,22 @@ struct PenPaletteView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Custom eraser size")
-        .accessibilityValue("\(eraserWidthText) points")
+        .accessibilityValue("\(activeEraserSizeText) points")
     }
 
     private var customEraserWidthSlider: some View {
         HStack(spacing: 7) {
             Slider(
-                value: eraserWidthBinding,
-                in: eraserWidthRange,
-                step: Double(toolState.eraserWidthCalibration.step)
+                value: activeEraserSizeBinding,
+                in: activeEraserSizeRange,
+                step: Double(activeEraserSizeCalibration.step)
             ) {
                 Text("Custom eraser size")
             }
             .labelsHidden()
             .frame(width: usesCompactLayout ? 150 : 120)
 
-            Text(eraserWidthText)
+            Text(activeEraserSizeText)
                 .font(.caption2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 38, alignment: .trailing)
@@ -376,7 +403,81 @@ struct PenPaletteView: View {
         .frame(height: 30)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Custom eraser size")
-        .accessibilityValue("\(eraserWidthText) points")
+        .accessibilityValue("\(activeEraserSizeText) points")
+    }
+
+    private var rubEraserShapePicker: some View {
+        Menu {
+            ForEach(DrawingRubEraserShape.allCases) { shape in
+                Button {
+                    performSelectionFeedback()
+                    toolState.selectRubEraserShape(shape)
+                } label: {
+                    Label(shape.label, systemImage: shape.systemImage)
+                    if toolState.rubEraserShape == shape {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+        } label: {
+            Label(toolState.rubEraserShape.label, systemImage: toolState.rubEraserShape.systemImage)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(minHeight: 26)
+                .padding(.horizontal, 7)
+                .overlay {
+                    Capsule()
+                        .stroke(Color.secondary.opacity(0.24), lineWidth: 1.4)
+                }
+        }
+        .accessibilityLabel("Rub eraser shape")
+        .accessibilityValue(toolState.rubEraserShape.label)
+    }
+
+    private var rubEraserAngleButton: some View {
+        Button {
+            performSelectionFeedback()
+            withAnimation(.snappy(duration: 0.16)) {
+                isShowingRubEraserAngle.toggle()
+            }
+        } label: {
+            Label("\(rubEraserAngleText)°", systemImage: "rotate.right")
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(isShowingRubEraserAngle ? .primary : .secondary)
+                .frame(minHeight: 26)
+                .padding(.horizontal, 7)
+                .background(isShowingRubEraserAngle ? Color.blue.opacity(0.12) : Color.clear, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(
+                            isShowingRubEraserAngle ? Color.blue : Color.secondary.opacity(0.24),
+                            lineWidth: 1.4
+                        )
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Rub eraser angle")
+        .accessibilityValue("\(rubEraserAngleText) degrees")
+    }
+
+    private var rubEraserAngleSlider: some View {
+        HStack(spacing: 7) {
+            Slider(value: rubEraserAngleBinding, in: 0...180, step: 1) {
+                Text("Rub eraser angle")
+            }
+            .labelsHidden()
+            .frame(width: usesCompactLayout ? 150 : 120)
+
+            Text("\(rubEraserAngleText)°")
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 38, alignment: .trailing)
+        }
+        .frame(height: 30)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Rub eraser angle")
+        .accessibilityValue("\(rubEraserAngleText) degrees")
     }
 
     private var collapsedPalette: some View {
@@ -564,6 +665,9 @@ struct PenPaletteView: View {
             if mode == .object {
                 isShowingCustomEraserWidth = false
             }
+            if mode != .rub {
+                isShowingRubEraserAngle = false
+            }
         } label: {
             Text(mode.label)
                 .font(.caption2.weight(.semibold))
@@ -585,11 +689,7 @@ struct PenPaletteView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(mode.label) eraser")
-        .accessibilityHint(
-            mode == .pixel
-                ? "Erases within the selected size"
-                : "Removes a whole stroke"
-        )
+        .accessibilityHint(eraserModeAccessibilityHint(mode))
     }
 
     private func selectTool(_ tool: DrawingTool) {
@@ -601,6 +701,7 @@ struct PenPaletteView: View {
                     isShowingEraserModes.toggle()
                     if !isShowingEraserModes {
                         isShowingCustomEraserWidth = false
+                        isShowingRubEraserAngle = false
                     }
                 }
             } else if toolState.selectedToolUsesInkColor {
@@ -619,6 +720,7 @@ struct PenPaletteView: View {
         isShowingWidthControls = false
         isShowingCustomWidth = false
         isShowingCustomEraserWidth = false
+        isShowingRubEraserAngle = false
     }
 
     private var selectedPaletteColorBinding: Binding<Color> {
@@ -724,10 +826,18 @@ struct PenPaletteView: View {
     private func eraserWidthButton(_ width: CGFloat) -> some View {
         Button {
             performSelectionFeedback()
-            toolState.applyEraserWidth(width)
+            applyActiveEraserSize(width)
         } label: {
-            Circle()
-                .fill(.secondary)
+            Group {
+                if toolState.eraserMode == .rub {
+                    RubEraserGlyph(shape: toolState.rubEraserShape)
+                        .fill(.secondary)
+                        .rotationEffect(.degrees(Double(toolState.rubEraserAngle)))
+                } else {
+                    Circle()
+                        .fill(.secondary)
+                }
+            }
                 .frame(width: eraserWidthButtonDiameter(for: width), height: eraserWidthButtonDiameter(for: width))
                 .frame(width: 26, height: 26)
                 .background {
@@ -756,29 +866,35 @@ struct PenPaletteView: View {
         }
     }
 
-    private var eraserWidthBinding: Binding<Double> {
+    private var activeEraserSizeBinding: Binding<Double> {
         Binding {
-            Double(toolState.eraserWidth)
+            Double(activeEraserSize)
         } set: { newValue in
-            toolState.applyEraserWidth(CGFloat(newValue))
+            applyActiveEraserSize(CGFloat(newValue))
         }
     }
 
-    private var eraserWidthRange: ClosedRange<Double> {
-        let range = toolState.eraserWidthCalibration.range
+    private var activeEraserSizeRange: ClosedRange<Double> {
+        let range = activeEraserSizeCalibration.range
         return Double(range.lowerBound)...Double(range.upperBound)
     }
 
-    private var eraserWidthText: String {
-        DrawingStrokeWidthReadout.pointsText(for: toolState.eraserWidth)
+    private var activeEraserSizeText: String {
+        DrawingStrokeWidthReadout.pointsText(for: activeEraserSize)
     }
 
     private var collapsedEraserSummary: String {
-        "\(toolState.eraserMode.label) · \(eraserWidthText) pt"
+        if toolState.eraserMode == .rub {
+            return "Rub · \(toolState.rubEraserShape.label) · \(activeEraserSizeText) pt · \(rubEraserAngleText)°"
+        }
+        return "\(toolState.eraserMode.label) · \(activeEraserSizeText) pt"
     }
 
     private var collapsedEraserAccessibilityLabel: String {
-        "\(toolState.eraserMode.label) eraser, \(eraserWidthText) points"
+        if toolState.eraserMode == .rub {
+            return "Rub eraser, \(toolState.rubEraserShape.label), \(activeEraserSizeText) points, \(rubEraserAngleText) degrees"
+        }
+        return "\(toolState.eraserMode.label) eraser, \(activeEraserSizeText) points"
     }
 
     private var activeWidthRange: ClosedRange<Double> {
@@ -810,7 +926,7 @@ struct PenPaletteView: View {
     }
 
     private func eraserWidthButtonDiameter(for width: CGFloat) -> CGFloat {
-        let calibration = toolState.eraserWidthCalibration
+        let calibration = activeEraserSizeCalibration
         let span = max(calibration.maximumWidth - calibration.minimumWidth, 0.1)
         let progress = (width - calibration.minimumWidth) / span
         return min(max(7 + progress * 14, 7), 21)
@@ -822,8 +938,55 @@ struct PenPaletteView: View {
     }
 
     private func isActiveEraserWidthPreset(_ width: CGFloat) -> Bool {
-        let tolerance = max(toolState.eraserWidthCalibration.step / 2, 0.05)
-        return abs(toolState.eraserWidth - width) <= tolerance
+        let tolerance = max(activeEraserSizeCalibration.step / 2, 0.05)
+        return abs(activeEraserSize - width) <= tolerance
+    }
+
+    private var activeEraserSize: CGFloat {
+        toolState.eraserMode == .rub ? toolState.rubEraserSize : toolState.eraserWidth
+    }
+
+    private var activeEraserSizeCalibration: DrawingStrokeWidthCalibration {
+        toolState.eraserMode == .rub
+            ? toolState.rubEraserSizeCalibration
+            : toolState.eraserWidthCalibration
+    }
+
+    private var activeEraserSizePresets: [CGFloat] {
+        toolState.eraserMode == .rub
+            ? toolState.rubEraserSizePresets
+            : toolState.eraserWidthPresets
+    }
+
+    private var rubEraserAngleBinding: Binding<Double> {
+        Binding {
+            Double(toolState.rubEraserAngle)
+        } set: { angle in
+            toolState.applyRubEraserAngle(CGFloat(angle))
+        }
+    }
+
+    private var rubEraserAngleText: String {
+        String(Int(toolState.rubEraserAngle.rounded()))
+    }
+
+    private func applyActiveEraserSize(_ size: CGFloat) {
+        if toolState.eraserMode == .rub {
+            toolState.applyRubEraserSize(size)
+        } else {
+            toolState.applyEraserWidth(size)
+        }
+    }
+
+    private func eraserModeAccessibilityHint(_ mode: DrawingEraserMode) -> String {
+        switch mode {
+        case .pixel:
+            "Erases within the selected size"
+        case .object:
+            "Removes a whole stroke"
+        case .rub:
+            "Erases ink with the selected rubber shape and angle"
+        }
     }
 
     private func widthLabel(for width: CGFloat) -> String {
@@ -847,6 +1010,37 @@ struct PenPaletteView: View {
     private func performSelectionFeedback() {
         selectionFeedback.selectionChanged()
         selectionFeedback.prepare()
+    }
+}
+
+private struct RubEraserGlyph: Shape {
+    let shape: DrawingRubEraserShape
+
+    func path(in rect: CGRect) -> Path {
+        switch shape {
+        case .rectangle:
+            Path(rect.insetBy(dx: rect.width * 0.08, dy: rect.height * 0.25))
+        case .chisel:
+            Path(rect.insetBy(dx: rect.width * 0.34, dy: rect.height * 0.05))
+        case .beveled:
+            Path { path in
+                path.move(to: CGPoint(x: rect.minX + rect.width * 0.08, y: rect.minY + rect.height * 0.25))
+                path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.28, y: rect.minY + rect.height * 0.25))
+                path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.08, y: rect.midY))
+                path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.28, y: rect.maxY - rect.height * 0.25))
+                path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.08, y: rect.maxY - rect.height * 0.25))
+                path.closeSubpath()
+            }
+        case .wedge:
+            Path { path in
+                path.move(to: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.08))
+                path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.08, y: rect.maxY - rect.height * 0.12))
+                path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.08, y: rect.maxY - rect.height * 0.12))
+                path.closeSubpath()
+            }
+        case .rubberBlock:
+            Path(roundedRect: rect.insetBy(dx: rect.width * 0.08, dy: rect.height * 0.18), cornerRadius: rect.width * 0.22)
+        }
     }
 }
 

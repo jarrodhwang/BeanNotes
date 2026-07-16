@@ -5225,6 +5225,91 @@ struct BeanNotesTests {
         #expect(restoredSession.eraserWidth == selectedWidth)
     }
 
+    @Test @MainActor func rubEraserSettingsPersistWithoutChangingPixelOrObjectSettings() throws {
+        let suiteName = "BeanNotesRubEraser-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let firstSession = DrawingToolState(defaults: defaults)
+        firstSession.applyEraserWidth(48)
+        let pixelWidth = firstSession.eraserWidth
+        firstSession.selectRubEraserShape(.wedge)
+        firstSession.applyRubEraserSize(73)
+        firstSession.applyRubEraserAngle(137.6)
+
+        #expect(firstSession.eraserMode == .rub)
+        #expect(firstSession.rubEraserShape == .wedge)
+        #expect(firstSession.rubEraserSize == 74)
+        #expect(firstSession.rubEraserAngle == 138)
+        #expect(firstSession.eraserWidth == pixelWidth)
+        #expect(DrawingRubEraserShape.allCases.count == 5)
+
+        let rubTool = try #require(firstSession.makePKTool() as? PKEraserTool)
+        #expect(rubTool.eraserType == .vector)
+
+        let restoredSession = DrawingToolState(defaults: defaults)
+        #expect(restoredSession.eraserMode == .rub)
+        #expect(restoredSession.rubEraserShape == .wedge)
+        #expect(restoredSession.rubEraserSize == 74)
+        #expect(restoredSession.rubEraserAngle == 138)
+        #expect(restoredSession.eraserWidth == pixelWidth)
+
+        restoredSession.selectEraserMode(.object)
+        #expect(restoredSession.eraserWidth == pixelWidth)
+        restoredSession.selectEraserMode(.pixel)
+        #expect(restoredSession.eraserWidth == pixelWidth)
+    }
+
+    @Test @MainActor func rubEraserGeometrySupportsEveryShapeAndRotation() {
+        for shape in DrawingRubEraserShape.allCases {
+            let path = DrawingCanvasView.RubEraserGeometry.shapePath(
+                centeredAt: CGPoint(x: 100, y: 100),
+                configuration: .init(shape: shape, size: 40, angle: 0)
+            )
+            #expect(!path.isEmpty)
+            #expect(path.contains(CGPoint(x: 100, y: 100)))
+        }
+
+        let horizontal = DrawingCanvasView.RubEraserGeometry.shapePath(
+            centeredAt: CGPoint(x: 100, y: 100),
+            configuration: .init(shape: .rectangle, size: 40, angle: 0)
+        )
+        let vertical = DrawingCanvasView.RubEraserGeometry.shapePath(
+            centeredAt: CGPoint(x: 100, y: 100),
+            configuration: .init(shape: .rectangle, size: 40, angle: 90)
+        )
+
+        #expect(horizontal.contains(CGPoint(x: 118, y: 100)))
+        #expect(!horizontal.contains(CGPoint(x: 100, y: 118)))
+        #expect(!vertical.contains(CGPoint(x: 118, y: 100)))
+        #expect(vertical.contains(CGPoint(x: 100, y: 118)))
+    }
+
+    @Test @MainActor func rubEraserRemovesOnlyTheCoveredPartOfAStroke() throws {
+        let rubbedStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 4
+        )
+        let retainedStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 160),
+            to: CGPoint(x: 180, y: 160),
+            width: 4
+        )
+        let result = try #require(
+            DrawingCanvasView.RubEraserStrokeProcessor.strokesByErasing(
+                [rubbedStroke, retainedStroke],
+                along: [CGPoint(x: 100, y: 100)],
+                configuration: .init(shape: .rectangle, size: 32, angle: 0)
+            )
+        )
+
+        #expect(result.count == 3)
+        #expect(result.filter { $0.renderBounds.midY < 130 }.count == 2)
+        #expect(result.contains { $0.renderBounds == retainedStroke.renderBounds })
+        #expect(result.allSatisfy { !$0.renderBounds.contains(CGPoint(x: 100, y: 100)) })
+    }
+
     @Test @MainActor func eraserScopeTracksTheActivePencilKitEraserWidth() throws {
         let fixture = try makePageCanvasFixture(name: "EraserScope")
         defer { fixture.cleanup() }
@@ -5278,6 +5363,53 @@ struct BeanNotesTests {
         fixture.pageView.setEraserPreviewEnabled(true, diameter: 32)
 
         #expect(!fixture.pageView.isUsingCustomObjectEraser)
+        #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+    }
+
+    @Test @MainActor func customRubEraserSuppressesNativeInputAndShowsItsShapeScope() throws {
+        let fixture = try makePageCanvasFixture(name: "CustomRubEraser")
+        defer { fixture.cleanup() }
+        let page = try #require(fixture.pageView.page)
+        fixture.coordinator.register(
+            canvasView: fixture.pageView.canvasView,
+            page: page,
+            pageView: fixture.pageView
+        )
+        defer {
+            fixture.coordinator.unregister(
+                canvasView: fixture.pageView.canvasView,
+                page: page,
+                flushDrawingBeforeRelease: false
+            )
+        }
+        let toolState = fixture.coordinator.parent.toolState
+        toolState.selectRubEraserShape(.chisel)
+        toolState.applyRubEraserSize(44)
+        toolState.applyRubEraserAngle(35)
+        fixture.coordinator.register(
+            canvasView: fixture.pageView.canvasView,
+            page: page,
+            pageView: fixture.pageView
+        )
+
+        #expect(fixture.pageView.isUsingCustomRubEraser)
+        #expect(!fixture.pageView.isUsingCustomObjectEraser)
+        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+
+        fixture.pageView.setLiveDrawingActive(true)
+        let location = CGPoint(x: 120, y: 180)
+        fixture.pageView.updateEraserScope(at: location)
+        #expect(!fixture.pageView.eraserScopeView.isHidden)
+        #expect(fixture.pageView.eraserScopeView.center == location)
+        #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 44, height: 44))
+
+        toolState.selectEraserMode(.pixel)
+        fixture.coordinator.register(
+            canvasView: fixture.pageView.canvasView,
+            page: page,
+            pageView: fixture.pageView
+        )
+        #expect(!fixture.pageView.isUsingCustomRubEraser)
         #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
     }
 

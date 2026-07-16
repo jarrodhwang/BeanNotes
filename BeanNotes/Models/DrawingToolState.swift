@@ -284,6 +284,7 @@ enum DrawingStrokeWidthMode: String, CaseIterable, Identifiable {
 enum DrawingEraserMode: String, CaseIterable, Identifiable {
     case pixel
     case object
+    case rub
 
     var id: String { rawValue }
 
@@ -293,6 +294,8 @@ enum DrawingEraserMode: String, CaseIterable, Identifiable {
             "Pixel"
         case .object:
             "Object"
+        case .rub:
+            "Rub Eraser"
         }
     }
 
@@ -302,6 +305,50 @@ enum DrawingEraserMode: String, CaseIterable, Identifiable {
             .fixedWidthBitmap
         case .object:
             .vector
+        case .rub:
+            // Rub Eraser is implemented by BeanNotes so it can use non-circular
+            // shapes. A vector tool is installed only as a PencilKit placeholder.
+            .vector
+        }
+    }
+}
+
+enum DrawingRubEraserShape: String, CaseIterable, Identifiable {
+    case rectangle
+    case chisel
+    case beveled
+    case wedge
+    case rubberBlock
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .rectangle:
+            "Rectangle"
+        case .chisel:
+            "Chisel Eraser"
+        case .beveled:
+            "Beveled Eraser"
+        case .wedge:
+            "Wedge Eraser"
+        case .rubberBlock:
+            "Rubber Block"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .rectangle:
+            "rectangle"
+        case .chisel:
+            "rectangle.portrait"
+        case .beveled:
+            "eraser"
+        case .wedge:
+            "triangle"
+        case .rubberBlock:
+            "rectangle.roundedtop"
         }
     }
 }
@@ -584,6 +631,9 @@ final class DrawingToolState: ObservableObject {
         static let highlighterWidth = "drawingToolState.highlighterWidth"
         static let eraserMode = "drawingToolState.eraserMode"
         static let eraserWidth = "drawingToolState.eraserWidth"
+        static let rubEraserSize = "drawingToolState.rubEraserSize"
+        static let rubEraserShape = "drawingToolState.rubEraserShape"
+        static let rubEraserAngle = "drawingToolState.rubEraserAngle"
         static let penPaletteColors = "drawingToolState.penPaletteColors"
         static let pencilPaletteColors = "drawingToolState.pencilPaletteColors"
         static let highlighterPaletteColors = "drawingToolState.highlighterPaletteColors"
@@ -636,6 +686,18 @@ final class DrawingToolState: ObservableObject {
 
     @Published private(set) var eraserWidth: CGFloat = 16 {
         didSet { defaults.set(Double(eraserWidth), forKey: DefaultsKey.eraserWidth) }
+    }
+
+    @Published private(set) var rubEraserSize: CGFloat = 32 {
+        didSet { defaults.set(Double(rubEraserSize), forKey: DefaultsKey.rubEraserSize) }
+    }
+
+    @Published private(set) var rubEraserShape: DrawingRubEraserShape = .rectangle {
+        didSet { defaults.set(rubEraserShape.rawValue, forKey: DefaultsKey.rubEraserShape) }
+    }
+
+    @Published private(set) var rubEraserAngle: CGFloat = 0 {
+        didSet { defaults.set(Double(rubEraserAngle), forKey: DefaultsKey.rubEraserAngle) }
     }
 
     @Published private var penPaletteColorHexes: [String] = [] {
@@ -691,6 +753,13 @@ final class DrawingToolState: ObservableObject {
             key: DefaultsKey.eraserWidth,
             fallback: Self.defaultStrokeWidth(for: .eraser),
             for: .eraser
+        )
+        rubEraserSize = Self.storedRubEraserSize(defaults, key: DefaultsKey.rubEraserSize)
+        rubEraserShape = Self.storedRubEraserShape(defaults, key: DefaultsKey.rubEraserShape)
+        rubEraserAngle = Self.normalizedRubEraserAngle(
+            CGFloat(defaults.object(forKey: DefaultsKey.rubEraserAngle) == nil
+                ? 0
+                : defaults.double(forKey: DefaultsKey.rubEraserAngle))
         )
         penPaletteColorHexes = Self.storedPalette(
             defaults,
@@ -749,6 +818,14 @@ final class DrawingToolState: ObservableObject {
 
     var eraserWidthPresets: [CGFloat] {
         eraserWidthCalibration.presets
+    }
+
+    var rubEraserSizeCalibration: DrawingStrokeWidthCalibration {
+        Self.rubEraserSizeCalibration
+    }
+
+    var rubEraserSizePresets: [CGFloat] {
+        rubEraserSizeCalibration.presets
     }
 
     func inkColor(for tool: DrawingTool) -> Color {
@@ -898,6 +975,9 @@ final class DrawingToolState: ObservableObject {
             let width = effectiveStrokeWidth(for: .highlighter, zoomScale: zoomScale, zoomBehavior: zoomBehavior)
             return "highlighter:\(highlighterColor.hexRGB):\(widthSignatureValue(width)):\(zoomBehavior.rawValue)"
         case .eraser:
+            if eraserMode == .rub {
+                return "eraser:rub:\(rubEraserShape.rawValue):\(widthSignatureValue(rubEraserSize)):\(widthSignatureValue(rubEraserAngle))"
+            }
             return "eraser:\(eraserMode.rawValue):\(widthSignatureValue(eraserWidth))"
         case .lasso:
             return "lasso"
@@ -1043,6 +1123,21 @@ final class DrawingToolState: ObservableObject {
         select(.eraser)
     }
 
+    func applyRubEraserSize(_ size: CGFloat) {
+        rubEraserSize = rubEraserSizeCalibration.clamped(size)
+        selectEraserMode(.rub)
+    }
+
+    func selectRubEraserShape(_ shape: DrawingRubEraserShape) {
+        rubEraserShape = shape
+        selectEraserMode(.rub)
+    }
+
+    func applyRubEraserAngle(_ angle: CGFloat) {
+        rubEraserAngle = Self.normalizedRubEraserAngle(angle)
+        selectEraserMode(.rub)
+    }
+
     func activateTemporaryEraser() {
         guard selectedTool != .eraser else { return }
         previousTool = selectedTool
@@ -1106,6 +1201,8 @@ final class DrawingToolState: ObservableObject {
                 // PencilKit's vector eraser has no configurable native width. PageCanvasView
                 // supplies the adjustable whole-stroke hit testing for this mode instead.
                 PKEraserTool(.vector)
+            case .rub:
+                PKEraserTool(.vector)
             }
         case .lasso:
             PKLassoTool()
@@ -1146,6 +1243,31 @@ final class DrawingToolState: ObservableObject {
         guard let rawValue = defaults.string(forKey: key) else { return fallback }
         return DrawingEraserMode(rawValue: rawValue) ?? fallback
     }
+
+    private static func storedRubEraserShape(
+        _ defaults: UserDefaults,
+        key: String
+    ) -> DrawingRubEraserShape {
+        guard let rawValue = defaults.string(forKey: key) else { return .rectangle }
+        return DrawingRubEraserShape(rawValue: rawValue) ?? .rectangle
+    }
+
+    private static func storedRubEraserSize(_ defaults: UserDefaults, key: String) -> CGFloat {
+        guard defaults.object(forKey: key) != nil else { return 32 }
+        return rubEraserSizeCalibration.clamped(CGFloat(defaults.double(forKey: key)))
+    }
+
+    private static func normalizedRubEraserAngle(_ angle: CGFloat) -> CGFloat {
+        guard angle.isFinite else { return 0 }
+        return min(max(angle.rounded(), 0), 180)
+    }
+
+    private static let rubEraserSizeCalibration = DrawingStrokeWidthCalibration(
+        minimumWidth: 8,
+        maximumWidth: 160,
+        step: 2,
+        presets: [16, 32, 48, 72]
+    )
 
     private static func storedWidthMode(
         _ defaults: UserDefaults,
