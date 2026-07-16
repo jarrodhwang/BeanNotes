@@ -1927,6 +1927,36 @@ struct BeanNotesTests {
         #expect(container.activeCanvasView?.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
     }
 
+    @Test func attachmentSelectionWaitsForFingerDoubleTapZoom() throws {
+        let pageView = DrawingCanvasView.PageCanvasView()
+        let attachmentSelection = try #require(pageView.attachmentSelectionGesture)
+
+        let fingerDoubleTap = UITapGestureRecognizer()
+        fingerDoubleTap.numberOfTouchesRequired = 1
+        fingerDoubleTap.numberOfTapsRequired = 2
+
+        let fingerSingleTap = UITapGestureRecognizer()
+        fingerSingleTap.numberOfTouchesRequired = 1
+        fingerSingleTap.numberOfTapsRequired = 1
+
+        let twoFingerDoubleTap = UITapGestureRecognizer()
+        twoFingerDoubleTap.numberOfTouchesRequired = 2
+        twoFingerDoubleTap.numberOfTapsRequired = 2
+
+        #expect(pageView.gestureRecognizer(
+            attachmentSelection,
+            shouldRequireFailureOf: fingerDoubleTap
+        ))
+        #expect(!pageView.gestureRecognizer(
+            attachmentSelection,
+            shouldRequireFailureOf: fingerSingleTap
+        ))
+        #expect(!pageView.gestureRecognizer(
+            attachmentSelection,
+            shouldRequireFailureOf: twoFingerDoubleTap
+        ))
+    }
+
     @Test func drawingZoomPresetsFormatAndClampDetailTargets() {
         #expect(DrawingZoomPreset.allCases.map(\.label) == ["100%", "200%", "300%", "400%", "600%"])
         #expect(DrawingZoomPreset.quickPresets(for: .balanced).map(\.label) == ["100%", "200%", "300%"])
@@ -4313,6 +4343,64 @@ struct BeanNotesTests {
 
         #expect(toolState.selectedTool == .pencil)
         #expect(!toolState.temporaryEraserActive)
+    }
+
+    @Test @MainActor func pencilDoubleTapAppliesCustomToolAfterZoomSettles() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDeferredDoubleTap-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "deferred-double-tap.drawing")
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        coordinator.configurePencilInteraction(on: container)
+
+        defer {
+            container.cancelPendingRenderingWork()
+            container.releaseAllMaterializedPages()
+            coordinator.removePencilInteraction()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.layoutIfNeeded()
+
+        let canvasView = try #require(container.activeCanvasView)
+        #expect(container.interactions.compactMap { $0 as? UIPencilInteraction }.count == 1)
+        #expect(canvasView.interactions.compactMap { $0 as? UIPencilInteraction }.isEmpty)
+
+        parent.toolState.select(.pencil)
+        coordinator.applyCustomToolIfNeeded()
+        #expect(canvasView.tool is PKInkingTool)
+
+        container.zoomSelectedPage(by: 1.2, animated: true)
+        #expect(container.isZoomTransitionActive)
+
+        coordinator.handlePencilDoubleTap()
+        #expect(parent.toolState.selectedTool == .eraser)
+
+        container.scrollViewDidEndZooming(
+            container.scrollView,
+            with: container.contentView,
+            atScale: container.scrollView.maximumZoomScale
+        )
+
+        #expect(!container.isZoomTransitionActive)
+        #expect(canvasView.tool is PKEraserTool)
     }
 
     @Test @MainActor func pixelEraserSizeClampsPersistsAndUpdatesThePencilKitTool() throws {

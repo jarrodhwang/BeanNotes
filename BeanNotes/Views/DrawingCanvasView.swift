@@ -181,6 +181,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         context.coordinator.containerView = containerView
         context.coordinator.viewportRestorationID = viewportRestorationID
+        context.coordinator.configurePencilInteraction(on: containerView)
 
         let twoFingerTap = UITapGestureRecognizer(
             target: context.coordinator,
@@ -245,6 +246,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         context.coordinator.parent = self
+        context.coordinator.configurePencilInteraction(on: containerView)
         context.coordinator.observeToolState(toolState)
         containerView.setTopContentView(context.coordinator.updateTopContent(topContent))
         let selectionUpdate = context.coordinator.reconcileSelectedPageID(selectedPageID)
@@ -325,6 +327,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         coordinator.publishCurrentViewport()
         coordinator.performFinalDrawingFlush(reason: "Editor closed")
         coordinator.hideToolPicker()
+        coordinator.removePencilInteraction()
         containerView.cancelPendingRenderingWork()
         containerView.releaseAllMaterializedPages(flushDrawingsBeforeRelease: false)
         coordinator.containerView = nil
@@ -715,6 +718,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             materializePagesNearViewport(updatesRenderScale: false)
             updateNativeDrawingViewports(force: true)
             updateVisiblePage()
+            // A Pencil double-tap can update the selected tool while UIKit owns the
+            // zoom transform. Reapply it after every settled zoom, including the
+            // page-width stroke mode that does not otherwise publish a new tool.
+            coordinator?.applyCustomToolIfNeeded()
             publishZoomScale(force: true)
             publishViewport(force: true)
         }
@@ -1673,6 +1680,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private var imageViews: [UUID: AttachmentImageContainerView] = [:]
         private let eraserScopeGesture = EraserScopeGestureRecognizer()
+        private(set) var attachmentSelectionGesture: UITapGestureRecognizer?
         private var attachmentEditingOverlay: AttachmentEditingOverlayView?
         private(set) var page: NotePage?
         private(set) var selectedAttachmentID: UUID?
@@ -1888,6 +1896,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             selectAttachmentGesture.cancelsTouchesInView = true
             selectAttachmentGesture.delegate = self
             addGestureRecognizer(selectAttachmentGesture)
+            attachmentSelectionGesture = selectAttachmentGesture
         }
 
         func updateRenderScale(
@@ -2256,6 +2265,22 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             return selectedAttachmentID != nil
                 || topmostEditableAttachment(at: touch.location(in: self)) != nil
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard gestureRecognizer === attachmentSelectionGesture,
+                  let tapGesture = otherGestureRecognizer as? UITapGestureRecognizer else {
+                return false
+            }
+
+            // Attachment selection is a single tap, while the editor owns a
+            // single-finger double tap for detail zoom. Give the double tap priority
+            // so selection cannot recognize after the first touch and cancel zoom.
+            return tapGesture.numberOfTouchesRequired == 1
+                && tapGesture.numberOfTapsRequired > 1
         }
 
         func gestureRecognizer(
@@ -3210,7 +3235,8 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private var canvasPages: [ObjectIdentifier: NotePage] = [:]
         private var canvasPageViews: [ObjectIdentifier: WeakPageCanvasView] = [:]
-        private var pencilInteractions: [ObjectIdentifier: UIPencilInteraction] = [:]
+        private var pencilInteraction: UIPencilInteraction?
+        private weak var pencilInteractionHostView: UIView?
         private var canvasToolSignatures: [ObjectIdentifier: String] = [:]
         private var temporaryEraserCanvasIDs: Set<ObjectIdentifier> = []
         private var lastPublishedCanUndo: Bool?
@@ -3392,6 +3418,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         deinit {
+            removePencilInteraction()
             for observer in lifecycleObservers {
                 NotificationCenter.default.removeObserver(observer)
             }
@@ -3415,6 +3442,32 @@ struct DrawingCanvasView: UIViewRepresentable {
             return controller.view
         }
 
+        func configurePencilInteraction(on view: UIView) {
+            let interaction: UIPencilInteraction
+            if let pencilInteraction {
+                interaction = pencilInteraction
+            } else {
+                interaction = UIPencilInteraction()
+                interaction.delegate = self
+                pencilInteraction = interaction
+            }
+
+            if pencilInteractionHostView !== view {
+                pencilInteractionHostView?.removeInteraction(interaction)
+                view.addInteraction(interaction)
+                pencilInteractionHostView = view
+            }
+
+            interaction.isEnabled = parent.paletteMode == .custom
+        }
+
+        func removePencilInteraction() {
+            guard let pencilInteraction else { return }
+            pencilInteractionHostView?.removeInteraction(pencilInteraction)
+            pencilInteractionHostView = nil
+            self.pencilInteraction = nil
+        }
+
         func register(
             canvasView: PKCanvasView,
             page: NotePage,
@@ -3434,13 +3487,6 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             applyCurrentCustomTool(to: canvasView)
             publishUndoRedoAvailability()
-
-            if pencilInteractions[id] == nil {
-                let pencilInteraction = UIPencilInteraction()
-                pencilInteraction.delegate = self
-                canvasView.addInteraction(pencilInteraction)
-                pencilInteractions[id] = pencilInteraction
-            }
         }
 
         func unregister(
@@ -3466,10 +3512,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasToolSignatures[id] = nil
             temporaryEraserCanvasIDs.remove(id)
 
-            if let pencilInteraction = pencilInteractions[id] {
-                canvasView.removeInteraction(pencilInteraction)
-                pencilInteractions[id] = nil
-            }
         }
 
         func hasPendingDrawingWork(for pageID: UUID) -> Bool {
@@ -4189,10 +4231,26 @@ struct DrawingCanvasView: UIViewRepresentable {
             notifyUndoRedoAvailabilityChanged(canUndo: canUndo, canRedo: canRedo)
         }
 
-        func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
-            guard parent.paletteMode == .custom else { return }
+        func handlePencilDoubleTap() {
+            guard parent.paletteMode == .custom,
+                  pencilInteraction?.isEnabled == true else { return }
             parent.toolState.handleDoubleTap(action: parent.doubleTapAction)
             applyCustomToolIfNeeded()
+        }
+
+        @available(iOS, introduced: 12.1, deprecated: 17.5)
+        func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+            guard interaction === pencilInteraction else { return }
+            handlePencilDoubleTap()
+        }
+
+        @available(iOS 17.5, *)
+        func pencilInteraction(
+            _ interaction: UIPencilInteraction,
+            didReceiveTap _: UIPencilInteraction.Tap
+        ) {
+            guard interaction === pencilInteraction else { return }
+            handlePencilDoubleTap()
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
