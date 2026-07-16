@@ -8,7 +8,6 @@ import UserNotifications
 
 final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = LocalNotificationService()
-    static let folderNotificationsEnabledKey = "folderWelcomeNotificationsEnabled"
     private static let folderWelcomeIdentifierPrefix = "folder-welcome-"
 
     private let center = UNUserNotificationCenter.current()
@@ -26,8 +25,7 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
         let displayName = name.isEmpty ? "New Folder" : name
 
         Task {
-            guard UserDefaults.standard.bool(forKey: Self.folderNotificationsEnabledKey) else { return }
-            guard await notificationsAreEnabled() else { return }
+            guard await requestFolderWelcomeAuthorizationIfNeeded() else { return }
 
             let theme = BeanNotesTheme.currentFromDefaults()
             let content = UNMutableNotificationContent()
@@ -75,14 +73,19 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
         )
     }
 
-    private func notificationsAreEnabled() async -> Bool {
+    private func requestFolderWelcomeAuthorizationIfNeeded() async -> Bool {
         let settings = await center.notificationSettings()
 
         switch settings.authorizationStatus {
         case .authorized, .provisional, .ephemeral:
             return true
         case .notDetermined:
-            return false
+            do {
+                return try await requestAuthorization()
+            } catch {
+                NSLog("BeanNotes could not request folder welcome notifications: \(error)")
+                return false
+            }
         case .denied:
             return false
         @unknown default:

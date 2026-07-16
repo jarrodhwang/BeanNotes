@@ -16,7 +16,7 @@ BeanNotes is a free-form, local-first notes app for iPhone and iPad. It is built
 - Imports for PDFs, images, CSV files, Word documents, slides, and other files.
 - Exports for pages or whole notes as PDF, PNG, or JPEG, plus sharing of original attachments.
 - Share extension support for sending files into BeanNotes.
-- Optional local folder-welcome notifications, requested only when enabled in Settings.
+- Automatic local folder-welcome notifications, requested when a folder is first created.
 - Local SwiftData storage with backup/export support and recovery behavior for damaged stores.
 
 ## Project Shape

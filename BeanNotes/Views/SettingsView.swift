@@ -5,17 +5,13 @@
 
 import SwiftData
 import SwiftUI
-import UIKit
-import UserNotifications
 
 struct SettingsView: View {
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
-    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.defaultTheme.rawValue
-    @AppStorage(LocalNotificationService.folderNotificationsEnabledKey) private var folderNotificationsEnabled = false
     @AppStorage(BeanVisitPolicy.enabledKey) private var beanVisitsEnabled = true
     @AppStorage(BeanVisitPolicy.allowsInterruptionsKey) private var beanVisitsMayInterrupt = false
     @AppStorage(BeanVisitPolicy.focusReminderIntervalKey) private var beanFocusReminderInterval = BeanVisitPolicy.defaultFocusReminderInterval
@@ -49,9 +45,6 @@ struct SettingsView: View {
     @State private var backupStatusMessage: String?
     @State private var backupErrorMessage: String?
     @State private var backupTask: Task<Void, Never>?
-    @State private var notificationAuthorizationStatus = UNAuthorizationStatus.notDetermined
-    @State private var isRequestingNotificationAuthorization = false
-    @State private var notificationErrorMessage: String?
     @State private var beanVisitPreview: BeanVisit?
     @State private var beanVisitPreviewTask: Task<Void, Never>?
 
@@ -79,249 +72,19 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Theme") {
-                    Picker("Theme", selection: $beanNotesThemeRaw) {
-                        ForEach(BeanNotesTheme.allCases) { theme in
-                            Text(theme.label).tag(theme.rawValue)
-                        }
-                    }
+            TabView {
+                themeSettings
+                    .tabItem { Label("Theme", systemImage: "paintpalette") }
 
-                    Picker("Appearance", selection: $appThemeRaw) {
-                        ForEach(AppTheme.allCases) { theme in
-                            Text(theme.label).tag(theme.rawValue)
-                        }
-                    }
+                noteStyleSettings
+                    .tabItem { Label("Note Style", systemImage: "doc.text") }
 
-                    ThemePreviewCard(theme: selectedMoodTheme)
-                        .padding(.vertical, 4)
+                pencilStyleSettings
+                    .tabItem { Label("Pencil Style", systemImage: "pencil") }
 
-                    if selectedMoodTheme == .bean {
-                        Toggle("Show Bean on Note Backgrounds", isOn: $showsBeanArtwork)
-                            .accessibilityIdentifier("settings.beanArtworkToggle")
-
-                        Text(selectedMoodTheme.paperArtworkDescription)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if selectedMoodTheme == .blueberry {
-                        Toggle(selectedMoodTheme.paperArtworkToggleTitle, isOn: $showsBlueberryArtwork)
-                            .accessibilityIdentifier("settings.blueberryArtworkToggle")
-
-                        Text(selectedMoodTheme.paperArtworkDescription)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Notifications") {
-                    Toggle("Folder Welcomes", isOn: $folderNotificationsEnabled)
-                        .disabled(isRequestingNotificationAuthorization)
-
-                    Text(notificationDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if notificationAuthorizationStatus == .denied {
-                        Button("Open System Settings", action: openSystemSettings)
-                    }
-
-                    if let notificationErrorMessage {
-                        Label(notificationErrorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.footnote.weight(.medium))
-                            .foregroundStyle(.primary)
-                    }
-                }
-
-                if selectedMoodTheme == .bean {
-                    mascotVisitSettings(
-                        theme: .bean,
-                        visitsEnabled: $beanVisitsEnabled,
-                        visitsMayInterrupt: $beanVisitsMayInterrupt,
-                        focusReminderInterval: $beanFocusReminderInterval
-                    )
-                } else if selectedMoodTheme == .blueberry {
-                    mascotVisitSettings(
-                        theme: .blueberry,
-                        visitsEnabled: $blueberryVisitsEnabled,
-                        visitsMayInterrupt: $blueberryVisitsMayInterrupt,
-                        focusReminderInterval: $blueberryFocusReminderInterval
-                    )
-                }
-
-                Section("Default Note Background") {
-                    NoteBackgroundPickerView(
-                        styleRaw: $defaultBackgroundStyleRaw,
-                        colorHex: $defaultBackgroundColorHex,
-                        onStyleChanged: { style in
-                            if style == .chalkboard {
-                                paperSizeRaw = PaperSize.chalkboard.rawValue
-                            }
-                        }
-                    )
-                    .padding(.vertical, 6)
-                }
-
-                Section("Pagination") {
-                    Picker("Display", selection: $pageLayoutModeRaw) {
-                        ForEach(NoteEditorPageLayoutMode.allCases) { mode in
-                            Text(mode.label).tag(mode.rawValue)
-                        }
-                    }
-
-                    Text(selectedPageLayoutMode.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text("Pages are never added automatically. Tap the plus button at the bottom to append one.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Default Paper Size") {
-                    Picker("Paper Size", selection: $paperSizeRaw) {
-                        ForEach(PaperSize.allCases) { paperSize in
-                            Text("\(paperSize.label) (\(paperSize.dimensionsLabel))")
-                                .tag(paperSize.rawValue)
-                        }
-
-                        Text("Custom").tag(CustomPaperSize.selectionRawValue)
-                    }
-
-                    if paperSizeRaw == CustomPaperSize.selectionRawValue {
-                        customPaperSizeFields
-                    }
-
-                    Text("Applies to new notes. Existing pages keep their current size.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Storage") {
-                    if let storageUsage {
-                        StorageUsageRow(
-                            title: "Total",
-                            byteCount: storageUsage.totalByteCount,
-                            fileCount: storageUsage.totalFileCount,
-                            isTotal: true
-                        )
-
-                        ForEach(storageUsage.directories) { usage in
-                            StorageUsageRow(
-                                title: usage.directory.settingsLabel,
-                                byteCount: usage.byteCount,
-                                fileCount: usage.fileCount
-                            )
-                        }
-                    } else if isLoadingStorageUsage {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                            Text("Calculating storage")
-                        }
-                    }
-
-                    if let storageMessage {
-                        Text(storageMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let storageErrorMessage {
-                        Text(storageErrorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-
-                    Button {
-                        Task {
-                            await refreshStorageUsage()
-                        }
-                    } label: {
-                        Label("Refresh Usage", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(isLoadingStorageUsage || isCleaningOldExports)
-
-                    Button(role: .destructive) {
-                        isConfirmingExportCleanup = true
-                    } label: {
-                        Label("Clean Up Old Exports", systemImage: "trash")
-                    }
-                    .disabled(isLoadingStorageUsage || isCleaningOldExports || (storageUsage?.usage(for: .exports)?.fileCount ?? 0) == 0)
-
-                    if isCleaningOldExports {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                            Text("Cleaning exports")
-                        }
-                    }
-                }
-
-                Section("Library Backup") {
-                    Button {
-                        exportLibraryBackup()
-                    } label: {
-                        Label("Export .beannotes Backup", systemImage: "externaldrive.badge.timemachine")
-                    }
-                    .disabled(isCreatingBackup)
-
-                    Text("Includes folders, note metadata, drawings, imported files, thumbnails, and exports.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if let backupStatusMessage {
-                        Text(backupStatusMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let backupErrorMessage {
-                        Text(backupErrorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                Section("Apple Pencil") {
-                    Picker("Pen Palette", selection: $penPaletteModeRaw) {
-                        ForEach(PenPaletteMode.allCases) { mode in
-                            Text(mode.label).tag(mode.rawValue)
-                        }
-                    }
-
-                    if selectedPenPaletteMode == .custom {
-                        Picker("Palette Colors", selection: $paletteColorCount) {
-                            ForEach(DrawingPaletteConfiguration.supportedColorCounts, id: \.self) { colorCount in
-                                Text("\(colorCount)").tag(colorCount)
-                            }
-                        }
-                        .accessibilityIdentifier("settings.paletteColorCountPicker")
-
-                        Text("Choose how many colors appear in the custom palette. Hidden colors stay saved when you show fewer.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Picker("Drawing Input", selection: $drawingInputModeRaw) {
-                        ForEach(DrawingInputMode.allCases) { mode in
-                            Text(mode.label).tag(mode.rawValue)
-                        }
-                    }
-
-                    Text(selectedDrawingInputMode.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text("Drawing uses one native PencilKit high-detail canvas at every zoom level.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Picker("Double Tap", selection: $doubleTapRaw) {
-                        ForEach(PencilDoubleTapAction.allCases) { action in
-                            Text(action.label).tag(action.rawValue)
-                        }
-                    }
-                }
+                backupSettings
+                    .tabItem { Label("Backup", systemImage: "externaldrive") }
             }
-            .scrollContentBackground(.hidden)
             .background {
                 BeanNotesPaperBackground(theme: selectedMoodTheme, baseColor: selectedMoodTheme.appBackground)
                     .ignoresSafeArea()
@@ -335,27 +98,12 @@ struct SettingsView: View {
             }
             .task {
                 await refreshStorageUsage()
-                await refreshNotificationAuthorizationStatus()
             }
             .onChange(of: beanNotesThemeRaw) { _, _ in
                 hideBeanVisitPreview(animated: false)
             }
             .onChange(of: paletteColorCount) { _, _ in
                 normalizePaletteColorCountIfNeeded()
-            }
-            .onChange(of: folderNotificationsEnabled) { _, isEnabled in
-                guard isEnabled else { return }
-
-                Task {
-                    await enableFolderNotifications()
-                }
-            }
-            .onChange(of: scenePhase) { _, phase in
-                guard phase == .active else { return }
-
-                Task {
-                    await refreshNotificationAuthorizationStatus()
-                }
             }
             .confirmationDialog(
                 "Clean up exports older than \(oldExportAgeDays) days?",
@@ -395,6 +143,248 @@ struct SettingsView: View {
         .environment(\.beanNotesTheme, selectedMoodTheme)
         .preferredColorScheme(selectedAppTheme.colorScheme)
         .presentationBackground(selectedMoodTheme.appBackground)
+    }
+
+    private var themeSettings: some View {
+        Form {
+            Section("Theme") {
+                Picker("Bean Theme", selection: $beanNotesThemeRaw) {
+                    ForEach(BeanNotesTheme.allCases) { theme in
+                        Text(theme.label).tag(theme.rawValue)
+                    }
+                }
+
+                Picker("Theme", selection: $appThemeRaw) {
+                    ForEach(AppTheme.allCases) { theme in
+                        Text(theme.label).tag(theme.rawValue)
+                    }
+                }
+
+                ThemePreviewCard(theme: selectedMoodTheme)
+                    .padding(.vertical, 4)
+
+                if selectedMoodTheme == .bean {
+                    Toggle("Show Bean on Note Backgrounds", isOn: $showsBeanArtwork)
+                        .accessibilityIdentifier("settings.beanArtworkToggle")
+
+                    Text(selectedMoodTheme.paperArtworkDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if selectedMoodTheme == .blueberry {
+                    Toggle(selectedMoodTheme.paperArtworkToggleTitle, isOn: $showsBlueberryArtwork)
+                        .accessibilityIdentifier("settings.blueberryArtworkToggle")
+
+                    Text(selectedMoodTheme.paperArtworkDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if selectedMoodTheme == .bean {
+                mascotVisitSettings(
+                    theme: .bean,
+                    visitsEnabled: $beanVisitsEnabled,
+                    visitsMayInterrupt: $beanVisitsMayInterrupt,
+                    focusReminderInterval: $beanFocusReminderInterval
+                )
+            } else if selectedMoodTheme == .blueberry {
+                mascotVisitSettings(
+                    theme: .blueberry,
+                    visitsEnabled: $blueberryVisitsEnabled,
+                    visitsMayInterrupt: $blueberryVisitsMayInterrupt,
+                    focusReminderInterval: $blueberryFocusReminderInterval
+                )
+            }
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    private var noteStyleSettings: some View {
+        Form {
+            Section("Default Note Background") {
+                NoteBackgroundPickerView(
+                    styleRaw: $defaultBackgroundStyleRaw,
+                    colorHex: $defaultBackgroundColorHex,
+                    onStyleChanged: { style in
+                        if style == .chalkboard {
+                            paperSizeRaw = PaperSize.chalkboard.rawValue
+                        }
+                    }
+                )
+                .padding(.vertical, 6)
+            }
+
+            Section("Pagination") {
+                Picker("Display", selection: $pageLayoutModeRaw) {
+                    ForEach(NoteEditorPageLayoutMode.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
+
+                Text(selectedPageLayoutMode.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("Pages are never added automatically. Tap the plus button at the bottom to append one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Default Paper Size") {
+                Picker("Paper Size", selection: $paperSizeRaw) {
+                    ForEach(PaperSize.allCases) { paperSize in
+                        Text("\(paperSize.label) (\(paperSize.dimensionsLabel))")
+                            .tag(paperSize.rawValue)
+                    }
+
+                    Text("Custom").tag(CustomPaperSize.selectionRawValue)
+                }
+
+                if paperSizeRaw == CustomPaperSize.selectionRawValue {
+                    customPaperSizeFields
+                }
+
+                Text("Applies to new notes. Existing pages keep their current size.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    private var pencilStyleSettings: some View {
+        Form {
+            Section("Apple Pencil") {
+                Picker("Pen Palette", selection: $penPaletteModeRaw) {
+                    ForEach(PenPaletteMode.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
+
+                if selectedPenPaletteMode == .custom {
+                    Picker("Palette Colors", selection: $paletteColorCount) {
+                        ForEach(DrawingPaletteConfiguration.supportedColorCounts, id: \.self) { colorCount in
+                            Text("\(colorCount)").tag(colorCount)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.paletteColorCountPicker")
+
+                    Text("Choose how many colors appear in the custom palette. Hidden colors stay saved when you show fewer.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Picker("Drawing Input", selection: $drawingInputModeRaw) {
+                    ForEach(DrawingInputMode.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
+
+                Text(selectedDrawingInputMode.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("Drawing uses one native PencilKit high-detail canvas at every zoom level.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Double Tap", selection: $doubleTapRaw) {
+                    ForEach(PencilDoubleTapAction.allCases) { action in
+                        Text(action.label).tag(action.rawValue)
+                    }
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    private var backupSettings: some View {
+        Form {
+            Section("Storage") {
+                if let storageUsage {
+                    StorageUsageRow(
+                        title: "Total",
+                        byteCount: storageUsage.totalByteCount,
+                        fileCount: storageUsage.totalFileCount,
+                        isTotal: true
+                    )
+
+                    ForEach(storageUsage.directories) { usage in
+                        StorageUsageRow(
+                            title: usage.directory.settingsLabel,
+                            byteCount: usage.byteCount,
+                            fileCount: usage.fileCount
+                        )
+                    }
+                } else if isLoadingStorageUsage {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("Calculating storage")
+                    }
+                }
+
+                if let storageMessage {
+                    Text(storageMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let storageErrorMessage {
+                    Text(storageErrorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+
+                Button {
+                    Task {
+                        await refreshStorageUsage()
+                    }
+                } label: {
+                    Label("Refresh Usage", systemImage: "arrow.clockwise")
+                }
+                .disabled(isLoadingStorageUsage || isCleaningOldExports)
+
+                Button(role: .destructive) {
+                    isConfirmingExportCleanup = true
+                } label: {
+                    Label("Clean Up Old Exports", systemImage: "trash")
+                }
+                .disabled(isLoadingStorageUsage || isCleaningOldExports || (storageUsage?.usage(for: .exports)?.fileCount ?? 0) == 0)
+
+                if isCleaningOldExports {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("Cleaning exports")
+                    }
+                }
+            }
+
+            Section("Library Backup") {
+                Button {
+                    exportLibraryBackup()
+                } label: {
+                    Label("Export .beannotes Backup", systemImage: "externaldrive.badge.timemachine")
+                }
+                .disabled(isCreatingBackup)
+
+                Text("Includes folders, note metadata, drawings, imported files, thumbnails, and exports.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let backupStatusMessage {
+                    Text(backupStatusMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let backupErrorMessage {
+                    Text(backupErrorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
     }
 
     @ViewBuilder
@@ -527,73 +517,6 @@ struct SettingsView: View {
 
     private func restorePaletteColorCount() {
         paletteColorCount = DrawingPaletteConfiguration.persistedColorCountForCurrentDevice()
-    }
-
-    private var notificationDescription: String {
-        switch notificationAuthorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            folderNotificationsEnabled
-                ? "BeanNotes will welcome newly created folders with a local notification."
-                : "Turn this on if you want a local notification when a folder is created."
-        case .denied:
-            "Notifications are disabled for BeanNotes in System Settings."
-        case .notDetermined:
-            "This optional alert is requested only when you turn it on."
-        @unknown default:
-            "Notification availability could not be determined."
-        }
-    }
-
-    @MainActor
-    private func enableFolderNotifications() async {
-        guard !isRequestingNotificationAuthorization else { return }
-
-        isRequestingNotificationAuthorization = true
-        notificationErrorMessage = nil
-        defer { isRequestingNotificationAuthorization = false }
-
-        do {
-            let status = await LocalNotificationService.shared.authorizationStatus()
-            let isAuthorized: Bool
-
-            switch status {
-            case .authorized, .provisional, .ephemeral:
-                isAuthorized = true
-            case .notDetermined:
-                isAuthorized = try await LocalNotificationService.shared.requestAuthorization()
-            case .denied:
-                isAuthorized = false
-            @unknown default:
-                isAuthorized = false
-            }
-
-            notificationAuthorizationStatus = await LocalNotificationService.shared.authorizationStatus()
-            guard folderNotificationsEnabled else { return }
-            folderNotificationsEnabled = isAuthorized
-        } catch {
-            folderNotificationsEnabled = false
-            notificationErrorMessage = error.localizedDescription
-            await refreshNotificationAuthorizationStatus()
-        }
-    }
-
-    @MainActor
-    private func refreshNotificationAuthorizationStatus() async {
-        notificationAuthorizationStatus = await LocalNotificationService.shared.authorizationStatus()
-
-        switch notificationAuthorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            break
-        case .denied, .notDetermined:
-            folderNotificationsEnabled = false
-        @unknown default:
-            folderNotificationsEnabled = false
-        }
-    }
-
-    private func openSystemSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
     }
 
     @MainActor

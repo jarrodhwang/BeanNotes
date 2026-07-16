@@ -275,8 +275,8 @@ private extension WelcomeToBeanNotesView.Mode {
                 systemImage: "doc.text"
             ),
             Highlight(
-                title: "Optional folder welcomes",
-                detail: "Turn on folder notifications in Settings when you want Bean to celebrate a new project.",
+                title: "Folder welcomes",
+                detail: "BeanNotes celebrates new folders automatically when notifications are allowed.",
                 systemImage: "bell.badge"
             )
         ]
@@ -301,7 +301,7 @@ private extension WelcomeToBeanNotesView.Mode {
             ),
             Highlight(
                 title: "Blueberry folder welcomes",
-                detail: "Turn on folder notifications in Settings when you want the blueberry crew to celebrate a new project.",
+                detail: "The blueberry crew celebrates new folders automatically when notifications are allowed.",
                 systemImage: "bell.badge"
             )
         ]
