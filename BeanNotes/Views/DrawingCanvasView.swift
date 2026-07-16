@@ -1642,7 +1642,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
             guard trackedTouch == nil else {
                 // A second touch is document navigation, not an erase stroke. Cancel the
-                // custom object transaction before it can remove any whole strokes.
+                // custom object transaction so its live changes are rolled back.
                 interactionChanged?(.cancelled)
                 trackedTouch = nil
                 currentLocation = nil
@@ -2142,6 +2142,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var usesCustomObjectEraser = false
         private var objectEraserPath = ObjectEraserPathAccumulator()
         private var isTrackingObjectEraser = false
+        private var objectEraserInitialDrawing: PKDrawing?
+        private var objectEraserHasChanges = false
         private var laidOutPageBounds: CGRect = .null
         private var activeDrawingViewportRect: CGRect = .null
         private var nativeZoomScale: CGFloat = 1
@@ -2851,7 +2853,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 || otherGestureRecognizer === eraserScopeGesture
         }
 
-        private func handleEraserInteraction(
+        func handleEraserInteraction(
             _ interaction: EraserScopeGestureRecognizer.Interaction
         ) {
             switch interaction {
@@ -2919,8 +2921,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             isTrackingObjectEraser = true
             objectEraserPath.begin(at: location)
+            objectEraserInitialDrawing = canvasView.drawing
+            objectEraserHasChanges = false
             canvasView.becomeFirstResponder()
             objectEraserDidBegin?()
+            eraseObjectsLive(along: [location])
         }
 
         private func appendObjectEraserLocation(_ location: CGPoint, force: Bool = false) {
@@ -2934,9 +2939,16 @@ struct DrawingCanvasView: UIViewRepresentable {
             // points apart by a small fraction of that radius bounds whole-stroke hit-testing
             // work on long gestures. The accumulator retains the touch-down point and final
             // endpoint, so slow movement cannot leave an early part of the sweep behind.
+            guard let previousLocation = objectEraserPath.points.last else { return }
             let diameter = eraserPreviewDiameter ?? EraserScopeView.objectEraserDiameter
             let minimumSpacing = max(diameter / 4, 1)
+            let previousPointCount = objectEraserPath.points.count
             objectEraserPath.append(location, minimumSpacing: minimumSpacing, force: force)
+            guard objectEraserPath.points.count > previousPointCount,
+                  let currentLocation = objectEraserPath.points.last else {
+                return
+            }
+            eraseObjectsLive(along: [previousLocation, currentLocation])
         }
 
         private func finishObjectEraser(committing: Bool) {
@@ -2944,17 +2956,23 @@ struct DrawingCanvasView: UIViewRepresentable {
             defer {
                 isTrackingObjectEraser = false
                 objectEraserPath.reset()
+                objectEraserInitialDrawing = nil
+                objectEraserHasChanges = false
                 objectEraserDidEnd?()
             }
 
-            guard committing,
-                  let diameter = eraserPreviewDiameter,
-                  diameter.isFinite,
-                  diameter > 0 else {
-                return
-            }
+            guard objectEraserHasChanges,
+                  let initialDrawing = objectEraserInitialDrawing else { return }
 
-            eraseObjects(along: objectEraserPath.points, diameter: diameter)
+            if committing {
+                registerObjectEraserUndo(
+                    undoDrawing: initialDrawing,
+                    redoDrawing: canvasView.drawing
+                )
+            } else {
+                canvasView.drawing = initialDrawing
+                objectEraserDrawingChanged?()
+            }
         }
 
         @discardableResult
@@ -2965,29 +2983,63 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             let before = canvasView.drawing
-            let intersected = ObjectEraserHitTester.intersectedStrokeIndexes(
-                in: before.strokes,
-                eraserPath: eraserPath,
-                diameter: diameter
-            )
-            guard !intersected.isEmpty else { return false }
+            guard let after = drawingByErasingObjects(
+                along: eraserPath,
+                diameter: diameter,
+                from: before
+            ) else { return false }
 
-            let after = PKDrawing(
-                strokes: before.strokes.enumerated().compactMap { index, stroke in
-                    intersected.contains(index) ? nil : stroke
-                }
-            )
             replaceObjectEraserDrawing(after, undoDrawing: before)
             return true
         }
 
-        private func replaceObjectEraserDrawing(_ drawing: PKDrawing, undoDrawing: PKDrawing) {
-            canvasView.undoManager?.registerUndo(withTarget: self) { pageView in
-                pageView.replaceObjectEraserDrawing(undoDrawing, undoDrawing: drawing)
+        private func eraseObjectsLive(along eraserPath: [CGPoint]) {
+            guard let diameter = eraserPreviewDiameter,
+                  diameter.isFinite,
+                  diameter > 0,
+                  let drawing = drawingByErasingObjects(
+                    along: eraserPath,
+                    diameter: diameter,
+                    from: canvasView.drawing
+                  ) else {
+                return
             }
-            canvasView.undoManager?.setActionName("Erase")
+
+            canvasView.drawing = drawing
+            objectEraserHasChanges = true
+            objectEraserDrawingChanged?()
+        }
+
+        private func drawingByErasingObjects(
+            along eraserPath: [CGPoint],
+            diameter: CGFloat,
+            from drawing: PKDrawing
+        ) -> PKDrawing? {
+            let intersected = ObjectEraserHitTester.intersectedStrokeIndexes(
+                in: drawing.strokes,
+                eraserPath: eraserPath,
+                diameter: diameter
+            )
+            guard !intersected.isEmpty else { return nil }
+
+            return PKDrawing(
+                strokes: drawing.strokes.enumerated().compactMap { index, stroke in
+                    intersected.contains(index) ? nil : stroke
+                }
+            )
+        }
+
+        private func replaceObjectEraserDrawing(_ drawing: PKDrawing, undoDrawing: PKDrawing) {
+            registerObjectEraserUndo(undoDrawing: undoDrawing, redoDrawing: drawing)
             canvasView.drawing = drawing
             objectEraserDrawingChanged?()
+        }
+
+        private func registerObjectEraserUndo(undoDrawing: PKDrawing, redoDrawing: PKDrawing) {
+            canvasView.undoManager?.registerUndo(withTarget: self) { pageView in
+                pageView.replaceObjectEraserDrawing(undoDrawing, undoDrawing: redoDrawing)
+            }
+            canvasView.undoManager?.setActionName("Erase")
         }
 
         private func restoreDrawingLayerOrder() {

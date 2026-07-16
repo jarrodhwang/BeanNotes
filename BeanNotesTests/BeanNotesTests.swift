@@ -5310,6 +5310,91 @@ struct BeanNotesTests {
         #expect(changeCount == 1)
     }
 
+    @Test @MainActor func customObjectEraserUpdatesDrawingBeforePencilLift() throws {
+        let fixture = try makePageCanvasFixture(name: "LiveObjectEraser")
+        defer { fixture.cleanup() }
+
+        let touchDownStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100)
+        )
+        let movedStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 180),
+            to: CGPoint(x: 180, y: 180)
+        )
+        let retainedStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 260),
+            to: CGPoint(x: 180, y: 260)
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(
+            strokes: [touchDownStroke, movedStroke, retainedStroke]
+        )
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 20,
+            usesCustomObjectEraser: true
+        )
+
+        var beginCount = 0
+        var endCount = 0
+        var changeCount = 0
+        fixture.pageView.objectEraserDidBegin = { beginCount += 1 }
+        fixture.pageView.objectEraserDidEnd = { endCount += 1 }
+        fixture.pageView.objectEraserDrawingChanged = { changeCount += 1 }
+
+        fixture.pageView.handleEraserInteraction(.began(CGPoint(x: 100, y: 100)))
+
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 2)
+        #expect(beginCount == 1)
+        #expect(endCount == 0)
+        #expect(changeCount == 1)
+
+        fixture.pageView.handleEraserInteraction(.moved(CGPoint(x: 100, y: 180)))
+
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+        #expect(
+            fixture.pageView.canvasView.drawing.strokes.first?.renderBounds
+                == retainedStroke.renderBounds
+        )
+        #expect(endCount == 0)
+        #expect(changeCount == 2)
+
+        fixture.pageView.handleEraserInteraction(.ended(CGPoint(x: 100, y: 180)))
+
+        #expect(endCount == 1)
+        #expect(changeCount == 2)
+    }
+
+    @Test @MainActor func cancelledLiveObjectEraseRestoresTheOriginalDrawing() throws {
+        let fixture = try makePageCanvasFixture(name: "CancelledLiveObjectEraser")
+        defer { fixture.cleanup() }
+
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100)
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [stroke])
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 20,
+            usesCustomObjectEraser: true
+        )
+
+        var changeCount = 0
+        fixture.pageView.objectEraserDrawingChanged = { changeCount += 1 }
+        fixture.pageView.handleEraserInteraction(.began(CGPoint(x: 100, y: 100)))
+
+        #expect(fixture.pageView.canvasView.drawing.strokes.isEmpty)
+
+        fixture.pageView.handleEraserInteraction(.cancelled)
+
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+        #expect(
+            fixture.pageView.canvasView.drawing.strokes.first?.renderBounds == stroke.renderBounds
+        )
+        #expect(changeCount == 2)
+    }
+
     @Test @MainActor func strokeWidthCalibrationClampsRoundsAndPersistsPerTool() throws {
         let suiteName = "BeanNotesStrokeWidth-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
