@@ -962,33 +962,48 @@ struct BeanNotesTests {
         #expect(bottomRightFrame == CGRect(x: 412, y: 692, width: 200, height: 100))
     }
 
-    @Test func attachmentEditingResizeIsProportionalAndClamped() {
+    @Test func attachmentEditingResizeUsesEveryBorderProportionallyAndClampsToBounds() {
         let startFrame = CGRect(x: 100, y: 100, width: 240, height: 120)
         let pageSize = CGSize(width: 500, height: 400)
+        let resizeCases: [(AttachmentResizeHandle, CGPoint, CGRect)] = [
+            (.topLeft, CGPoint(x: -60, y: -30), CGRect(x: 40, y: 70, width: 300, height: 150)),
+            (.top, CGPoint(x: 0, y: -30), CGRect(x: 70, y: 70, width: 300, height: 150)),
+            (.topRight, CGPoint(x: 60, y: -30), CGRect(x: 100, y: 70, width: 300, height: 150)),
+            (.right, CGPoint(x: 60, y: 0), CGRect(x: 100, y: 85, width: 300, height: 150)),
+            (.bottomRight, CGPoint(x: 60, y: 30), CGRect(x: 100, y: 100, width: 300, height: 150)),
+            (.bottom, CGPoint(x: 0, y: 30), CGRect(x: 70, y: 100, width: 300, height: 150)),
+            (.bottomLeft, CGPoint(x: -60, y: 30), CGRect(x: 40, y: 100, width: 300, height: 150)),
+            (.left, CGPoint(x: -60, y: 0), CGRect(x: 40, y: 85, width: 300, height: 150))
+        ]
 
-        let proportionalFrame = AttachmentEditingGeometry.resizedFrame(
-            from: startFrame,
-            translation: CGPoint(x: 120, y: 0),
-            pageSize: pageSize
-        )
-        let minimumFrame = AttachmentEditingGeometry.resizedFrame(
+        for (handle, translation, expectedFrame) in resizeCases {
+            let resizedFrame = AttachmentEditingGeometry.resizedFrame(
+                from: startFrame,
+                translation: translation,
+                pageSize: pageSize,
+                handle: handle
+            )
+            #expect(resizedFrame == expectedFrame)
+            #expect(abs(resizedFrame.width / resizedFrame.height - 2) < 0.001)
+        }
+
+        let minimumBottomRightFrame = AttachmentEditingGeometry.resizedFrame(
             from: startFrame,
             translation: CGPoint(x: -1_000, y: -1_000),
-            pageSize: pageSize
+            pageSize: pageSize,
+            handle: .bottomRight
         )
-        let maximumFrame = AttachmentEditingGeometry.resizedFrame(
+        let maximumBottomRightFrame = AttachmentEditingGeometry.resizedFrame(
             from: startFrame,
             translation: CGPoint(x: 1_000, y: 1_000),
-            pageSize: pageSize
+            pageSize: pageSize,
+            handle: .bottomRight
         )
 
-        #expect(proportionalFrame == CGRect(x: 100, y: 100, width: 360, height: 180))
-        #expect(minimumFrame == CGRect(x: 100, y: 100, width: 180, height: 90))
-        #expect(maximumFrame == CGRect(x: 100, y: 100, width: 400, height: 200))
-        #expect(abs(minimumFrame.width / minimumFrame.height - 2) < 0.001)
-        #expect(abs(maximumFrame.width / maximumFrame.height - 2) < 0.001)
-        #expect(maximumFrame.maxX <= pageSize.width)
-        #expect(maximumFrame.maxY <= pageSize.height)
+        #expect(minimumBottomRightFrame == CGRect(x: 100, y: 100, width: 180, height: 90))
+        #expect(maximumBottomRightFrame == CGRect(x: 100, y: 100, width: 400, height: 200))
+        #expect(maximumBottomRightFrame.maxX <= pageSize.width)
+        #expect(maximumBottomRightFrame.maxY <= pageSize.height)
     }
 
     @Test func attachmentImageRenderingAspectFitsAndCenters() {
@@ -2022,21 +2037,21 @@ struct BeanNotesTests {
         #expect(overlay.hitTest(
             CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY),
             with: nil
-        ) == nil)
-        #expect(overlay.hitTest(CGPoint(x: 26, y: 26), with: nil) is UIControl)
+        ) === overlay)
         #expect(overlay.hitTest(
-            CGPoint(x: overlay.bounds.maxX - 26, y: 26),
+            CGPoint(x: -10, y: overlay.bounds.midY),
             with: nil
-        ) is UIControl)
-        #expect(overlay.hitTest(
-            CGPoint(x: overlay.bounds.maxX - 26, y: overlay.bounds.maxY - 26),
-            with: nil
-        ) is UIControl)
-        #expect(overlay.hitTest(
-            CGPoint(x: 26, y: overlay.bounds.maxY - 26),
-            with: nil
-        ) is UIControl)
-        #expect(overlay.editingPanGestureRecognizers.count == 2)
+        ) === overlay)
+        #expect(overlay.resizeHandle(at: CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)) == nil)
+        #expect(overlay.resizeHandle(at: CGPoint(x: 0, y: 0)) == .topLeft)
+        #expect(overlay.resizeHandle(at: CGPoint(x: overlay.bounds.midX, y: 0)) == .top)
+        #expect(overlay.resizeHandle(at: CGPoint(x: overlay.bounds.maxX, y: 0)) == .topRight)
+        #expect(overlay.resizeHandle(at: CGPoint(x: overlay.bounds.maxX, y: overlay.bounds.midY)) == .right)
+        #expect(overlay.resizeHandle(at: CGPoint(x: overlay.bounds.maxX, y: overlay.bounds.maxY)) == .bottomRight)
+        #expect(overlay.resizeHandle(at: CGPoint(x: overlay.bounds.midX, y: overlay.bounds.maxY)) == .bottom)
+        #expect(overlay.resizeHandle(at: CGPoint(x: 0, y: overlay.bounds.maxY)) == .bottomLeft)
+        #expect(overlay.resizeHandle(at: CGPoint(x: 0, y: overlay.bounds.midY)) == .left)
+        #expect(overlay.editingPanGestureRecognizers.count == 1)
         #expect(overlay.editingPanGestureRecognizers.allSatisfy { $0.maximumNumberOfTouches == 1 })
         #expect(overlay.editingPanGestureRecognizers.allSatisfy {
             overlay.gestureRecognizer(
@@ -2049,6 +2064,9 @@ struct BeanNotesTests {
         let deleteButton = try #require(overlay.subviews
             .compactMap { $0 as? UIButton }
             .first { $0.accessibilityLabel == "Delete Behind" })
+        #expect(overlay.subviews.compactMap { $0 as? UIButton }.count == 1)
+        #expect(!overlay.bounds.intersects(deleteButton.frame))
+        #expect(overlay.hitTest(deleteButton.center, with: nil) === deleteButton)
         #expect(deleteButton.accessibilityHint == "Removes the image after confirmation")
         deleteButton.sendActions(for: .touchUpInside)
 
@@ -3224,7 +3242,7 @@ struct BeanNotesTests {
 
         overlay.layoutIfNeeded()
         let controls = overlay.subviews.compactMap { $0 as? UIButton }
-        #expect(controls.count == 4)
+        #expect(controls.count == 1)
         for control in controls {
             let controlCenter = control.convert(
                 CGPoint(x: control.bounds.midX, y: control.bounds.midY),
@@ -3233,15 +3251,19 @@ struct BeanNotesTests {
             #expect(container.contentView.hitTest(controlCenter, with: nil) === control)
         }
 
-        let moveControl = try #require(controls.first { $0.accessibilityLabel == "Move Editable Image" })
-        let resizeControl = try #require(controls.first { $0.accessibilityLabel == "Resize Editable Image" })
-        #expect(moveControl.gestureRecognizers?.contains { $0 is UIPanGestureRecognizer } == true)
-        #expect(resizeControl.gestureRecognizers?.contains { $0 is UIPanGestureRecognizer } == true)
+        let overlayCenter = overlay.convert(
+            CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY),
+            to: container.contentView
+        )
+        #expect(container.contentView.hitTest(overlayCenter, with: nil) === overlay)
+        #expect(overlay.editingPanGestureRecognizers.count == 1)
+        #expect(overlay.resizeHandle(at: CGPoint(x: overlay.bounds.maxX, y: overlay.bounds.midY)) == .right)
 
-        let doneControl = try #require(controls.first {
-            $0.accessibilityLabel == "Finish editing Editable Image"
-        })
-        doneControl.sendActions(for: .touchUpInside)
+        let focusReleasePoint = CGPoint(
+            x: sectionView.frame.minX + 20,
+            y: sectionView.frame.minY + 20
+        )
+        #expect(!container.selectSeamlessAttachment(at: focusReleasePoint))
         #expect(sectionView.selectedAttachmentID == nil)
         #expect(!container.contentView.subviews.contains { $0 is DrawingCanvasView.AttachmentEditingHostView })
 

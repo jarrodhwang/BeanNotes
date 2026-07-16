@@ -34,6 +34,33 @@ enum AttachmentKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum AttachmentResizeHandle: CaseIterable, Hashable {
+    case topLeft
+    case top
+    case topRight
+    case right
+    case bottomRight
+    case bottom
+    case bottomLeft
+    case left
+
+    var movesLeftEdge: Bool {
+        self == .topLeft || self == .left || self == .bottomLeft
+    }
+
+    var movesRightEdge: Bool {
+        self == .topRight || self == .right || self == .bottomRight
+    }
+
+    var movesTopEdge: Bool {
+        self == .topLeft || self == .top || self == .topRight
+    }
+
+    var movesBottomEdge: Bool {
+        self == .bottomLeft || self == .bottom || self == .bottomRight
+    }
+}
+
 enum AttachmentEditingGeometry {
     static let minimumWidth: CGFloat = 120
     static let minimumHeight: CGFloat = 90
@@ -130,33 +157,129 @@ enum AttachmentEditingGeometry {
     static func resizedFrame(
         from startFrame: CGRect,
         translation: CGPoint,
-        pageSize: CGSize
+        pageSize: CGSize,
+        handle: AttachmentResizeHandle
     ) -> CGRect {
         let startFrame = normalizedFrame(startFrame, pageSize: pageSize)
         let pageSize = normalizedPageSize(pageSize)
         let translationX = translation.x.isFinite ? translation.x : 0
         let translationY = translation.y.isFinite ? translation.y : 0
-        let widthScale = (startFrame.width + translationX) / max(startFrame.width, 1)
-        let heightScale = (startFrame.height + translationY) / max(startFrame.height, 1)
-        let proposedScale = abs(widthScale - 1) >= abs(heightScale - 1) ? widthScale : heightScale
-        let maximumScale = min(
-            max(pageSize.width - startFrame.minX, 1) / max(startFrame.width, 1),
-            max(pageSize.height - startFrame.minY, 1) / max(startFrame.height, 1)
-        )
+        let horizontalDelta = handle.movesLeftEdge ? -translationX : translationX
+        let verticalDelta = handle.movesTopEdge ? -translationY : translationY
+        let widthScale = (startFrame.width + horizontalDelta) / max(startFrame.width, 1)
+        let heightScale = (startFrame.height + verticalDelta) / max(startFrame.height, 1)
+        let adjustsWidth = handle.movesLeftEdge || handle.movesRightEdge
+        let adjustsHeight = handle.movesTopEdge || handle.movesBottomEdge
+
+        let proposedScale: CGFloat
+        if adjustsWidth && adjustsHeight {
+            proposedScale = abs(widthScale - 1) >= abs(heightScale - 1)
+                ? widthScale
+                : heightScale
+        } else {
+            proposedScale = adjustsWidth ? widthScale : heightScale
+        }
+
+        // Preserve the image aspect ratio for every edge and corner. Edge drags keep
+        // the opposite edge fixed and grow equally around the perpendicular center.
+        let maximumScale: CGFloat
+        switch handle {
+        case .topLeft:
+            maximumScale = min(
+                startFrame.maxX / startFrame.width,
+                startFrame.maxY / startFrame.height
+            )
+        case .top:
+            maximumScale = min(
+                (2 * min(startFrame.midX, pageSize.width - startFrame.midX)) / startFrame.width,
+                startFrame.maxY / startFrame.height
+            )
+        case .topRight:
+            maximumScale = min(
+                (pageSize.width - startFrame.minX) / startFrame.width,
+                startFrame.maxY / startFrame.height
+            )
+        case .right:
+            maximumScale = min(
+                (pageSize.width - startFrame.minX) / startFrame.width,
+                (2 * min(startFrame.midY, pageSize.height - startFrame.midY)) / startFrame.height
+            )
+        case .bottomRight:
+            maximumScale = min(
+                (pageSize.width - startFrame.minX) / startFrame.width,
+                (pageSize.height - startFrame.minY) / startFrame.height
+            )
+        case .bottom:
+            maximumScale = min(
+                (2 * min(startFrame.midX, pageSize.width - startFrame.midX)) / startFrame.width,
+                (pageSize.height - startFrame.minY) / startFrame.height
+            )
+        case .bottomLeft:
+            maximumScale = min(
+                startFrame.maxX / startFrame.width,
+                (pageSize.height - startFrame.minY) / startFrame.height
+            )
+        case .left:
+            maximumScale = min(
+                startFrame.maxX / startFrame.width,
+                (2 * min(startFrame.midY, pageSize.height - startFrame.midY)) / startFrame.height
+            )
+        }
+
         let requestedMinimumScale = max(
             minimumWidth / max(startFrame.width, 1),
             minimumHeight / max(startFrame.height, 1)
         )
-        let minimumScale = min(requestedMinimumScale, maximumScale)
+        // Never make an existing undersized image jump larger when a resize begins.
+        let minimumScale = min(requestedMinimumScale, 1, maximumScale)
         let resolvedScale = min(max(proposedScale, minimumScale), maximumScale)
-
-        return CGRect(
-            origin: startFrame.origin,
-            size: CGSize(
-                width: startFrame.width * resolvedScale,
-                height: startFrame.height * resolvedScale
-            )
+        let resolvedSize = CGSize(
+            width: startFrame.width * resolvedScale,
+            height: startFrame.height * resolvedScale
         )
+
+        let resolvedOrigin: CGPoint
+        switch handle {
+        case .topLeft:
+            resolvedOrigin = CGPoint(
+                x: startFrame.maxX - resolvedSize.width,
+                y: startFrame.maxY - resolvedSize.height
+            )
+        case .top:
+            resolvedOrigin = CGPoint(
+                x: startFrame.midX - resolvedSize.width / 2,
+                y: startFrame.maxY - resolvedSize.height
+            )
+        case .topRight:
+            resolvedOrigin = CGPoint(
+                x: startFrame.minX,
+                y: startFrame.maxY - resolvedSize.height
+            )
+        case .right:
+            resolvedOrigin = CGPoint(
+                x: startFrame.minX,
+                y: startFrame.midY - resolvedSize.height / 2
+            )
+        case .bottomRight:
+            resolvedOrigin = startFrame.origin
+        case .bottom:
+            resolvedOrigin = CGPoint(
+                x: startFrame.midX - resolvedSize.width / 2,
+                y: startFrame.minY
+            )
+        case .bottomLeft:
+            resolvedOrigin = CGPoint(
+                x: startFrame.maxX - resolvedSize.width,
+                y: startFrame.minY
+            )
+        case .left:
+            resolvedOrigin = CGPoint(
+                x: startFrame.maxX - resolvedSize.width,
+                y: startFrame.midY - resolvedSize.height / 2
+            )
+        }
+
+        return CGRect(origin: resolvedOrigin, size: resolvedSize)
     }
 
     private static func normalizedFrame(_ frame: CGRect, pageSize: CGSize) -> CGRect {

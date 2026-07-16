@@ -4397,19 +4397,19 @@ struct DrawingCanvasView: UIViewRepresentable {
     final class AttachmentEditingOverlayView: UIView, UIGestureRecognizerDelegate {
         private let outerBorderView = UIView()
         private let innerBorderView = UIView()
-        private let moveHandle = UIButton(type: .custom)
-        private let resizeHandle = UIButton(type: .custom)
         private let deleteButton = UIButton(type: .custom)
-        private let doneButton = UIButton(type: .custom)
+        private var resizeIndicators: [AttachmentResizeHandle: UIView] = [:]
         private weak var attachment: Attachment?
         private var pageSize: CGSize = .zero
         private var dragStart: CGRect?
+        private var activeResizeHandle: AttachmentResizeHandle?
         private var resizeStart: CGRect?
         private var frameChanged: ((CGRect) -> Void)?
         private var changeCommitted: (() -> Void)?
         private var deleteRequested: (() -> Void)?
         private var dismiss: (() -> Void)?
         private(set) var editingPanGestureRecognizers: [UIPanGestureRecognizer] = []
+        private let resizeHitWidth: CGFloat = 22
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -4436,13 +4436,35 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.dismiss = dismiss
             updateFrame(attachment.normalizedFrame(for: pageSize), pageSize: pageSize)
 
-            moveHandle.accessibilityLabel = "Move \(attachment.displayName)"
-            moveHandle.accessibilityHint = "Drag to reposition the image on the page"
-            resizeHandle.accessibilityLabel = "Resize \(attachment.displayName)"
-            resizeHandle.accessibilityHint = "Drag to resize the image proportionally"
+            outerBorderView.accessibilityLabel = "Selected \(attachment.displayName)"
+            outerBorderView.accessibilityHint = "Drag the image to move it, or drag an edge or corner to resize it"
+            outerBorderView.accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: "Move left") { [weak self] _ in
+                    self?.nudge(by: CGPoint(x: -8, y: 0)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Move right") { [weak self] _ in
+                    self?.nudge(by: CGPoint(x: 8, y: 0)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Move up") { [weak self] _ in
+                    self?.nudge(by: CGPoint(x: 0, y: -8)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Move down") { [weak self] _ in
+                    self?.nudge(by: CGPoint(x: 0, y: 8)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Increase size") { [weak self] _ in
+                    self?.resize(by: CGPoint(x: 16, y: 16)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Decrease size") { [weak self] _ in
+                    self?.resize(by: CGPoint(x: -16, y: -16)) ?? false
+                },
+                UIAccessibilityCustomAction(name: "Finish editing") { [weak self] _ in
+                    guard let self else { return false }
+                    self.dismiss?()
+                    return true
+                }
+            ]
             deleteButton.accessibilityLabel = "Delete \(attachment.displayName)"
             deleteButton.accessibilityHint = "Removes the image after confirmation"
-            doneButton.accessibilityLabel = "Finish editing \(attachment.displayName)"
         }
 
         func updateFrame(_ frame: CGRect, pageSize: CGSize) {
@@ -4456,34 +4478,53 @@ struct DrawingCanvasView: UIViewRepresentable {
             outerBorderView.frame = bounds
             innerBorderView.frame = bounds.insetBy(dx: 1, dy: 1)
             let controlSize: CGFloat = 44
-            let horizontalInset = min(4, max((bounds.width - controlSize * 2) / 2, 0))
-            let verticalInset = min(4, max((bounds.height - controlSize * 2) / 2, 0))
-            let trailingX = bounds.maxX - horizontalInset - controlSize
-            let bottomY = bounds.maxY - verticalInset - controlSize
-            moveHandle.frame = CGRect(
-                x: horizontalInset,
-                y: verticalInset,
-                width: controlSize,
-                height: controlSize
-            )
-            doneButton.frame = CGRect(
-                x: trailingX,
-                y: verticalInset,
-                width: controlSize,
-                height: controlSize
-            )
-            deleteButton.frame = CGRect(
-                x: horizontalInset,
-                y: bottomY,
-                width: controlSize,
-                height: controlSize
-            )
-            resizeHandle.frame = CGRect(
-                x: trailingX,
-                y: bottomY,
-                width: controlSize,
-                height: controlSize
-            )
+            let controlGap: CGFloat = 8
+            let controlOffset = controlSize + controlGap
+
+            if frame.minY >= controlOffset {
+                deleteButton.frame = CGRect(
+                    x: bounds.maxX - controlSize,
+                    y: -controlOffset,
+                    width: controlSize,
+                    height: controlSize
+                )
+            } else if pageSize.height - frame.maxY >= controlOffset {
+                deleteButton.frame = CGRect(
+                    x: bounds.maxX - controlSize,
+                    y: bounds.maxY + controlGap,
+                    width: controlSize,
+                    height: controlSize
+                )
+            } else if frame.minX >= controlOffset {
+                deleteButton.frame = CGRect(
+                    x: -controlOffset,
+                    y: 0,
+                    width: controlSize,
+                    height: controlSize
+                )
+            } else {
+                deleteButton.frame = CGRect(
+                    x: bounds.maxX + controlGap,
+                    y: 0,
+                    width: controlSize,
+                    height: controlSize
+                )
+            }
+
+            for (handle, indicator) in resizeIndicators {
+                let center = resizeIndicatorCenter(for: handle)
+                let isCorner = handle.movesLeftEdge || handle.movesRightEdge
+                    ? handle.movesTopEdge || handle.movesBottomEdge
+                    : false
+                let indicatorSize = isCorner
+                    ? CGSize(width: 14, height: 14)
+                    : (handle.movesLeftEdge || handle.movesRightEdge
+                        ? CGSize(width: 8, height: 22)
+                        : CGSize(width: 22, height: 8))
+                indicator.bounds = CGRect(origin: .zero, size: indicatorSize)
+                indicator.center = center
+                indicator.layer.cornerRadius = min(indicatorSize.width, indicatorSize.height) / 2
+            }
         }
 
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -4491,14 +4532,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return nil
             }
 
-            let interactiveControls = [moveHandle, resizeHandle, deleteButton, doneButton]
-            guard interactiveControls.contains(where: {
-                $0.frame.contains(point) && !$0.isHidden && $0.alpha > 0.01
-            }) else {
-                return nil
+            if deleteButton.frame.contains(point),
+               !deleteButton.isHidden,
+               deleteButton.alpha > 0.01 {
+                return deleteButton.hitTest(deleteButton.convert(point, from: self), with: event)
             }
 
-            return super.hitTest(point, with: event)
+            let resizeRegion = bounds.insetBy(dx: -resizeHitWidth, dy: -resizeHitWidth)
+            return resizeRegion.contains(point) ? self : nil
         }
 
         private func configureView() {
@@ -4509,6 +4550,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             outerBorderView.backgroundColor = .clear
             outerBorderView.layer.borderWidth = 4
             outerBorderView.layer.borderColor = UIColor.systemBackground.withAlphaComponent(0.92).cgColor
+            outerBorderView.isAccessibilityElement = true
             addSubview(outerBorderView)
 
             innerBorderView.isUserInteractionEnabled = false
@@ -4517,41 +4559,20 @@ struct DrawingCanvasView: UIViewRepresentable {
             innerBorderView.layer.borderColor = UIColor.systemBlue.cgColor
             addSubview(innerBorderView)
 
-            configureHandle(
-                moveHandle,
-                systemImage: "arrow.up.and.down.and.arrow.left.and.right",
-                backgroundColor: .systemBlue
-            )
-            moveHandle.accessibilityCustomActions = [
-                UIAccessibilityCustomAction(name: "Move left") { [weak self] _ in
-                    self?.nudge(by: CGPoint(x: -8, y: 0)) ?? false
-                },
-                UIAccessibilityCustomAction(name: "Move right") { [weak self] _ in
-                    self?.nudge(by: CGPoint(x: 8, y: 0)) ?? false
-                },
-                UIAccessibilityCustomAction(name: "Move up") { [weak self] _ in
-                    self?.nudge(by: CGPoint(x: 0, y: -8)) ?? false
-                },
-                UIAccessibilityCustomAction(name: "Move down") { [weak self] _ in
-                    self?.nudge(by: CGPoint(x: 0, y: 8)) ?? false
-                }
-            ]
-            addSubview(moveHandle)
-
-            configureHandle(
-                resizeHandle,
-                systemImage: "arrow.up.left.and.arrow.down.right",
-                backgroundColor: UIColor.black.withAlphaComponent(0.72)
-            )
-            resizeHandle.accessibilityCustomActions = [
-                UIAccessibilityCustomAction(name: "Increase size") { [weak self] _ in
-                    self?.resize(by: CGPoint(x: 16, y: 16)) ?? false
-                },
-                UIAccessibilityCustomAction(name: "Decrease size") { [weak self] _ in
-                    self?.resize(by: CGPoint(x: -16, y: -16)) ?? false
-                }
-            ]
-            addSubview(resizeHandle)
+            for handle in AttachmentResizeHandle.allCases {
+                let indicator = UIView()
+                indicator.isUserInteractionEnabled = false
+                indicator.isAccessibilityElement = false
+                indicator.backgroundColor = .white
+                indicator.layer.borderWidth = 2
+                indicator.layer.borderColor = UIColor.systemBlue.cgColor
+                indicator.layer.shadowColor = UIColor.black.cgColor
+                indicator.layer.shadowOpacity = 0.16
+                indicator.layer.shadowRadius = 2
+                indicator.layer.shadowOffset = .zero
+                addSubview(indicator)
+                resizeIndicators[handle] = indicator
+            }
 
             configureHandle(
                 deleteButton,
@@ -4561,29 +4582,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             deleteButton.addTarget(self, action: #selector(requestDeletion), for: .touchUpInside)
             addSubview(deleteButton)
 
-            configureHandle(
-                doneButton,
-                systemImage: "checkmark",
-                backgroundColor: UIColor.systemGreen.withAlphaComponent(0.94)
-            )
-            doneButton.addTarget(self, action: #selector(finishEditing), for: .touchUpInside)
-            addSubview(doneButton)
-
-            let moveGesture = UIPanGestureRecognizer(target: self, action: #selector(handleMove(_:)))
-            moveGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-            moveGesture.maximumNumberOfTouches = 1
-            moveGesture.cancelsTouchesInView = false
-            moveGesture.delegate = self
-            moveHandle.addGestureRecognizer(moveGesture)
-            editingPanGestureRecognizers.append(moveGesture)
-
-            let resizeGesture = UIPanGestureRecognizer(target: self, action: #selector(handleResize(_:)))
-            resizeGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-            resizeGesture.maximumNumberOfTouches = 1
-            resizeGesture.cancelsTouchesInView = false
-            resizeGesture.delegate = self
-            resizeHandle.addGestureRecognizer(resizeGesture)
-            editingPanGestureRecognizers.append(resizeGesture)
+            let editingGesture = UIPanGestureRecognizer(target: self, action: #selector(handleEditingPan(_:)))
+            editingGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            editingGesture.maximumNumberOfTouches = 1
+            editingGesture.cancelsTouchesInView = true
+            editingGesture.delegate = self
+            addGestureRecognizer(editingGesture)
+            editingPanGestureRecognizers.append(editingGesture)
         }
 
         private func configureHandle(
@@ -4604,6 +4609,14 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            guard let touchedView = touch.view else { return true }
+            return touchedView !== deleteButton && !touchedView.isDescendant(of: deleteButton)
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
             shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
             guard editingPanGestureRecognizers.contains(where: { $0 === gestureRecognizer }),
@@ -4612,74 +4625,100 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return false
             }
 
-            // Give a selected image's move/resize handles priority over an ancestor
+            // Give direct selected-image editing priority over an ancestor
             // document scroll without ever disabling the document pan recognizer.
             return isDescendant(of: scrollView)
-        }
-
-        @objc private func finishEditing() {
-            dismiss?()
         }
 
         @objc private func requestDeletion() {
             deleteRequested?()
         }
 
-        @objc private func handleMove(_ recognizer: UIPanGestureRecognizer) {
+        @objc private func handleEditingPan(_ recognizer: UIPanGestureRecognizer) {
             guard let attachment else {
                 dragStart = nil
+                activeResizeHandle = nil
+                resizeStart = nil
                 return
             }
 
             switch recognizer.state {
             case .began:
-                dragStart = attachment.normalizedFrame(for: pageSize)
+                let startFrame = attachment.normalizedFrame(for: pageSize)
+                let translation = recognizer.translation(in: self)
+                let location = recognizer.location(in: self)
+                let initialLocation = CGPoint(
+                    x: location.x - translation.x,
+                    y: location.y - translation.y
+                )
+                activeResizeHandle = resizeHandle(at: initialLocation)
+                if activeResizeHandle == nil {
+                    dragStart = startFrame
+                } else {
+                    resizeStart = startFrame
+                }
             case .changed:
-                guard let dragStart else { return }
-                apply(AttachmentEditingGeometry.movedFrame(
-                    from: dragStart,
-                    translation: recognizer.translation(in: superview),
-                    pageSize: pageSize
-                ))
+                let translation = recognizer.translation(in: superview)
+                if let resizeStart, let activeResizeHandle {
+                    apply(AttachmentEditingGeometry.resizedFrame(
+                        from: resizeStart,
+                        translation: translation,
+                        pageSize: pageSize,
+                        handle: activeResizeHandle
+                    ))
+                } else if let dragStart {
+                    apply(AttachmentEditingGeometry.movedFrame(
+                        from: dragStart,
+                        translation: translation,
+                        pageSize: pageSize
+                    ))
+                }
             case .ended:
-                commitChange(startingAt: dragStart)
+                commitChange(startingAt: resizeStart ?? dragStart)
                 dragStart = nil
+                activeResizeHandle = nil
+                resizeStart = nil
             case .cancelled, .failed:
-                if let dragStart {
-                    apply(dragStart)
+                if let startFrame = resizeStart ?? dragStart {
+                    apply(startFrame)
                 }
                 dragStart = nil
+                activeResizeHandle = nil
+                resizeStart = nil
             default:
                 break
             }
         }
 
-        @objc private func handleResize(_ recognizer: UIPanGestureRecognizer) {
-            guard let attachment else {
-                resizeStart = nil
-                return
-            }
+        func resizeHandle(at point: CGPoint) -> AttachmentResizeHandle? {
+            let isNearLeft = point.x <= resizeHitWidth
+            let isNearRight = point.x >= bounds.width - resizeHitWidth
+            let isNearTop = point.y <= resizeHitWidth
+            let isNearBottom = point.y >= bounds.height - resizeHitWidth
 
-            switch recognizer.state {
-            case .began:
-                resizeStart = attachment.normalizedFrame(for: pageSize)
-            case .changed:
-                guard let resizeStart else { return }
-                apply(AttachmentEditingGeometry.resizedFrame(
-                    from: resizeStart,
-                    translation: recognizer.translation(in: superview),
-                    pageSize: pageSize
-                ))
-            case .ended:
-                commitChange(startingAt: resizeStart)
-                resizeStart = nil
-            case .cancelled, .failed:
-                if let resizeStart {
-                    apply(resizeStart)
-                }
-                resizeStart = nil
-            default:
-                break
+            switch (isNearLeft, isNearRight, isNearTop, isNearBottom) {
+            case (true, _, true, _): return .topLeft
+            case (_, true, true, _): return .topRight
+            case (true, _, _, true): return .bottomLeft
+            case (_, true, _, true): return .bottomRight
+            case (_, _, true, _): return .top
+            case (_, true, _, _): return .right
+            case (_, _, _, true): return .bottom
+            case (true, _, _, _): return .left
+            default: return nil
+            }
+        }
+
+        private func resizeIndicatorCenter(for handle: AttachmentResizeHandle) -> CGPoint {
+            switch handle {
+            case .topLeft: return CGPoint(x: bounds.minX, y: bounds.minY)
+            case .top: return CGPoint(x: bounds.midX, y: bounds.minY)
+            case .topRight: return CGPoint(x: bounds.maxX, y: bounds.minY)
+            case .right: return CGPoint(x: bounds.maxX, y: bounds.midY)
+            case .bottomRight: return CGPoint(x: bounds.maxX, y: bounds.maxY)
+            case .bottom: return CGPoint(x: bounds.midX, y: bounds.maxY)
+            case .bottomLeft: return CGPoint(x: bounds.minX, y: bounds.maxY)
+            case .left: return CGPoint(x: bounds.minX, y: bounds.midY)
             }
         }
 
@@ -4701,7 +4740,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             apply(AttachmentEditingGeometry.resizedFrame(
                 from: startFrame,
                 translation: translation,
-                pageSize: pageSize
+                pageSize: pageSize,
+                handle: .bottomRight
             ))
             commitChange(startingAt: startFrame)
             return true
@@ -4714,6 +4754,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             attachment.width = Double(frame.width)
             attachment.height = Double(frame.height)
             self.frame = frame
+            setNeedsLayout()
             frameChanged?(frame)
         }
 
