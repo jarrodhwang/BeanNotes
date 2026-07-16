@@ -60,6 +60,41 @@ struct BeanNotesTests {
         return PKDrawing(strokes: [stroke])
     }
 
+    private func makeTestStroke(
+        from start: CGPoint,
+        to end: CGPoint,
+        width: CGFloat = 6,
+        transform: CGAffineTransform = .identity
+    ) -> PKStroke {
+        let points = [
+            PKStrokePoint(
+                location: start,
+                timeOffset: 0,
+                size: CGSize(width: width, height: width),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            ),
+            PKStrokePoint(
+                location: end,
+                timeOffset: 0.2,
+                size: CGSize(width: width, height: width),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            )
+        ]
+        let path = PKStrokePath(controlPoints: points, creationDate: .distantPast)
+        return PKStroke(
+            ink: PKInk(.pen, color: .black),
+            path: path,
+            transform: transform,
+            mask: nil
+        )
+    }
+
     private func imageContainsDominantRedInk(_ image: UIImage) -> Bool {
         guard let source = image.cgImage else { return false }
 
@@ -4512,31 +4547,40 @@ struct BeanNotesTests {
 
         let firstSession = DrawingToolState(defaults: defaults)
         firstSession.select(.eraser)
+        let nativeRange = PKEraserTool.EraserType.fixedWidthBitmap.validWidthRange
 
-        #expect(firstSession.eraserWidth == 16)
-        #expect(firstSession.eraserWidthPresets == [8, 16, 32, 48])
+        #expect(firstSession.eraserWidth == PKEraserTool.EraserType.fixedWidthBitmap.defaultWidth)
+        #expect(firstSession.eraserWidthCalibration.range == nativeRange)
+        #expect(!firstSession.eraserWidthPresets.isEmpty)
+        #expect(firstSession.eraserWidthPresets.allSatisfy { nativeRange.contains($0) })
 
         let initialSignature = firstSession.pkToolSignature
-        firstSession.applyEraserWidth(31)
-        #expect(firstSession.eraserWidth == 32)
+        let firstSliderIncrement = nativeRange.lowerBound + firstSession.eraserWidthCalibration.step
+        firstSession.applyEraserWidth(firstSliderIncrement)
+        #expect(firstSession.eraserWidth == firstSliderIncrement)
+
+        firstSession.applyEraserWidth(nativeRange.upperBound)
+        #expect(firstSession.eraserWidth == nativeRange.upperBound)
         #expect(firstSession.pkToolSignature != initialSignature)
 
         let pixelEraser = try #require(firstSession.makePKTool() as? PKEraserTool)
-        #expect(pixelEraser.eraserType != .vector)
-        #expect(pixelEraser.width == 32)
+        #expect(pixelEraser.eraserType == .fixedWidthBitmap)
+        #expect(pixelEraser.width == firstSession.eraserWidth)
 
         let restoredSession = DrawingToolState(defaults: defaults)
-        #expect(restoredSession.eraserWidth == 32)
+        #expect(restoredSession.eraserWidth == nativeRange.upperBound)
 
         restoredSession.applyEraserWidth(.infinity)
-        #expect(restoredSession.eraserWidth == 4)
+        #expect(restoredSession.eraserWidth == nativeRange.lowerBound)
 
         restoredSession.selectEraserMode(.object)
         let objectEraser = try #require(restoredSession.makePKTool() as? PKEraserTool)
         #expect(objectEraser.eraserType == .vector)
+        #expect(objectEraser.width == 0)
 
-        restoredSession.applyEraserWidth(31)
-        #expect(restoredSession.eraserWidth == 32)
+        let selectedWidth = restoredSession.eraserWidthCalibration.clamped(nativeRange.upperBound / 2)
+        restoredSession.applyEraserWidth(nativeRange.upperBound / 2)
+        #expect(restoredSession.eraserWidth == selectedWidth)
     }
 
     @Test @MainActor func eraserScopeTracksTheActivePencilKitEraserWidth() throws {
@@ -4544,7 +4588,7 @@ struct BeanNotesTests {
         defer { fixture.cleanup() }
 
         let location = CGPoint(x: 140, y: 220)
-        fixture.pageView.canvasView.tool = PKEraserTool(.bitmap, width: 42)
+        fixture.pageView.canvasView.tool = PKEraserTool(.fixedWidthBitmap, width: 42)
         fixture.pageView.updateEraserScope(at: location)
         #expect(fixture.pageView.eraserScopeView.isHidden)
 
@@ -4574,6 +4618,157 @@ struct BeanNotesTests {
         fixture.pageView.setLiveDrawingActive(false)
         fixture.pageView.updateEraserScope(at: location)
         #expect(fixture.pageView.eraserScopeView.isHidden)
+    }
+
+    @Test @MainActor func customObjectEraserSuppressesNativeVectorInput() throws {
+        let fixture = try makePageCanvasFixture(name: "CustomObjectEraser")
+        defer { fixture.cleanup() }
+
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 32,
+            usesCustomObjectEraser: true
+        )
+
+        #expect(fixture.pageView.isUsingCustomObjectEraser)
+        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+
+        fixture.pageView.setEraserPreviewEnabled(true, diameter: 32)
+
+        #expect(!fixture.pageView.isUsingCustomObjectEraser)
+        #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+    }
+
+    @Test @MainActor func objectEraserHitTestingUsesTheDisplayedCircleBoundary() {
+        let edgeStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 4
+        )
+        let outsideStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 140),
+            to: CGPoint(x: 180, y: 140),
+            width: 4
+        )
+        let transformedStroke = makeTestStroke(
+            from: CGPoint(x: 0, y: 0),
+            to: CGPoint(x: 60, y: 0),
+            width: 4,
+            transform: CGAffineTransform(translationX: 80, y: 80)
+        )
+        let strokes = [edgeStroke, outsideStroke, transformedStroke]
+
+        let edgeHit = DrawingCanvasView.ObjectEraserHitTester.intersectedStrokeIndexes(
+            in: strokes,
+            eraserPath: [CGPoint(x: 100, y: 112)],
+            diameter: 20
+        )
+        #expect(edgeHit == IndexSet(integer: 0))
+
+        let outside = DrawingCanvasView.ObjectEraserHitTester.intersectedStrokeIndexes(
+            in: strokes,
+            eraserPath: [CGPoint(x: 100, y: 112.2)],
+            diameter: 20
+        )
+        #expect(outside.isEmpty)
+
+        let sweptHit = DrawingCanvasView.ObjectEraserHitTester.intersectedStrokeIndexes(
+            in: strokes,
+            eraserPath: [CGPoint(x: 40, y: 80), CGPoint(x: 160, y: 80)],
+            diameter: 20
+        )
+        #expect(sweptHit == IndexSet(integer: 2))
+    }
+
+    @Test @MainActor func objectEraserPathRetainsTouchDownAcrossGradualMovement() {
+        let touchDown = CGPoint(x: 100, y: 116)
+        let finalPoint = CGPoint(x: 106, y: 116)
+        var path = DrawingCanvasView.ObjectEraserPathAccumulator()
+        path.begin(at: touchDown)
+
+        for x in 101...105 {
+            path.append(
+                CGPoint(x: CGFloat(x), y: 116),
+                minimumSpacing: 8
+            )
+        }
+        path.append(finalPoint, minimumSpacing: 8, force: true)
+
+        #expect(path.points == [touchDown, finalPoint])
+
+        let touchDownOnlyStroke = makeTestStroke(
+            from: CGPoint(x: 100, y: 98),
+            to: CGPoint(x: 101, y: 98),
+            width: 4
+        )
+        let intersected = DrawingCanvasView.ObjectEraserHitTester.intersectedStrokeIndexes(
+            in: [touchDownOnlyStroke],
+            eraserPath: path.points,
+            diameter: 32
+        )
+        #expect(intersected == IndexSet(integer: 0))
+    }
+
+    @Test @MainActor func objectEraserIgnoresMaskedOutStrokeGaps() {
+        let unmaskedStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 6
+        )
+        let visibleSegmentsMask = UIBezierPath(ovalIn: CGRect(x: 40, y: 90, width: 20, height: 20))
+        visibleSegmentsMask.append(UIBezierPath(ovalIn: CGRect(x: 140, y: 90, width: 20, height: 20)))
+        let maskedStroke = PKStroke(
+            ink: unmaskedStroke.ink,
+            path: unmaskedStroke.path,
+            transform: unmaskedStroke.transform,
+            mask: visibleSegmentsMask
+        )
+
+        #expect(maskedStroke.maskedPathRanges.count == 2)
+
+        let maskedGap = DrawingCanvasView.ObjectEraserHitTester.intersectedStrokeIndexes(
+            in: [maskedStroke],
+            eraserPath: [CGPoint(x: 100, y: 100)],
+            diameter: 8
+        )
+        #expect(maskedGap.isEmpty)
+
+        let visibleSegment = DrawingCanvasView.ObjectEraserHitTester.intersectedStrokeIndexes(
+            in: [maskedStroke],
+            eraserPath: [CGPoint(x: 50, y: 100)],
+            diameter: 8
+        )
+        #expect(visibleSegment == IndexSet(integer: 0))
+    }
+
+    @Test @MainActor func customObjectEraserRemovesOnlyIntersectingWholeStrokesOnce() throws {
+        let fixture = try makePageCanvasFixture(name: "ObjectEraserCommit")
+        defer { fixture.cleanup() }
+
+        let hitStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100)
+        )
+        let retainedStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 180),
+            to: CGPoint(x: 180, y: 180)
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [hitStroke, retainedStroke])
+
+        var changeCount = 0
+        fixture.pageView.objectEraserDrawingChanged = {
+            changeCount += 1
+        }
+
+        let didErase = fixture.pageView.eraseObjects(
+            along: [CGPoint(x: 100, y: 100)],
+            diameter: 20
+        )
+
+        #expect(didErase)
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+        #expect(fixture.pageView.canvasView.drawing.strokes.first?.renderBounds == retainedStroke.renderBounds)
+        #expect(changeCount == 1)
     }
 
     @Test @MainActor func strokeWidthCalibrationClampsRoundsAndPersistsPerTool() throws {

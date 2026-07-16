@@ -1549,24 +1549,49 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class EraserScopeGestureRecognizer: UIGestureRecognizer {
+        enum Interaction {
+            case began(CGPoint)
+            case moved(CGPoint)
+            case ended(CGPoint)
+            case cancelled
+        }
+
+        private enum InteractionPhase {
+            case began
+            case moved
+            case ended
+        }
+
         weak var coordinateView: UIView?
-        var locationChanged: ((CGPoint?) -> Void)?
+        var interactionChanged: ((Interaction) -> Void)?
         private(set) var currentLocation: CGPoint?
 
         private weak var trackedTouch: UITouch?
 
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-            guard trackedTouch == nil, let touch = touches.first else { return }
+            guard trackedTouch == nil else {
+                // A second touch is document navigation, not an erase stroke. Cancel the
+                // custom object transaction before it can remove any whole strokes.
+                interactionChanged?(.cancelled)
+                trackedTouch = nil
+                currentLocation = nil
+                state = .failed
+                return
+            }
+            guard let touch = touches.first else { return }
             trackedTouch = touch
             state = .began
-            publishLocation(for: touch)
+            publish(.began, for: touch)
         }
 
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
             guard let trackedTouch,
                   touches.contains(where: { $0 === trackedTouch }) else { return }
             state = .changed
-            publishLocation(for: trackedTouch)
+            let samples = event.coalescedTouches(for: trackedTouch) ?? [trackedTouch]
+            for touch in samples {
+                publish(.moved, for: touch)
+            }
         }
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -1578,9 +1603,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         override func reset() {
+            if trackedTouch != nil {
+                interactionChanged?(.cancelled)
+            }
             trackedTouch = nil
             currentLocation = nil
-            locationChanged?(nil)
             super.reset()
         }
 
@@ -1595,20 +1622,363 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func finishIfTracking(_ touches: Set<UITouch>, state finalState: State) {
             guard let trackedTouch,
                   touches.contains(where: { $0 === trackedTouch }) else { return }
-            locationChanged?(nil)
+            switch finalState {
+            case .ended:
+                publish(.ended, for: trackedTouch)
+                state = .ended
+            case .cancelled, .failed:
+                interactionChanged?(.cancelled)
+                state = finalState
+            default:
+                return
+            }
             self.trackedTouch = nil
             currentLocation = nil
-            state = finalState
         }
 
-        private func publishLocation(for touch: UITouch) {
+        private func publish(_ phase: InteractionPhase, for touch: UITouch) {
             guard let coordinateView else {
-                locationChanged?(nil)
+                interactionChanged?(.cancelled)
                 return
             }
             let location = touch.location(in: coordinateView)
             currentLocation = location
-            locationChanged?(location)
+            switch phase {
+            case .began:
+                interactionChanged?(.began(location))
+            case .moved:
+                interactionChanged?(.moved(location))
+            case .ended:
+                interactionChanged?(.ended(location))
+            }
+        }
+    }
+
+    struct ObjectEraserPathAccumulator {
+        private(set) var points: [CGPoint] = []
+
+        mutating func begin(at location: CGPoint) {
+            guard isFinite(location) else {
+                points.removeAll(keepingCapacity: false)
+                return
+            }
+
+            points = [location]
+        }
+
+        mutating func append(
+            _ location: CGPoint,
+            minimumSpacing: CGFloat,
+            force: Bool = false
+        ) {
+            guard isFinite(location) else { return }
+            guard let previous = points.last else {
+                points = [location]
+                return
+            }
+
+            let deltaX = location.x - previous.x
+            let deltaY = location.y - previous.y
+            let distanceSquared = deltaX * deltaX + deltaY * deltaY
+            guard distanceSquared > 0 else { return }
+
+            let spacing = minimumSpacing.isFinite && minimumSpacing > 0 ? minimumSpacing : 0
+            guard force || distanceSquared >= spacing * spacing else { return }
+            points.append(location)
+        }
+
+        mutating func reset() {
+            points.removeAll(keepingCapacity: false)
+        }
+
+        private func isFinite(_ point: CGPoint) -> Bool {
+            point.x.isFinite && point.y.isFinite
+        }
+    }
+
+    enum ObjectEraserHitTester {
+        private static let edgeTolerance: CGFloat = 0.01
+
+        private struct StrokeSample {
+            var location: CGPoint
+            var radius: CGFloat
+        }
+
+        private struct LineSegment {
+            var start: CGPoint
+            var end: CGPoint
+        }
+
+        static func intersectedStrokeIndexes(
+            in strokes: [PKStroke],
+            eraserPath: [CGPoint],
+            diameter: CGFloat
+        ) -> IndexSet {
+            guard diameter.isFinite,
+                  diameter > 0 else {
+                return []
+            }
+
+            let path = eraserPath.filter { $0.x.isFinite && $0.y.isFinite }
+            guard !path.isEmpty else { return [] }
+
+            let radius = diameter / 2
+            let sweepBounds = bounds(of: path, expandedBy: radius + edgeTolerance)
+            let sweepSegments = segments(for: path)
+            var intersected = IndexSet()
+
+            for (index, stroke) in strokes.enumerated() {
+                let expandedStrokeBounds = stroke.renderBounds.insetBy(
+                    dx: -(radius + edgeTolerance),
+                    dy: -(radius + edgeTolerance)
+                )
+                guard expandedStrokeBounds.intersects(sweepBounds) else { continue }
+
+                let samplingDistance = min(max(radius / 4, 1), 3)
+                let sampleRuns = strokeSampleRuns(for: stroke, spacing: samplingDistance)
+                guard strokeIntersectsSweep(
+                    sampleRuns: sampleRuns,
+                    sweepSegments: sweepSegments,
+                    eraserRadius: radius
+                ) else {
+                    continue
+                }
+
+                intersected.insert(index)
+            }
+
+            return intersected
+        }
+
+        private static func strokeSampleRuns(for stroke: PKStroke, spacing: CGFloat) -> [[StrokeSample]] {
+            guard !stroke.path.isEmpty else { return [] }
+
+            let transform = stroke.transform
+            let scale = maximumScale(of: transform)
+            let fullPathRange = 0...CGFloat(stroke.path.count - 1)
+            let ranges = stroke.mask == nil
+                ? [fullPathRange]
+                : stroke.maskedPathRanges.compactMap {
+                    clampedPathRange($0, to: fullPathRange)
+                }
+
+            return ranges.compactMap { range in
+                var samples: [StrokeSample] = []
+                append(
+                    stroke.path.interpolatedPoint(at: range.lowerBound),
+                    transform: transform,
+                    scale: scale,
+                    to: &samples
+                )
+
+                for point in stroke.path.interpolatedPoints(in: range, by: .distance(spacing)) {
+                    append(point, transform: transform, scale: scale, to: &samples)
+                }
+
+                append(
+                    stroke.path.interpolatedPoint(at: range.upperBound),
+                    transform: transform,
+                    scale: scale,
+                    to: &samples
+                )
+
+                return samples.isEmpty ? nil : samples
+            }
+        }
+
+        private static func clampedPathRange(
+            _ range: ClosedRange<CGFloat>,
+            to fullPathRange: ClosedRange<CGFloat>
+        ) -> ClosedRange<CGFloat>? {
+            guard range.lowerBound.isFinite,
+                  range.upperBound.isFinite else {
+                return nil
+            }
+
+            let lowerBound = max(range.lowerBound, fullPathRange.lowerBound)
+            let upperBound = min(range.upperBound, fullPathRange.upperBound)
+            guard lowerBound <= upperBound else { return nil }
+            return lowerBound...upperBound
+        }
+
+        private static func append(
+            _ point: PKStrokePoint,
+            transform: CGAffineTransform,
+            scale: CGFloat,
+            to samples: inout [StrokeSample]
+        ) {
+            let location = point.location.applying(transform)
+            guard isFinite(location) else { return }
+
+            let width = max(point.size.width, point.size.height)
+            let radius = width.isFinite && width > 0 ? width * scale / 2 : 0
+            samples.append(StrokeSample(location: location, radius: radius))
+        }
+
+        private static func strokeIntersectsSweep(
+            sampleRuns: [[StrokeSample]],
+            sweepSegments: [LineSegment],
+            eraserRadius: CGFloat
+        ) -> Bool {
+            for samples in sampleRuns {
+                guard let firstSample = samples.first else { continue }
+
+                if samples.count == 1 {
+                    if sweepSegments.contains(where: { segment in
+                        pointToSegmentDistanceSquared(firstSample.location, segment) <= squared(
+                            eraserRadius + firstSample.radius + edgeTolerance
+                        )
+                    }) {
+                        return true
+                    }
+                    continue
+                }
+
+                for index in samples.indices.dropFirst() {
+                    let previous = samples[index - 1]
+                    let current = samples[index]
+                    let strokeSegment = LineSegment(start: previous.location, end: current.location)
+                    let strokeRadius = max(previous.radius, current.radius)
+
+                    for sweepSegment in sweepSegments {
+                        let threshold = eraserRadius + strokeRadius + edgeTolerance
+                        if segmentToSegmentDistanceSquared(strokeSegment, sweepSegment) <= squared(threshold) {
+                            return true
+                        }
+                    }
+                }
+            }
+
+            return false
+        }
+
+        private static func bounds(of points: [CGPoint], expandedBy inset: CGFloat) -> CGRect {
+            guard let first = points.first else { return .null }
+
+            var minX = first.x
+            var maxX = first.x
+            var minY = first.y
+            var maxY = first.y
+
+            for point in points.dropFirst() {
+                minX = min(minX, point.x)
+                maxX = max(maxX, point.x)
+                minY = min(minY, point.y)
+                maxY = max(maxY, point.y)
+            }
+
+            return CGRect(
+                x: minX - inset,
+                y: minY - inset,
+                width: maxX - minX + inset * 2,
+                height: maxY - minY + inset * 2
+            )
+        }
+
+        private static func segments(for points: [CGPoint]) -> [LineSegment] {
+            guard let first = points.first else { return [] }
+            guard points.count > 1 else {
+                return [LineSegment(start: first, end: first)]
+            }
+
+            return points.indices.dropFirst().map {
+                LineSegment(start: points[$0 - 1], end: points[$0])
+            }
+        }
+
+        private static func maximumScale(of transform: CGAffineTransform) -> CGFloat {
+            let horizontalScale = hypot(transform.a, transform.c)
+            let verticalScale = hypot(transform.b, transform.d)
+            let scale = max(horizontalScale, verticalScale)
+            return scale.isFinite && scale > 0 ? scale : 1
+        }
+
+        private static func isFinite(_ point: CGPoint) -> Bool {
+            point.x.isFinite && point.y.isFinite
+        }
+
+        private static func segmentToSegmentDistanceSquared(
+            _ first: LineSegment,
+            _ second: LineSegment
+        ) -> CGFloat {
+            if segmentsIntersect(first, second) {
+                return 0
+            }
+
+            return min(
+                pointToSegmentDistanceSquared(first.start, second),
+                pointToSegmentDistanceSquared(first.end, second),
+                pointToSegmentDistanceSquared(second.start, first),
+                pointToSegmentDistanceSquared(second.end, first)
+            )
+        }
+
+        private static func pointToSegmentDistanceSquared(
+            _ point: CGPoint,
+            _ segment: LineSegment
+        ) -> CGFloat {
+            let vector = CGPoint(
+                x: segment.end.x - segment.start.x,
+                y: segment.end.y - segment.start.y
+            )
+            let lengthSquared = dot(vector, vector)
+            guard lengthSquared > 0 else {
+                return squaredDistance(point, segment.start)
+            }
+
+            let pointVector = CGPoint(
+                x: point.x - segment.start.x,
+                y: point.y - segment.start.y
+            )
+            let ratio = min(max(dot(pointVector, vector) / lengthSquared, 0), 1)
+            let nearest = CGPoint(
+                x: segment.start.x + vector.x * ratio,
+                y: segment.start.y + vector.y * ratio
+            )
+            return squaredDistance(point, nearest)
+        }
+
+        private static func segmentsIntersect(_ first: LineSegment, _ second: LineSegment) -> Bool {
+            let firstStart = orientation(first.start, first.end, second.start)
+            let firstEnd = orientation(first.start, first.end, second.end)
+            let secondStart = orientation(second.start, second.end, first.start)
+            let secondEnd = orientation(second.start, second.end, first.end)
+
+            if oppositeSides(firstStart, firstEnd), oppositeSides(secondStart, secondEnd) {
+                return true
+            }
+
+            return abs(firstStart) <= edgeTolerance && pointLiesOnSegment(second.start, first)
+                || abs(firstEnd) <= edgeTolerance && pointLiesOnSegment(second.end, first)
+                || abs(secondStart) <= edgeTolerance && pointLiesOnSegment(first.start, second)
+                || abs(secondEnd) <= edgeTolerance && pointLiesOnSegment(first.end, second)
+        }
+
+        private static func orientation(_ start: CGPoint, _ end: CGPoint, _ point: CGPoint) -> CGFloat {
+            (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x)
+        }
+
+        private static func oppositeSides(_ first: CGFloat, _ second: CGFloat) -> Bool {
+            (first < 0 && second > 0) || (first > 0 && second < 0)
+        }
+
+        private static func pointLiesOnSegment(_ point: CGPoint, _ segment: LineSegment) -> Bool {
+            point.x >= min(segment.start.x, segment.end.x) - edgeTolerance
+                && point.x <= max(segment.start.x, segment.end.x) + edgeTolerance
+                && point.y >= min(segment.start.y, segment.end.y) - edgeTolerance
+                && point.y <= max(segment.start.y, segment.end.y) + edgeTolerance
+        }
+
+        private static func dot(_ lhs: CGPoint, _ rhs: CGPoint) -> CGFloat {
+            lhs.x * rhs.x + lhs.y * rhs.y
+        }
+
+        private static func squaredDistance(_ lhs: CGPoint, _ rhs: CGPoint) -> CGFloat {
+            squared(lhs.x - rhs.x) + squared(lhs.y - rhs.y)
+        }
+
+        private static func squared(_ value: CGFloat) -> CGFloat {
+            value * value
         }
     }
 
@@ -1693,13 +2063,24 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var appliedInputMode: DrawingInputMode?
         private var isUsingDrawingTool = false
         private var eraserPreviewDiameter: CGFloat?
+        private var usesCustomObjectEraser = false
+        private var objectEraserPath = ObjectEraserPathAccumulator()
+        private var isTrackingObjectEraser = false
         private var laidOutPageBounds: CGRect = .null
         private var activeDrawingViewportRect: CGRect = .null
         private var nativeZoomScale: CGFloat = 1
         private var pendingNativeViewport: NativeViewportRequest?
 
+        var objectEraserDidBegin: (() -> Void)?
+        var objectEraserDidEnd: (() -> Void)?
+        var objectEraserDrawingChanged: (() -> Void)?
+
         var currentNativeDrawingZoomScale: CGFloat {
             nativeZoomScale
+        }
+
+        var isUsingCustomObjectEraser: Bool {
+            usesCustomObjectEraser
         }
 
         override init(frame: CGRect) {
@@ -1774,9 +2155,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                 ]
             // UIKit can disable a recognizer while resolving competing gestures.
             // Reassert the editable state whenever SwiftUI configures the canvas so
-            // a recycled page cannot remain permanently non-interactive.
+            // a recycled page cannot remain permanently non-interactive. Custom object
+            // erasing owns this recognizer's input while it performs whole-stroke hits.
             canvasView.isUserInteractionEnabled = true
-            canvasView.drawingGestureRecognizer.isEnabled = true
+            canvasView.drawingGestureRecognizer.isEnabled = !usesCustomObjectEraser
             guard canvasView.drawingPolicy != inputMode.drawingPolicy else { return }
             canvasView.drawingPolicy = inputMode.drawingPolicy
         }
@@ -1875,8 +2257,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             drawingViewportView.addSubview(canvasView)
 
             eraserScopeGesture.coordinateView = self
-            eraserScopeGesture.locationChanged = { [weak self] location in
-                self?.updateEraserScope(at: location)
+            eraserScopeGesture.interactionChanged = { [weak self] interaction in
+                self?.handleEraserInteraction(interaction)
             }
             eraserScopeGesture.cancelsTouchesInView = false
             eraserScopeGesture.delaysTouchesBegan = false
@@ -2289,6 +2671,26 @@ struct DrawingCanvasView: UIViewRepresentable {
                 || otherGestureRecognizer === eraserScopeGesture
         }
 
+        private func handleEraserInteraction(
+            _ interaction: EraserScopeGestureRecognizer.Interaction
+        ) {
+            switch interaction {
+            case .began(let location):
+                beginObjectEraser(at: location)
+                updateEraserScope(at: location)
+            case .moved(let location):
+                appendObjectEraserLocation(location)
+                updateEraserScope(at: location)
+            case .ended(let location):
+                appendObjectEraserLocation(location, force: true)
+                finishObjectEraser(committing: true)
+                updateEraserScope(at: nil)
+            case .cancelled:
+                finishObjectEraser(committing: false)
+                updateEraserScope(at: nil)
+            }
+        }
+
         func updateEraserScope(at location: CGPoint?) {
             guard isUsingDrawingTool,
                   let location,
@@ -2304,13 +2706,108 @@ struct DrawingCanvasView: UIViewRepresentable {
             bringSubviewToFront(eraserScopeView)
         }
 
-        func setEraserPreviewEnabled(_ enabled: Bool, diameter: CGFloat? = nil) {
+        func setEraserPreviewEnabled(
+            _ enabled: Bool,
+            diameter: CGFloat? = nil,
+            usesCustomObjectEraser: Bool = false
+        ) {
             eraserPreviewDiameter = diameter
-            guard eraserScopeGesture.isEnabled != enabled else { return }
-            eraserScopeGesture.isEnabled = enabled
+            let shouldUseCustomObjectEraser = enabled && usesCustomObjectEraser
+            if self.usesCustomObjectEraser != shouldUseCustomObjectEraser {
+                if !shouldUseCustomObjectEraser {
+                    finishObjectEraser(committing: false)
+                }
+                self.usesCustomObjectEraser = shouldUseCustomObjectEraser
+            }
+
+            canvasView.drawingGestureRecognizer.isEnabled = !shouldUseCustomObjectEraser
+            if eraserScopeGesture.isEnabled != enabled {
+                eraserScopeGesture.isEnabled = enabled
+            }
             if !enabled {
                 eraserScopeView.hide()
             }
+        }
+
+        private func beginObjectEraser(at location: CGPoint) {
+            guard usesCustomObjectEraser,
+                  location.x.isFinite,
+                  location.y.isFinite,
+                  !isTrackingObjectEraser else {
+                return
+            }
+
+            isTrackingObjectEraser = true
+            objectEraserPath.begin(at: location)
+            canvasView.becomeFirstResponder()
+            objectEraserDidBegin?()
+        }
+
+        private func appendObjectEraserLocation(_ location: CGPoint, force: Bool = false) {
+            guard isTrackingObjectEraser,
+                  location.x.isFinite,
+                  location.y.isFinite else {
+                return
+            }
+
+            // Coalesced Pencil samples can be much denser than the eraser radius. Keeping
+            // points apart by a small fraction of that radius bounds whole-stroke hit-testing
+            // work on long gestures. The accumulator retains the touch-down point and final
+            // endpoint, so slow movement cannot leave an early part of the sweep behind.
+            let diameter = eraserPreviewDiameter ?? EraserScopeView.objectEraserDiameter
+            let minimumSpacing = max(diameter / 4, 1)
+            objectEraserPath.append(location, minimumSpacing: minimumSpacing, force: force)
+        }
+
+        private func finishObjectEraser(committing: Bool) {
+            guard isTrackingObjectEraser else { return }
+            defer {
+                isTrackingObjectEraser = false
+                objectEraserPath.reset()
+                objectEraserDidEnd?()
+            }
+
+            guard committing,
+                  let diameter = eraserPreviewDiameter,
+                  diameter.isFinite,
+                  diameter > 0 else {
+                return
+            }
+
+            eraseObjects(along: objectEraserPath.points, diameter: diameter)
+        }
+
+        @discardableResult
+        func eraseObjects(along eraserPath: [CGPoint], diameter: CGFloat) -> Bool {
+            guard diameter.isFinite,
+                  diameter > 0 else {
+                return false
+            }
+
+            let before = canvasView.drawing
+            let intersected = ObjectEraserHitTester.intersectedStrokeIndexes(
+                in: before.strokes,
+                eraserPath: eraserPath,
+                diameter: diameter
+            )
+            guard !intersected.isEmpty else { return false }
+
+            let after = PKDrawing(
+                strokes: before.strokes.enumerated().compactMap { index, stroke in
+                    intersected.contains(index) ? nil : stroke
+                }
+            )
+            replaceObjectEraserDrawing(after, undoDrawing: before)
+            return true
+        }
+
+        private func replaceObjectEraserDrawing(_ drawing: PKDrawing, undoDrawing: PKDrawing) {
+            canvasView.undoManager?.registerUndo(withTarget: self) { pageView in
+                pageView.replaceObjectEraserDrawing(undoDrawing, undoDrawing: drawing)
+            }
+            canvasView.undoManager?.setActionName("Erase")
+            canvasView.drawing = drawing
+            objectEraserDrawingChanged?()
         }
 
         private func setDocumentPanningEnabled(_ enabled: Bool) {
@@ -3474,6 +3971,18 @@ struct DrawingCanvasView: UIViewRepresentable {
             let id = ObjectIdentifier(canvasView)
             canvasPages[id] = page
             canvasPageViews[id] = WeakPageCanvasView(pageView)
+            pageView?.objectEraserDidBegin = { [weak self, weak canvasView] in
+                guard let self, let canvasView else { return }
+                self.canvasViewDidBeginUsingTool(canvasView)
+            }
+            pageView?.objectEraserDidEnd = { [weak self, weak canvasView] in
+                guard let self, let canvasView else { return }
+                self.canvasViewDidEndUsingTool(canvasView)
+            }
+            pageView?.objectEraserDrawingChanged = { [weak self, weak canvasView] in
+                guard let self, let canvasView else { return }
+                self.canvasViewDrawingDidChange(canvasView)
+            }
 
             if !registeredCanvasIDs.contains(id) {
                 registeredCanvasIDs.insert(id)
@@ -3506,6 +4015,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             activeToolCanvasIDs.remove(id)
             deferredDrawingChangeNotifications.remove(page.id)
             canvasPages[id] = nil
+            canvasPageViews[id]?.value?.objectEraserDidBegin = nil
+            canvasPageViews[id]?.value?.objectEraserDidEnd = nil
+            canvasPageViews[id]?.value?.objectEraserDrawingChanged = nil
             canvasPageViews[id] = nil
             canvasToolSignatures[id] = nil
             temporaryEraserCanvasIDs.remove(id)
@@ -3557,6 +4069,10 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if mode == .applePencil {
                 canvasToolSignatures.removeAll()
+                for (_, canvasView) in containerView?.canvasPagePairs ?? [] {
+                    let id = ObjectIdentifier(canvasView)
+                    canvasPageViews[id]?.value?.setEraserPreviewEnabled(false)
+                }
                 let id = ObjectIdentifier(activeCanvasView)
                 if toolPickerObservedCanvasIDs.insert(id).inserted {
                     toolPicker.addObserver(activeCanvasView)
@@ -3625,10 +4141,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func applyCurrentCustomTool(to canvasView: PKCanvasView) {
             guard parent.paletteMode == .custom else { return }
             let signature = currentCustomToolSignature
-            let id = ObjectIdentifier(canvasView)
-            guard canvasToolSignatures[id] != signature else { return }
-            canvasView.tool = currentCustomTool
-            canvasToolSignatures[id] = signature
+            applyCurrentCustomTool(currentCustomTool, signature: signature, to: canvasView)
         }
 
         private func applyCurrentCustomToolToVisibleCanvases() {
@@ -3658,12 +4171,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard force || canvasToolSignatures[id] != signature else { return }
             canvasView.tool = tool
             canvasToolSignatures[id] = signature
-            let previewDiameter = (tool as? PKEraserTool).map { eraserTool in
+            let eraserTool = tool as? PKEraserTool
+            let previewDiameter = eraserTool.map { eraserTool in
                 eraserTool.width > 0 ? eraserTool.width : parent.toolState.eraserWidth
             }
             canvasPageViews[id]?.value?.setEraserPreviewEnabled(
-                tool is PKEraserTool,
-                diameter: previewDiameter
+                eraserTool != nil,
+                diameter: previewDiameter,
+                usesCustomObjectEraser: eraserTool?.eraserType == .vector
             )
         }
 

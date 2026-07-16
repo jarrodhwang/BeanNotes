@@ -80,8 +80,9 @@ struct DrawingStrokeWidthCalibration: Equatable {
     func clamped(_ width: CGFloat, step: CGFloat) -> CGFloat {
         let bounded = bounded(width)
         guard step > 0 else { return bounded }
+        guard bounded > minimumWidth, bounded < maximumWidth else { return bounded }
 
-        let stepped = (bounded / step).rounded() * step
+        let stepped = minimumWidth + ((bounded - minimumWidth) / step).rounded() * step
         return min(max(stepped, minimumWidth), maximumWidth)
     }
 
@@ -298,7 +299,7 @@ enum DrawingEraserMode: String, CaseIterable, Identifiable {
     var eraserType: PKEraserTool.EraserType {
         switch self {
         case .pixel:
-            .bitmap
+            .fixedWidthBitmap
         case .object:
             .vector
         }
@@ -1098,7 +1099,14 @@ final class DrawingToolState: ObservableObject {
                 )
             )
         case .eraser:
-            PKEraserTool(eraserMode.eraserType, width: eraserWidth)
+            switch eraserMode {
+            case .pixel:
+                PKEraserTool(.fixedWidthBitmap, width: eraserWidth)
+            case .object:
+                // PencilKit's vector eraser has no configurable native width. PageCanvasView
+                // supplies the adjustable whole-stroke hit testing for this mode instead.
+                PKEraserTool(.vector)
+            }
         case .lasso:
             PKLassoTool()
         }
@@ -1155,28 +1163,29 @@ final class DrawingToolState: ObservableObject {
     static func widthCalibration(for tool: DrawingTool) -> DrawingStrokeWidthCalibration {
         switch tool {
         case .pencil:
-            DrawingStrokeWidthCalibration(
+            return DrawingStrokeWidthCalibration(
                 minimumWidth: 1,
                 maximumWidth: 18,
                 step: 0.5,
                 presets: [2, 4, 6, 10]
             )
         case .highlighter:
-            DrawingStrokeWidthCalibration(
+            return DrawingStrokeWidthCalibration(
                 minimumWidth: 4,
                 maximumWidth: 44,
                 step: 1,
                 presets: [8, 14, 22, 32]
             )
         case .eraser:
-            DrawingStrokeWidthCalibration(
-                minimumWidth: 4,
-                maximumWidth: 64,
+            let range = fixedWidthBitmapEraserRange
+            return DrawingStrokeWidthCalibration(
+                minimumWidth: range.lowerBound,
+                maximumWidth: range.upperBound,
                 step: 2,
-                presets: [8, 16, 32, 48]
+                presets: fixedWidthBitmapEraserPresets(in: range)
             )
         case .pen, .lasso:
-            DrawingStrokeWidthCalibration(
+            return DrawingStrokeWidthCalibration(
                 minimumWidth: 0.5,
                 maximumWidth: 24,
                 step: 0.5,
@@ -1244,8 +1253,39 @@ final class DrawingToolState: ObservableObject {
         fallback: CGFloat,
         for tool: DrawingTool
     ) -> CGFloat {
-        guard defaults.object(forKey: key) != nil else { return fallback }
+        guard defaults.object(forKey: key) != nil else {
+            return boundedWidth(fallback, for: tool)
+        }
         return boundedWidth(CGFloat(defaults.double(forKey: key)), for: tool)
+    }
+
+    private static var fixedWidthBitmapEraserRange: ClosedRange<CGFloat> {
+        let range = PKEraserTool.EraserType.fixedWidthBitmap.validWidthRange
+        guard range.lowerBound.isFinite,
+              range.upperBound.isFinite,
+              range.lowerBound > 0,
+              range.lowerBound <= range.upperBound else {
+            return 16...64
+        }
+        return range
+    }
+
+    private static func fixedWidthBitmapEraserPresets(
+        in range: ClosedRange<CGFloat>
+    ) -> [CGFloat] {
+        let preferred: [CGFloat] = [range.lowerBound, 32, 48, 64, range.upperBound]
+        var presets: [CGFloat] = []
+
+        for width in preferred {
+            let bounded = min(max(width, range.lowerBound), range.upperBound)
+            guard !presets.contains(where: { abs($0 - bounded) < 0.01 }) else { continue }
+            presets.append(bounded)
+            if presets.count == 4 {
+                break
+            }
+        }
+
+        return presets
     }
 
     private static func boundedWidth(_ width: CGFloat, for tool: DrawingTool) -> CGFloat {
@@ -1277,7 +1317,7 @@ final class DrawingToolState: ObservableObject {
         case .highlighter:
             10
         case .eraser:
-            16
+            PKEraserTool.EraserType.fixedWidthBitmap.defaultWidth
         case .lasso:
             defaultStrokeWidth(for: .pen)
         }

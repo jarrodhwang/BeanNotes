@@ -321,8 +321,9 @@ struct PenPaletteView: View {
 
     private var eraserWidthPresetControls: some View {
         HStack(spacing: 6) {
-            ForEach(toolState.eraserWidthPresets, id: \.self) { width in
+            ForEach(Array(toolState.eraserWidthPresets.enumerated()), id: \.offset) { index, width in
                 eraserWidthButton(width)
+                    .accessibilityIdentifier("eraser-size-\(index)")
             }
         }
         .accessibilityElement(children: .contain)
