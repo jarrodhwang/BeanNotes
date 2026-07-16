@@ -5395,6 +5395,42 @@ struct BeanNotesTests {
         #expect(changeCount == 2)
     }
 
+    @Test @MainActor func objectEraserUndoDefersDrawingNotificationUntilUndoCompletes() async throws {
+        let fixture = try makePageCanvasFixture(name: "ObjectEraserUndoNotification")
+        defer { fixture.cleanup() }
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let hostViewController = UIViewController()
+        window.rootViewController = hostViewController
+        window.makeKeyAndVisible()
+        hostViewController.view.addSubview(fixture.pageView)
+        fixture.pageView.frame = hostViewController.view.bounds
+        fixture.pageView.layoutIfNeeded()
+        defer { window.isHidden = true }
+
+        let stroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100)
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [stroke])
+        let undoManager = try #require(fixture.pageView.canvasView.undoManager)
+
+        var notificationDuringUndo: Bool?
+        fixture.pageView.objectEraserDrawingChanged = {
+            notificationDuringUndo = fixture.pageView.canvasView.undoManager?.isUndoing == true
+        }
+
+        #expect(fixture.pageView.eraseObjects(along: [CGPoint(x: 100, y: 100)], diameter: 20))
+        notificationDuringUndo = nil
+
+        undoManager.undo()
+
+        #expect(notificationDuringUndo == nil)
+        try await Task.sleep(nanoseconds: 10_000_000)
+        #expect(notificationDuringUndo == false)
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+    }
+
     @Test @MainActor func strokeWidthCalibrationClampsRoundsAndPersistsPerTool() throws {
         let suiteName = "BeanNotesStrokeWidth-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

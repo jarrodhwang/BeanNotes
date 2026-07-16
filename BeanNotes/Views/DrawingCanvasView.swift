@@ -2971,7 +2971,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 )
             } else {
                 canvasView.drawing = initialDrawing
-                objectEraserDrawingChanged?()
+                notifyObjectEraserDrawingChanged()
             }
         }
 
@@ -3007,7 +3007,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             canvasView.drawing = drawing
             objectEraserHasChanges = true
-            objectEraserDrawingChanged?()
+            notifyObjectEraserDrawingChanged()
         }
 
         private func drawingByErasingObjects(
@@ -3032,7 +3032,22 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func replaceObjectEraserDrawing(_ drawing: PKDrawing, undoDrawing: PKDrawing) {
             registerObjectEraserUndo(undoDrawing: undoDrawing, redoDrawing: drawing)
             canvasView.drawing = drawing
-            objectEraserDrawingChanged?()
+            notifyObjectEraserDrawingChanged()
+        }
+
+        private func notifyObjectEraserDrawingChanged() {
+            let undoManager = canvasView.undoManager
+            guard undoManager?.isUndoing == true || undoManager?.isRedoing == true else {
+                objectEraserDrawingChanged?()
+                return
+            }
+
+            // Undo registration is still active while NSUndoManager executes its block. Defer
+            // autosave bookkeeping until that transaction has fully unwound, otherwise a
+            // SwiftUI update can re-enter the coordinator from inside the undo operation.
+            DispatchQueue.main.async { [weak self] in
+                self?.objectEraserDrawingChanged?()
+            }
         }
 
         private func registerObjectEraserUndo(undoDrawing: PKDrawing, redoDrawing: PKDrawing) {
