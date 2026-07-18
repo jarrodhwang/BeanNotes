@@ -204,6 +204,45 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
+    func testPageNavigatorSelectsPagesAndDismissesOutside() throws {
+        app.launch()
+
+        let createNoteButton = app.buttons["Create note"]
+        XCTAssertTrue(createNoteButton.waitForExistence(timeout: 8))
+        createNoteButton.tap()
+
+        let canvas = try hittablePageCanvas()
+        visibleCenterCoordinate(on: canvas).press(forDuration: 0.7)
+
+        let addBelow = app.menuItems["Add Page Below"]
+        XCTAssertTrue(addBelow.waitForExistence(timeout: 4))
+        addBelow.tap()
+        XCTAssertTrue(app.staticTexts["Drawing space added"].waitForExistence(timeout: 4))
+
+        let navigatorButton = app.buttons["Page navigator"]
+        XCTAssertTrue(navigatorButton.waitForExistence(timeout: 4))
+        navigatorButton.tap()
+
+        let navigator = app.otherElements["editor.pageNavigator"]
+        XCTAssertTrue(navigator.waitForExistence(timeout: 4))
+
+        let secondPage = app.buttons["editor.pageNavigator.page.2"]
+        XCTAssertTrue(secondPage.waitForExistence(timeout: 4))
+        secondPage.tap()
+        XCTAssertEqual(secondPage.value as? String, "Selected")
+
+        let firstPage = app.buttons["editor.pageNavigator.page.1"]
+        XCTAssertTrue(firstPage.waitForExistence(timeout: 4))
+        firstPage.tap()
+        XCTAssertEqual(firstPage.value as? String, "Selected")
+
+        let dismissArea = app.buttons["editor.pageNavigator.dismissArea"]
+        XCTAssertTrue(dismissArea.waitForExistence(timeout: 4))
+        dismissArea.tap()
+        XCTAssertFalse(navigator.waitForExistence(timeout: 2))
+    }
+
+    @MainActor
     func testTitleRemainsScreenSpaceWhilePageZooms() throws {
         app.launch()
 

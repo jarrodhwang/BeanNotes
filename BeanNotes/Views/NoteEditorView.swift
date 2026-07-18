@@ -102,14 +102,14 @@ struct NoteEditorView: View {
     @ObservedObject private var editorSession: NoteEditorSession
     @State private var isShowingAttachmentPicker = false
     @State private var isShowingExport = false
-    @State private var isShowingAttachments = false
+    @State private var isShowingPageNavigator = false
+    @State private var isShowingAttachmentManager = false
     @State private var isShowingBackgroundPicker = false
     @State private var isImportingFiles = false
     @State private var isPastingImage = false
     @State private var importProgress: Double?
     @State private var importProgressMessage = "Preparing import..."
     @State private var importTask: Task<Void, Never>?
-    @State private var previewAttachment: Attachment?
     @State private var saveNowSignal = 0
     @State private var exportPreparationSignal = 0
     @State private var pendingExportPreparationID: Int?
@@ -319,6 +319,18 @@ struct NoteEditorView: View {
                 movePages: reorderPages
             )
         }
+        .sheet(isPresented: $isShowingAttachmentManager) {
+            if let page = selectedPage {
+                AttachmentManagerSheet(
+                    attachments: page.attachments,
+                    originalURL: { try? importExportService.originalFileURL(for: $0) },
+                    renameAttachment: renameAttachment(_:to:),
+                    deleteAttachment: deleteAttachment(_:),
+                    toggleLock: toggleAttachmentLock(_:),
+                    setDrawingLayer: setAttachmentDrawingLayer(_:behindDrawing:)
+                )
+            }
+        }
         .sheet(item: $pagePendingMove) { page in
             PageMoveTargetSheet(
                 page: page,
@@ -327,13 +339,6 @@ struct NoteEditorView: View {
                     movePage(page, to: targetNote)
                 }
             )
-        }
-        .sheet(item: $previewAttachment) { attachment in
-            if let url = try? importExportService.originalFileURL(for: attachment) {
-                DocumentPreviewSheet(attachment: attachment, fileURL: url)
-            } else {
-                ContentUnavailableView("Missing file", systemImage: "exclamationmark.triangle")
-            }
         }
         .alert("Delete Image?", isPresented: Binding(
             get: { attachmentPendingDeletion != nil },
@@ -378,80 +383,63 @@ struct NoteEditorView: View {
     private func editor(page: NotePage) -> some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                ZStack(alignment: .trailing) {
-                    DrawingCanvasView(
-                        pages: editorPages,
-                        selectedPageID: selectedPageIDBinding,
-                        toolState: toolState,
-                        paletteMode: penPaletteMode,
-                        inputMode: drawingInputMode,
-                        renderQuality: .ultraFine,
-                        strokeZoomBehavior: strokeZoomBehavior,
-                        pageFlowMode: pageFlowMode,
-                        doubleTapAction: doubleTapAction,
-                        saveNowSignal: saveNowSignal,
-                        exportPreparationSignal: exportPreparationSignal,
-                        fitToPageSignal: fitToPageSignal,
-                        zoomInSignal: zoomInSignal,
-                        zoomOutSignal: zoomOutSignal,
-                        zoomToScaleSignal: zoomToScaleSignal,
-                        zoomTargetScale: zoomTargetScale,
-                        undoSignal: undoSignal,
-                        redoSignal: redoSignal,
-                        toolShortcutSignal: toolShortcutSignal,
-                        attachmentChanged: {
-                            saveEditorChanges("save attachment changes")
-                        },
-                        deleteAttachment: { attachmentPendingDeletion = $0 },
-                        drawingChanged: handleDrawingChanged(pageID:),
-                        saveStarted: markDrawingSaveStarted,
-                        saveSucceeded: markDrawingSaveSucceeded,
-                        saveFailed: { error in
-                            markDrawingSaveFailed()
-                            errorMessage = "BeanNotes could not save the drawing. \(error.localizedDescription)"
-                        },
-                        exportPreparationCompleted: handleExportPreparationCompleted(id:result:),
-                        undoRedoAvailabilityChanged: updateUndoRedoAvailability(canUndo:canRedo:),
-                        zoomScaleChanged: updateZoomScale(_:),
-                        initialViewport: editorSession.viewport,
-                        viewportRestorationID: editorSession.viewportRestorationID,
-                        viewportChanged: { viewport in
-                            editorSession.viewport = viewport
-                        },
-                        finalViewportChanged: { viewport, selectedPageID in
-                            editorSession.recordFinalCanvasState(
-                                viewport: viewport,
-                                selectedPageID: selectedPageID
-                            )
-                        },
-                        selectionRevision: { editorSession.selectionRevision },
-                        canPublishVisiblePageSelection: {
-                            !editorSession.isProgrammaticSelectionProtected
-                        },
-                        userPageSelectionStarted: editorSession.beginUserPageSelection,
-                        pageActionRequested: handlePageContextAction(pageID:action:),
-                        addPageRequested: addPageFromFooter,
-                        topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page)),
-                        theme: beanNotesTheme,
-                        showsBeanArtwork: showsThemeArtwork
-                    )
-                    .ignoresSafeArea(.container, edges: .bottom)
-
-                    if isShowingAttachments {
-                        AttachmentListView(
-                            attachments: page.attachments,
-                            openPreview: { previewAttachment = $0 },
-                            originalURL: { try? importExportService.originalFileURL(for: $0) },
-                            renameAttachment: renameAttachment(_:to:),
-                            deleteAttachment: deleteAttachment(_:),
-                            toggleLock: toggleAttachmentLock(_:),
-                            setDrawingLayer: setAttachmentDrawingLayer(_:behindDrawing:)
+                DrawingCanvasView(
+                    pages: editorPages,
+                    selectedPageID: selectedPageIDBinding,
+                    toolState: toolState,
+                    paletteMode: penPaletteMode,
+                    inputMode: drawingInputMode,
+                    renderQuality: .ultraFine,
+                    strokeZoomBehavior: strokeZoomBehavior,
+                    pageFlowMode: pageFlowMode,
+                    doubleTapAction: doubleTapAction,
+                    saveNowSignal: saveNowSignal,
+                    exportPreparationSignal: exportPreparationSignal,
+                    fitToPageSignal: fitToPageSignal,
+                    zoomInSignal: zoomInSignal,
+                    zoomOutSignal: zoomOutSignal,
+                    zoomToScaleSignal: zoomToScaleSignal,
+                    zoomTargetScale: zoomTargetScale,
+                    undoSignal: undoSignal,
+                    redoSignal: redoSignal,
+                    toolShortcutSignal: toolShortcutSignal,
+                    attachmentChanged: {
+                        saveEditorChanges("save attachment changes")
+                    },
+                    deleteAttachment: { attachmentPendingDeletion = $0 },
+                    drawingChanged: handleDrawingChanged(pageID:),
+                    saveStarted: markDrawingSaveStarted,
+                    saveSucceeded: markDrawingSaveSucceeded,
+                    saveFailed: { error in
+                        markDrawingSaveFailed()
+                        errorMessage = "BeanNotes could not save the drawing. \(error.localizedDescription)"
+                    },
+                    exportPreparationCompleted: handleExportPreparationCompleted(id:result:),
+                    undoRedoAvailabilityChanged: updateUndoRedoAvailability(canUndo:canRedo:),
+                    zoomScaleChanged: updateZoomScale(_:),
+                    initialViewport: editorSession.viewport,
+                    viewportRestorationID: editorSession.viewportRestorationID,
+                    viewportChanged: { viewport in
+                        editorSession.viewport = viewport
+                    },
+                    finalViewportChanged: { viewport, selectedPageID in
+                        editorSession.recordFinalCanvasState(
+                            viewport: viewport,
+                            selectedPageID: selectedPageID
                         )
-                        .frame(width: 340)
-                        .background(.regularMaterial)
-                        .transition(.move(edge: .trailing))
-                    }
-                }
+                    },
+                    selectionRevision: { editorSession.selectionRevision },
+                    canPublishVisiblePageSelection: {
+                        !editorSession.isProgrammaticSelectionProtected
+                    },
+                    userPageSelectionStarted: editorSession.beginUserPageSelection,
+                    pageActionRequested: handlePageContextAction(pageID:action:),
+                    addPageRequested: addPageFromFooter,
+                    topContent: isWorkspaceFocusModeEnabled ? nil : AnyView(editorTitleHeader(page: page)),
+                    theme: beanNotesTheme,
+                    showsBeanArtwork: showsThemeArtwork
+                )
+                .ignoresSafeArea(.container, edges: .bottom)
 
                 if penPaletteMode == .custom {
                     GeometryReader { proxy in
@@ -481,6 +469,11 @@ struct NoteEditorView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
+                if isShowingPageNavigator {
+                    pageNavigatorOverlay
+                        .zIndex(4)
+                        .transition(.opacity)
+                }
             }
         }
         .background {
@@ -514,6 +507,40 @@ struct NoteEditorView: View {
             editorKeyboardShortcuts
         }
         .animation(.snappy(duration: 0.18), value: isWorkspaceFocusModeEnabled)
+    }
+
+    private var pageNavigatorOverlay: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .trailing) {
+                Button {
+                    withAnimation(.snappy) {
+                        isShowingPageNavigator = false
+                    }
+                } label: {
+                    Color.black.opacity(0.08)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close page navigator")
+                .accessibilityIdentifier("editor.pageNavigator.dismissArea")
+
+                PageNavigatorSidebar(
+                    pages: note.sortedPages,
+                    selectedPageID: selectedPageID,
+                    theme: beanNotesTheme,
+                    showsThemeArtwork: showsThemeArtwork,
+                    selectPage: { selectedPageID = $0.id },
+                    dismiss: {
+                        withAnimation(.snappy) {
+                            isShowingPageNavigator = false
+                        }
+                    }
+                )
+                .frame(width: min(340, max(260, proxy.size.width * 0.38)))
+                .transition(.move(edge: .trailing))
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 
     private func editorTitleHeader(page: NotePage) -> some View {
@@ -661,14 +688,13 @@ struct NoteEditorView: View {
             .accessibilityLabel("Add attachment")
 
             Button {
-                withAnimation(.snappy) {
-                    isShowingAttachments.toggle()
-                }
+                togglePageNavigator()
             } label: {
-                Image(systemName: "sidebar.right")
+                Image(systemName: "rectangle.stack")
                     .frame(width: 34, height: 34)
             }
-            .accessibilityLabel("Attachments")
+            .accessibilityLabel("Page navigator")
+            .accessibilityHint("Show page previews and move to another page")
 
             Button(action: prepareExport) {
                 Group {
@@ -1042,6 +1068,12 @@ struct NoteEditorView: View {
             .disabled(note.sortedPages.count < 2)
 
             Button {
+                isShowingAttachmentManager = true
+            } label: {
+                Label("Manage Attachments", systemImage: "paperclip")
+            }
+
+            Button {
                 pagePendingMove = page
             } label: {
                 Label("Move to Note", systemImage: "arrowshape.turn.up.right")
@@ -1150,10 +1182,20 @@ struct NoteEditorView: View {
                 guard !isEditingTitle else { return }
             }
 
-            isShowingAttachments = false
+            isShowingPageNavigator = false
         }
 
         isWorkspaceFocusModeEnabled = enabled
+    }
+
+    private func togglePageNavigator() {
+        if !isShowingPageNavigator {
+            saveNow()
+        }
+
+        withAnimation(.snappy) {
+            isShowingPageNavigator.toggle()
+        }
     }
 
     private var editorKeyboardShortcuts: some View {
@@ -1309,10 +1351,6 @@ struct NoteEditorView: View {
         page?.attachments.removeAll { $0.id == attachment.id }
         modelContext.delete(attachment)
         page?.touch()
-
-        if previewAttachment?.id == attachment.id {
-            previewAttachment = nil
-        }
 
         do {
             try modelContext.save()
@@ -2381,6 +2419,50 @@ private struct PageReorderSheet: View {
                         dismiss()
                     }
                 }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+private struct AttachmentManagerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var attachments: [Attachment]
+    var originalURL: (Attachment) -> URL?
+    var renameAttachment: (Attachment, String) -> Void
+    var deleteAttachment: (Attachment) -> Void
+    var toggleLock: (Attachment) -> Void
+    var setDrawingLayer: (Attachment, Bool) -> Void
+
+    @State private var previewAttachment: Attachment?
+
+    var body: some View {
+        NavigationStack {
+            AttachmentListView(
+                attachments: attachments,
+                openPreview: { previewAttachment = $0 },
+                originalURL: originalURL,
+                renameAttachment: renameAttachment,
+                deleteAttachment: deleteAttachment,
+                toggleLock: toggleLock,
+                setDrawingLayer: setDrawingLayer
+            )
+            .navigationTitle("Attachments")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .sheet(item: $previewAttachment) { attachment in
+            if let url = originalURL(attachment) {
+                DocumentPreviewSheet(attachment: attachment, fileURL: url)
+            } else {
+                ContentUnavailableView("Missing file", systemImage: "exclamationmark.triangle")
             }
         }
         .presentationDetents([.medium, .large])
