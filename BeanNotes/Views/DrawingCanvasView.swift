@@ -2555,229 +2555,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
     }
 
-    /// Tracks a custom highlighter stroke without preventing the document's scroll
-    /// gestures. Pausing after a meaningful drag locks the current stroke to a line.
-    final class HighlighterStraightLineGestureRecognizer: UIGestureRecognizer {
-        struct Sample {
-            var location: CGPoint
-            var timestamp: TimeInterval
-        }
-
-        enum Interaction {
-            case began(Sample)
-            case movedBatch([Sample])
-            case straightened(from: Sample, to: Sample)
-            case endedBatch([Sample])
-            case cancelled
-        }
-
-        weak var coordinateView: UIView?
-        var interactionChanged: ((Interaction) -> Void)?
-
-        private static let minimumStraightLineDistance: CGFloat = 18
-        private static let holdDuration: TimeInterval = 0.38
-
-        private weak var trackedTouch: UITouch?
-        private var startSample: Sample?
-        private var lastSample: Sample?
-        private var holdWorkItem: DispatchWorkItem?
-        private var isStraightLineLocked = false
-
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-            guard trackedTouch == nil else {
-                cancelTracking()
-                state = .failed
-                return
-            }
-            guard let touch = touches.first,
-                  let sample = sample(for: touch) else {
-                return
-            }
-
-            trackedTouch = touch
-            startSample = sample
-            lastSample = sample
-            isStraightLineLocked = false
-            state = .began
-            interactionChanged?(.began(sample))
-        }
-
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-            guard let trackedTouch,
-                  touches.contains(where: { $0 === trackedTouch }) else {
-                return
-            }
-
-            let samples = samples(for: trackedTouch, event: event)
-            guard !samples.isEmpty else { return }
-
-            lastSample = samples.last
-            state = .changed
-            interactionChanged?(.movedBatch(samples))
-            if isStraightLineLocked, let startSample, let lastSample {
-                interactionChanged?(.straightened(from: startSample, to: lastSample))
-            } else {
-                scheduleStraightLineLockIfNeeded()
-            }
-        }
-
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-            finishIfTracking(touches, event: event, finalState: .ended)
-        }
-
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-            finishIfTracking(touches, event: event, finalState: .cancelled)
-        }
-
-        override func reset() {
-            if trackedTouch != nil {
-                cancelTracking()
-            }
-            super.reset()
-        }
-
-        override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
-            false
-        }
-
-        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
-            false
-        }
-
-        private func finishIfTracking(
-            _ touches: Set<UITouch>,
-            event: UIEvent,
-            finalState: State
-        ) {
-            guard let trackedTouch,
-                  touches.contains(where: { $0 === trackedTouch }) else {
-                return
-            }
-
-            let samples = samples(for: trackedTouch, event: event)
-            lastSample = samples.last ?? lastSample
-            holdWorkItem?.cancel()
-            holdWorkItem = nil
-
-            if finalState == .ended {
-                interactionChanged?(.endedBatch(samples))
-                state = .ended
-            } else {
-                interactionChanged?(.cancelled)
-                state = .cancelled
-            }
-
-            self.trackedTouch = nil
-            startSample = nil
-            lastSample = nil
-            isStraightLineLocked = false
-        }
-
-        private func scheduleStraightLineLockIfNeeded() {
-            holdWorkItem?.cancel()
-            holdWorkItem = nil
-
-            guard !isStraightLineLocked,
-                  let startSample,
-                  let lastSample,
-                  hypot(
-                    lastSample.location.x - startSample.location.x,
-                    lastSample.location.y - startSample.location.y
-                  ) >= Self.minimumStraightLineDistance else {
-                return
-            }
-
-            let workItem = DispatchWorkItem { [weak self] in
-                guard let self,
-                      self.trackedTouch != nil,
-                      !self.isStraightLineLocked,
-                      let startSample = self.startSample,
-                      let lastSample = self.lastSample else {
-                    return
-                }
-
-                self.isStraightLineLocked = true
-                self.interactionChanged?(.straightened(from: startSample, to: lastSample))
-            }
-            holdWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDuration, execute: workItem)
-        }
-
-        private func cancelTracking() {
-            holdWorkItem?.cancel()
-            holdWorkItem = nil
-            if trackedTouch != nil {
-                interactionChanged?(.cancelled)
-            }
-            trackedTouch = nil
-            startSample = nil
-            lastSample = nil
-            isStraightLineLocked = false
-        }
-
-        private func samples(for touch: UITouch, event: UIEvent) -> [Sample] {
-            (event.coalescedTouches(for: touch) ?? [touch]).compactMap(sample(for:))
-        }
-
-        private func sample(for touch: UITouch) -> Sample? {
-            guard let coordinateView else { return nil }
-            let location = touch.location(in: coordinateView)
-            guard location.x.isFinite, location.y.isFinite else { return nil }
-            return Sample(location: location, timestamp: touch.timestamp)
-        }
-    }
-
-    enum HighlighterStrokeProcessor {
-        static func stroke(
-            through samples: [HighlighterStraightLineGestureRecognizer.Sample],
-            ink: PKInk,
-            width: CGFloat
-        ) -> PKStroke? {
-            let validWidth = width.isFinite && width > 0 ? width : 1
-            let validSamples = samples.filter {
-                $0.location.x.isFinite && $0.location.y.isFinite && $0.timestamp.isFinite
-            }
-            guard let first = validSamples.first else { return nil }
-
-            var previousTimeOffset: TimeInterval = 0
-            let points = validSamples.enumerated().map { index, sample in
-                let rawTimeOffset = index == 0 ? 0 : sample.timestamp - first.timestamp
-                let timeOffset = max(rawTimeOffset.isFinite ? rawTimeOffset : previousTimeOffset, previousTimeOffset)
-                previousTimeOffset = timeOffset
-                return PKStrokePoint(
-                    location: sample.location,
-                    timeOffset: timeOffset,
-                    size: CGSize(width: validWidth, height: validWidth),
-                    opacity: 1,
-                    force: 1,
-                    azimuth: 0,
-                    altitude: .pi / 2
-                )
-            }
-
-            guard points.count > 1 else { return nil }
-            return PKStroke(
-                ink: ink,
-                path: PKStrokePath(controlPoints: points, creationDate: Date())
-            )
-        }
-
-        static func straightStroke(
-            from start: HighlighterStraightLineGestureRecognizer.Sample,
-            to end: HighlighterStraightLineGestureRecognizer.Sample,
-            ink: PKInk,
-            width: CGFloat
-        ) -> PKStroke? {
-            stroke(through: [start, end], ink: ink, width: width)
-        }
-
-        static func inserting(_ highlighterStroke: PKStroke, into drawing: PKDrawing) -> PKDrawing {
-            let existingHighlighters = drawing.strokes.filter { $0.ink.inkType == .marker }
-            let otherInk = drawing.strokes.filter { $0.ink.inkType != .marker }
-            return PKDrawing(strokes: existingHighlighters + [highlighterStroke] + otherInk)
-        }
-    }
-
     struct ObjectEraserPathAccumulator {
         private(set) var points: [CGPoint] = []
 
@@ -3627,86 +3404,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
     }
 
-    final class HighlighterStrokePreviewView: UIView {
-        private let shapeLayer = CAShapeLayer()
-
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            configureView()
-        }
-
-        required init?(coder: NSCoder) {
-            super.init(coder: coder)
-            configureView()
-        }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            shapeLayer.frame = bounds
-        }
-
-        func show(
-            samples: [HighlighterStraightLineGestureRecognizer.Sample],
-            ink: PKInk,
-            width: CGFloat
-        ) {
-            guard samples.count > 1 else {
-                hide()
-                return
-            }
-
-            let path = UIBezierPath()
-            path.move(to: samples[0].location)
-            for sample in samples.dropFirst() {
-                path.addLine(to: sample.location)
-            }
-            apply(path: path, ink: ink, width: width)
-        }
-
-        func showStraightLine(
-            from start: HighlighterStraightLineGestureRecognizer.Sample,
-            to end: HighlighterStraightLineGestureRecognizer.Sample,
-            ink: PKInk,
-            width: CGFloat
-        ) {
-            let path = UIBezierPath()
-            path.move(to: start.location)
-            path.addLine(to: end.location)
-            apply(path: path, ink: ink, width: width)
-        }
-
-        func hide() {
-            isHidden = true
-            shapeLayer.path = nil
-        }
-
-        private func apply(path: UIBezierPath, ink: PKInk, width: CGFloat) {
-            guard width.isFinite, width > 0 else {
-                hide()
-                return
-            }
-
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            shapeLayer.path = path.cgPath
-            shapeLayer.strokeColor = ink.color.cgColor
-            shapeLayer.lineWidth = width
-            isHidden = false
-            CATransaction.commit()
-        }
-
-        private func configureView() {
-            isHidden = true
-            isUserInteractionEnabled = false
-            isAccessibilityElement = false
-            backgroundColor = .clear
-            shapeLayer.fillColor = nil
-            shapeLayer.lineCap = .round
-            shapeLayer.lineJoin = .round
-            layer.addSublayer(shapeLayer)
-        }
-    }
-
     final class EraserScopeView: UIView {
         static let objectEraserDiameter: CGFloat = 12
         private let shapeLayer = CAShapeLayer()
@@ -3808,13 +3505,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         // PencilKit must retain its responder actions so UIKit can build a valid
         // edit-menu configuration after an ink or palette interaction.
         let canvasView = PKCanvasView(frame: .zero)
-        let highlighterStrokePreviewView = HighlighterStrokePreviewView(frame: .zero)
         let foregroundImageContainerView = UIView(frame: .zero)
         let eraserScopeView = EraserScopeView(frame: .zero)
 
         private var imageViews: [UUID: AttachmentImageContainerView] = [:]
         private let eraserScopeGesture = EraserScopeGestureRecognizer()
-        private let highlighterStraightLineGesture = HighlighterStraightLineGestureRecognizer()
         private(set) var attachmentSelectionGesture: UITapGestureRecognizer?
         private var attachmentEditingOverlay: AttachmentEditingOverlayView?
         private var attachmentEditingHostView: AttachmentEditingHostView?
@@ -3847,11 +3542,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var eraserPreviewDiameter: CGFloat?
         private var usesCustomObjectEraser = false
         private var rubEraserConfiguration: RubEraserConfiguration?
-        private var usesCustomHighlighterInput = false
-        private var highlighterSamples: [HighlighterStraightLineGestureRecognizer.Sample] = []
-        private var highlighterInk: PKInk?
-        private var highlighterWidth: CGFloat?
-        private var highlighterUsesStraightLine = false
         private var objectEraserPath = ObjectEraserPathAccumulator()
         private var objectEraserPendingPath: [CGPoint] = []
         private var objectEraserPendingTravelDistance: CGFloat = 0
@@ -3870,9 +3560,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         var objectEraserDidBegin: (() -> Void)?
         var objectEraserDidEnd: (() -> Void)?
         var objectEraserDrawingChanged: (() -> Void)?
-        var highlighterDidBegin: (() -> Void)?
-        var highlighterDidEnd: (() -> Void)?
-        var highlighterDrawingChanged: (() -> Void)?
 
         var currentNativeDrawingZoomScale: CGFloat {
             nativeZoomScale
@@ -3893,17 +3580,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         var hasActiveDrawingGesture: Bool {
             [
                 canvasView.drawingGestureRecognizer.state,
-                eraserScopeGesture.state,
-                highlighterStraightLineGesture.state
+                eraserScopeGesture.state
             ].contains { $0 == .began || $0 == .changed }
         }
 
         private var usesCustomEraserInput: Bool {
             usesCustomObjectEraser || rubEraserConfiguration != nil
-        }
-
-        private var usesCustomDrawingInput: Bool {
-            usesCustomEraserInput || usesCustomHighlighterInput
         }
 
         var consumesBlankCanvasTaps: Bool {
@@ -3913,9 +3595,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         var allowsPageActionLongPress: Bool {
-            !isCaptureInteractionEnabled
-                && !usesCustomHighlighterInput
-                && !(canvasView.tool is PKLassoTool)
+            !isCaptureInteractionEnabled && !(canvasView.tool is PKLassoTool)
         }
 
         override init(frame: CGRect) {
@@ -3981,7 +3661,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             behindImageContainerView.isHidden = false
             foregroundImageContainerView.isHidden = false
             attachmentSelectionGesture?.isEnabled = true
-            updateDrawingInteractionRecognizers()
+            pageActionLongPressGesture?.isEnabled = true
 
             applyInputMode(inputMode)
             canvasView.isUserInteractionEnabled = drawingEnabled && !isDrawingLoadBlocked
@@ -4102,18 +3782,16 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func applyInputMode(_ inputMode: DrawingInputMode) {
             appliedInputMode = inputMode
-            let allowedTouchTypes = inputMode == .pencilOnly
+            eraserScopeGesture.allowedTouchTypes = inputMode == .pencilOnly
                 ? [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
                 : [
                     NSNumber(value: UITouch.TouchType.pencil.rawValue),
                     NSNumber(value: UITouch.TouchType.direct.rawValue)
                 ]
-            eraserScopeGesture.allowedTouchTypes = allowedTouchTypes
-            highlighterStraightLineGesture.allowedTouchTypes = allowedTouchTypes
             // UIKit can disable a recognizer while resolving competing gestures.
             // Reassert the editable state whenever SwiftUI configures the canvas so
-            // a recycled page cannot remain permanently non-interactive. Custom ink
-            // tools own this recognizer's input while they render their own preview.
+            // a recycled page cannot remain permanently non-interactive. Custom
+            // erasing owns this recognizer's input while it performs boundary-matched hits.
             canvasView.isUserInteractionEnabled = isDrawingSurfaceEnabled && !isDrawingLoadBlocked
             updateDrawingInteractionRecognizers()
             guard canvasView.drawingPolicy != inputMode.drawingPolicy else { return }
@@ -4135,7 +3813,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 dismissNativeCanvasEditMenus()
             }
             attachmentSelectionGesture?.isEnabled = allowsAttachmentSelection && !enabled
-            updateDrawingInteractionRecognizers()
+            pageActionLongPressGesture?.isEnabled = !enabled
+            eraserScopeGesture.isEnabled = !enabled
+            canvasView.drawingGestureRecognizer.isEnabled = !enabled && !usesCustomEraserInput
         }
 
         func setImageLoadingEnabled(_ enabled: Bool) {
@@ -4175,7 +3855,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             if laidOutPageBounds != pageBounds {
                 backgroundView.frame = pageBounds
                 behindImageContainerView.frame = pageBounds
-                highlighterStrokePreviewView.frame = pageBounds
                 foregroundImageContainerView.frame = pageBounds
                 layer.shadowPath = UIBezierPath(rect: pageBounds).cgPath
                 laidOutPageBounds = pageBounds
@@ -4269,9 +3948,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             drawingViewportView.isHidden = true
             addSubview(drawingViewportView)
 
-            highlighterStrokePreviewView.backgroundColor = .clear
-            addSubview(highlighterStrokePreviewView)
-
             foregroundImageContainerView.backgroundColor = .clear
             foregroundImageContainerView.clipsToBounds = true
             foregroundImageContainerView.isUserInteractionEnabled = false
@@ -4305,17 +3981,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             eraserScopeGesture.delegate = self
             canvasView.addGestureRecognizer(eraserScopeGesture)
 
-            highlighterStraightLineGesture.coordinateView = self
-            highlighterStraightLineGesture.interactionChanged = { [weak self] interaction in
-                self?.handleHighlighterInteraction(interaction)
-            }
-            highlighterStraightLineGesture.cancelsTouchesInView = false
-            highlighterStraightLineGesture.delaysTouchesBegan = false
-            highlighterStraightLineGesture.delaysTouchesEnded = false
-            highlighterStraightLineGesture.delegate = self
-            highlighterStraightLineGesture.isEnabled = false
-            canvasView.addGestureRecognizer(highlighterStraightLineGesture)
-
             addSubview(eraserScopeView)
 
             let selectAttachmentGesture = UITapGestureRecognizer(
@@ -4345,7 +4010,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             // from movement, while Pencil input bypasses this direct-touch gesture.
             canvasView.drawingGestureRecognizer.require(toFail: pageLongPress)
             eraserScopeGesture.require(toFail: pageLongPress)
-            highlighterStraightLineGesture.require(toFail: pageLongPress)
 
             addInteraction(pageActionMenuInteraction)
         }
@@ -4902,10 +4566,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return true
             }
 
-            if gestureRecognizer === highlighterStraightLineGesture {
-                return usesCustomHighlighterInput
-            }
-
             if let attachmentEditingOverlay,
                touch.view?.isDescendant(of: attachmentEditingOverlay) == true {
                 return false
@@ -4949,8 +4609,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         ) -> Bool {
             gestureRecognizer === eraserScopeGesture
                 || otherGestureRecognizer === eraserScopeGesture
-                || gestureRecognizer === highlighterStraightLineGesture
-                || otherGestureRecognizer === highlighterStraightLineGesture
         }
 
         func handleEraserInteraction(
@@ -5022,7 +4680,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                 self.rubEraserConfiguration = nextRubConfiguration
             }
 
-            updateDrawingInteractionRecognizers()
+            canvasView.drawingGestureRecognizer.isEnabled = !usesCustomEraserInput
+            if eraserScopeGesture.isEnabled != enabled {
+                eraserScopeGesture.isEnabled = enabled
+            }
             if !enabled {
                 eraserScopeView.hide()
             } else if (previewDiameterChanged || customConfigurationChanged),
@@ -5033,198 +4694,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        func setHighlighterStraighteningEnabled(_ enabled: Bool) {
-            guard usesCustomHighlighterInput != enabled else { return }
-
-            usesCustomHighlighterInput = enabled
-            if !enabled {
-                cancelHighlighterStroke()
-            }
-            updateDrawingInteractionRecognizers()
-        }
-
         private func updateDrawingInteractionRecognizers() {
             let allowsCustomInput = !isCaptureInteractionEnabled && !isDrawingLoadBlocked
             eraserScopeGesture.isEnabled = allowsCustomInput && eraserPreviewDiameter != nil
-            highlighterStraightLineGesture.isEnabled = allowsCustomInput && usesCustomHighlighterInput
             pageActionLongPressGesture?.isEnabled = allowsPageActionLongPress
-            canvasView.drawingGestureRecognizer.isEnabled = allowsCustomInput && !usesCustomDrawingInput
+            canvasView.drawingGestureRecognizer.isEnabled = allowsCustomInput && !usesCustomEraserInput
         }
-
-        func handleHighlighterInteraction(
-            _ interaction: HighlighterStraightLineGestureRecognizer.Interaction
-        ) {
-            guard usesCustomHighlighterInput else { return }
-
-            switch interaction {
-            case .began(let sample):
-                beginHighlighterStroke(at: sample)
-            case .movedBatch(let samples):
-                appendHighlighterSamples(samples)
-            case .straightened(let start, let end):
-                lockHighlighterStroke(from: start, to: end)
-            case .endedBatch(let samples):
-                appendHighlighterSamples(samples)
-                finishHighlighterStroke(committing: true)
-            case .cancelled:
-                finishHighlighterStroke(committing: false)
-            }
-        }
-
-        private func beginHighlighterStroke(
-            at sample: HighlighterStraightLineGestureRecognizer.Sample
-        ) {
-            guard highlighterSamples.isEmpty,
-                  let inkingTool = canvasView.tool as? PKInkingTool,
-                  inkingTool.ink.inkType == .marker,
-                  inkingTool.width.isFinite,
-                  inkingTool.width > 0 else {
-                cancelHighlighterStroke()
-                return
-            }
-
-            highlighterSamples = [sample]
-            highlighterInk = inkingTool.ink
-            highlighterWidth = inkingTool.width
-            highlighterUsesStraightLine = false
-            canvasView.becomeFirstResponder()
-            highlighterDidBegin?()
-        }
-
-        private func appendHighlighterSamples(
-            _ samples: [HighlighterStraightLineGestureRecognizer.Sample]
-        ) {
-            guard !highlighterSamples.isEmpty,
-                  !samples.isEmpty else {
-                return
-            }
-
-            for sample in samples {
-                guard sample.location.x.isFinite, sample.location.y.isFinite else { continue }
-                guard let previous = highlighterSamples.last else {
-                    highlighterSamples.append(sample)
-                    continue
-                }
-                let distance = hypot(
-                    sample.location.x - previous.location.x,
-                    sample.location.y - previous.location.y
-                )
-                if distance > 0.05 {
-                    highlighterSamples.append(sample)
-                }
-            }
-            updateHighlighterPreview()
-        }
-
-        private func lockHighlighterStroke(
-            from start: HighlighterStraightLineGestureRecognizer.Sample,
-            to end: HighlighterStraightLineGestureRecognizer.Sample
-        ) {
-            guard !highlighterSamples.isEmpty else { return }
-            highlighterUsesStraightLine = true
-            if highlighterSamples.first?.location != start.location {
-                highlighterSamples.insert(start, at: 0)
-            }
-            if highlighterSamples.last?.location != end.location {
-                highlighterSamples.append(end)
-            }
-            updateHighlighterPreview()
-        }
-
-        private func updateHighlighterPreview() {
-            guard let ink = highlighterInk,
-                  let width = highlighterWidth,
-                  let start = highlighterSamples.first,
-                  let end = highlighterSamples.last else {
-                highlighterStrokePreviewView.hide()
-                return
-            }
-
-            if highlighterUsesStraightLine {
-                highlighterStrokePreviewView.showStraightLine(
-                    from: start,
-                    to: end,
-                    ink: ink,
-                    width: width
-                )
-            } else {
-                highlighterStrokePreviewView.show(
-                    samples: highlighterSamples,
-                    ink: ink,
-                    width: width
-                )
-            }
-            bringSubviewToFront(highlighterStrokePreviewView)
-        }
-
-        private func finishHighlighterStroke(committing: Bool) {
-            let hadStroke = !highlighterSamples.isEmpty
-            defer {
-                highlighterSamples.removeAll(keepingCapacity: false)
-                highlighterInk = nil
-                highlighterWidth = nil
-                highlighterUsesStraightLine = false
-                highlighterStrokePreviewView.hide()
-                if hadStroke {
-                    highlighterDidEnd?()
-                }
-            }
-
-            guard committing,
-                  let ink = highlighterInk,
-                  let width = highlighterWidth,
-                  let start = highlighterSamples.first,
-                  let end = highlighterSamples.last else {
-                return
-            }
-
-            let stroke = highlighterUsesStraightLine
-                ? HighlighterStrokeProcessor.straightStroke(from: start, to: end, ink: ink, width: width)
-                : HighlighterStrokeProcessor.stroke(through: highlighterSamples, ink: ink, width: width)
-            guard let stroke else { return }
-
-            let drawingBefore = canvasView.drawing
-            let drawingAfter = HighlighterStrokeProcessor.inserting(stroke, into: drawingBefore)
-            replaceHighlighterDrawing(drawingAfter, undoDrawing: drawingBefore)
-        }
-
-        private func cancelHighlighterStroke() {
-            let hadStroke = !highlighterSamples.isEmpty
-            highlighterSamples.removeAll(keepingCapacity: false)
-            highlighterInk = nil
-            highlighterWidth = nil
-            highlighterUsesStraightLine = false
-            highlighterStrokePreviewView.hide()
-            if hadStroke {
-                highlighterDidEnd?()
-            }
-        }
-
-        private func replaceHighlighterDrawing(_ drawing: PKDrawing, undoDrawing: PKDrawing) {
-            registerHighlighterUndo(undoDrawing: undoDrawing, redoDrawing: drawing)
-            canvasView.drawing = drawing
-            notifyHighlighterDrawingChanged()
-        }
-
-        private func registerHighlighterUndo(undoDrawing: PKDrawing, redoDrawing: PKDrawing) {
-            canvasView.undoManager?.registerUndo(withTarget: self) { pageView in
-                pageView.replaceHighlighterDrawing(undoDrawing, undoDrawing: redoDrawing)
-            }
-            canvasView.undoManager?.setActionName("Highlight")
-        }
-
-        private func notifyHighlighterDrawingChanged() {
-            let undoManager = canvasView.undoManager
-            guard undoManager?.isUndoing == true || undoManager?.isRedoing == true else {
-                highlighterDrawingChanged?()
-                return
-            }
-
-            DispatchQueue.main.async { [weak self] in
-                self?.highlighterDrawingChanged?()
-            }
-        }
-
         private func beginObjectEraser(at location: CGPoint) {
             guard usesCustomEraserInput,
                   location.x.isFinite,
@@ -5448,9 +4923,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             sendSubviewToBack(backgroundView)
             insertSubview(behindImageContainerView, aboveSubview: backgroundView)
             insertSubview(drawingViewportView, aboveSubview: behindImageContainerView)
-            insertSubview(highlighterStrokePreviewView, aboveSubview: drawingViewportView)
             if foregroundImageContainerView.superview === self {
-                insertSubview(foregroundImageContainerView, aboveSubview: highlighterStrokePreviewView)
+                insertSubview(foregroundImageContainerView, aboveSubview: drawingViewportView)
             }
 
             if let attachmentEditingOverlay, attachmentEditingOverlay.superview === self {
@@ -5463,7 +4937,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             restoreForegroundImagesToPage()
             pendingNativeViewport = nil
             drawingViewportView.isHidden = true
-            highlighterStrokePreviewView.hide()
             eraserScopeView.hide()
             canvasView.delegate = nil
             canvasView.drawing = PKDrawing()
@@ -6898,18 +6371,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 guard let self, let canvasView else { return }
                 self.canvasViewDrawingDidChange(canvasView)
             }
-            pageView?.highlighterDidBegin = { [weak self, weak canvasView] in
-                guard let self, let canvasView else { return }
-                self.canvasViewDidBeginUsingTool(canvasView)
-            }
-            pageView?.highlighterDidEnd = { [weak self, weak canvasView] in
-                guard let self, let canvasView else { return }
-                self.canvasViewDidEndUsingTool(canvasView)
-            }
-            pageView?.highlighterDrawingChanged = { [weak self, weak canvasView] in
-                guard let self, let canvasView else { return }
-                self.canvasViewDrawingDidChange(canvasView)
-            }
 
             if !registeredCanvasIDs.contains(id) {
                 registeredCanvasIDs.insert(id)
@@ -6962,9 +6423,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasPageViews[id]?.value?.objectEraserDidBegin = nil
             canvasPageViews[id]?.value?.objectEraserDidEnd = nil
             canvasPageViews[id]?.value?.objectEraserDrawingChanged = nil
-            canvasPageViews[id]?.value?.highlighterDidBegin = nil
-            canvasPageViews[id]?.value?.highlighterDidEnd = nil
-            canvasPageViews[id]?.value?.highlighterDrawingChanged = nil
             canvasPageViews[id] = nil
             canvasToolSignatures[id] = nil
             temporaryEraserCanvasIDs.remove(id)
@@ -7250,11 +6708,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         func applyCustomToolIfNeeded() {
             guard parent.paletteMode == .custom else {
                 containerView?.setCaptureToolEnabled(false)
-                for (_, canvasView) in containerView?.canvasPagePairs ?? [] {
-                    let id = ObjectIdentifier(canvasView)
-                    canvasPageViews[id]?.value?.setEraserPreviewEnabled(false)
-                    canvasPageViews[id]?.value?.setHighlighterStraighteningEnabled(false)
-                }
                 return
             }
             let usesCaptureTool = parent.toolState.selectedTool == .capture
@@ -7338,10 +6791,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 usesCustomObjectEraser: eraserMode == .object,
                 rubEraserConfiguration: rubConfiguration
             )
-            let usesCustomHighlighter = parent.paletteMode == .custom
-                && parent.toolState.selectedTool == .highlighter
-                && (tool as? PKInkingTool)?.ink.inkType == .marker
-            canvasPageViews[id]?.value?.setHighlighterStraighteningEnabled(usesCustomHighlighter)
         }
 
         private var currentCustomToolZoomScale: CGFloat {

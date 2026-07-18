@@ -6856,11 +6856,7 @@ struct BeanNotesTests {
 
         toolState.select(.highlighter)
         #expect(toolState.activeInkType == .marker)
-        let highlighter = try? #require(toolState.makePKTool() as? PKInkingTool)
-        #expect(highlighter?.ink.inkType == .marker)
-        #expect(
-            abs((highlighter?.ink.color.cgColor.alpha ?? 0) - DrawingToolState.highlighterOpacity) < 0.001
-        )
+        _ = toolState.makePKTool()
 
         toolState.select(.eraser)
         #expect(toolState.activeInkType == nil)
@@ -6869,50 +6865,6 @@ struct BeanNotesTests {
         toolState.select(.lasso)
         #expect(toolState.activeInkType == nil)
         _ = toolState.makePKTool()
-    }
-
-    @Test @MainActor func customHighlighterKeepsHandwritingAboveStraightHighlights() throws {
-        let fixture = try makePageCanvasFixture(name: "StraightHighlighter")
-        defer { fixture.cleanup() }
-
-        let handwriting = makeTestStroke(
-            from: CGPoint(x: 20, y: 100),
-            to: CGPoint(x: 180, y: 100),
-            width: 4
-        )
-        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [handwriting])
-        fixture.pageView.canvasView.tool = PKInkingTool(
-            .marker,
-            color: UIColor.yellow.withAlphaComponent(DrawingToolState.highlighterOpacity),
-            width: 14
-        )
-        fixture.pageView.setHighlighterStraighteningEnabled(true)
-
-        let start = DrawingCanvasView.HighlighterStraightLineGestureRecognizer.Sample(
-            location: CGPoint(x: 20, y: 100),
-            timestamp: 1
-        )
-        let end = DrawingCanvasView.HighlighterStraightLineGestureRecognizer.Sample(
-            location: CGPoint(x: 180, y: 100),
-            timestamp: 1.4
-        )
-        fixture.pageView.handleHighlighterInteraction(.began(start))
-        fixture.pageView.handleHighlighterInteraction(.movedBatch([end]))
-        fixture.pageView.handleHighlighterInteraction(.straightened(from: start, to: end))
-        fixture.pageView.handleHighlighterInteraction(.endedBatch([end]))
-
-        let strokes = fixture.pageView.canvasView.drawing.strokes
-        #expect(strokes.count == 2)
-        #expect(strokes[0].ink.inkType == .marker)
-        #expect(strokes[1].ink.inkType == .pen)
-        #expect(strokes[0].path.interpolatedPoint(at: 0).location == start.location)
-        #expect(
-            strokes[0].path.interpolatedPoint(at: CGFloat(strokes[0].path.count - 1)).location == end.location
-        )
-        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
-
-        fixture.pageView.setHighlighterStraighteningEnabled(false)
-        #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
     }
 
     @Test @MainActor func temporaryEraserRestoresOnlyAfterAnEraserStrokeEnds() throws {
