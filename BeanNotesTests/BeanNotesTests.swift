@@ -972,6 +972,22 @@ struct BeanNotesTests {
         ))
     }
 
+    @Test func configuredDefaultPaperSizeUsesStandardAndCustomPreferences() {
+        let suiteName = "BeanNotesPaperSize-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(PaperSize.configuredDefaultDimensions(in: defaults) == PaperSize.letter.dimensions)
+
+        defaults.set(PaperSize.a4.rawValue, forKey: PaperSize.storageKey)
+        #expect(PaperSize.configuredDefaultDimensions(in: defaults) == PaperSize.a4.dimensions)
+
+        defaults.set(CustomPaperSize.selectionRawValue, forKey: PaperSize.storageKey)
+        defaults.set(700.0, forKey: CustomPaperSize.widthStorageKey)
+        defaults.set(940.0, forKey: CustomPaperSize.heightStorageKey)
+        #expect(PaperSize.configuredDefaultDimensions(in: defaults) == CGSize(width: 700, height: 940))
+    }
+
     @Test func pdfPageContentSetsTheMinimumPaperSize() {
         let page = NotePage(pageOrder: 0, width: 1_200, height: 1_600)
         let regularImage = Attachment(
@@ -1756,6 +1772,33 @@ struct BeanNotesTests {
         #expect(abs(loadedDrawing.bounds.midX - diskDrawing.bounds.midX) > 20)
     }
 
+    @Test func failedDrawingPrefetchDoesNotPoisonLaterDiskLoad() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingPrefetchRetry-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "prefetch-retry.drawing")
+        let drawingURL = try drawingStorage.drawingURL(for: page)
+        try Data("not a PencilKit archive".utf8).write(to: drawingURL, options: [.atomic])
+
+        DrawingStorageService.prefetchDrawing(fileName: page.drawingFileName, rootURL: rootURL)
+        DrawingStorageService.waitForPendingPrefetchesForTesting()
+
+        let expectedDrawing = makeTestDrawing(color: .systemGreen, xOffset: 72)
+        try expectedDrawing.dataRepresentation().write(to: drawingURL, options: [.atomic])
+        let loadedDrawing = drawingStorage.loadDrawing(for: page)
+
+        #expect(loadedDrawing.strokes.count == expectedDrawing.strokes.count)
+        #expect(abs(loadedDrawing.bounds.midX - expectedDrawing.bounds.midX) < 0.5)
+    }
+
     @Test func localStorageCopiesStoredFilesToIndependentPaths() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesStoredCopy-\(UUID().uuidString)", isDirectory: true)
@@ -2217,6 +2260,68 @@ struct BeanNotesTests {
         coordinator.applyCustomToolIfNeeded()
         #expect(container.captureSelectionOverlay == nil)
         #expect(container.activeCanvasView!.drawingGestureRecognizer.isEnabled)
+    }
+
+    @Test func unreadableDrawingCannotBeCapturedAsBlankImage() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCaptureUnreadable-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(
+            pageOrder: 0,
+            drawingFileName: "capture-unreadable.drawing",
+            width: 612,
+            height: 792
+        )
+        try Data("preserve this unreadable drawing".utf8).write(
+            to: drawingStorage.drawingURL(for: page),
+            options: [.atomic]
+        )
+        DrawingStorageService.clearCache()
+
+        var captureError: Error?
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            captureFailed: { captureError = $0 }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+
+        defer {
+            DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.layoutIfNeeded()
+        parent.toolState.select(.capture)
+        coordinator.applyCustomToolIfNeeded()
+
+        let overlay = try #require(container.captureSelectionOverlay)
+        let copyButton = try #require(
+            overlay.subviews
+                .compactMap { $0 as? UIButton }
+                .first { $0.accessibilityIdentifier == "noteCaptureCopyButton" }
+        )
+        copyButton.sendActions(for: .touchUpInside)
+
+        #expect(captureError != nil)
+        #expect(copyButton.isEnabled)
+        #expect(copyButton.configuration?.title == "Copy")
     }
 
     @Test @MainActor func pageCanvasLayoutPreservesStableCanvasOffsetUntilPageSizeChanges() throws {
@@ -2721,8 +2826,9 @@ struct BeanNotesTests {
 
         #expect(!pageView.canPerformAction(#selector(UIResponder.selectAll(_:)), withSender: nil))
         #expect(!pageView.canPerformAction(Selector(("insertSpace:")), withSender: nil))
-        #expect(!pageView.canvasView.canPerformAction(#selector(UIResponder.selectAll(_:)), withSender: nil))
-        #expect(!pageView.canvasView.canPerformAction(Selector(("insertSpace:")), withSender: nil))
+        #expect(type(of: pageView.canvasView) == PKCanvasView.self)
+        #expect(pageView.canvasView.canBecomeFirstResponder)
+        #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
 
         pageView.applyInputMode(.anyInput)
         #expect(!pageView.consumesBlankCanvasTaps)
@@ -5226,6 +5332,439 @@ struct BeanNotesTests {
         #expect(!coordinator.dirtyPageIDs.contains(page.id))
     }
 
+    @Test func unchangedFallbackCanvasCannotOverwriteStoredInkOnDismantle() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesFallbackCanvas-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "stored-ink.drawing")
+        let storedDrawing = makeTestDrawing(color: .systemOrange, xOffset: 64)
+        try drawingStorage.save(storedDrawing, for: page)
+        DrawingStorageService.clearCache()
+
+        // Simulate the invalid empty cache entry produced by the old prefetch path.
+        DrawingStorageService.cache(PKDrawing(), fileName: page.drawingFileName, rootURL: rootURL)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        #expect(container.activeCanvasView?.drawing.strokes.isEmpty == true)
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+
+        let storedData = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        let reloadedDrawing = try PKDrawing(data: storedData)
+        #expect(reloadedDrawing.strokes.count == storedDrawing.strokes.count)
+        #expect(abs(reloadedDrawing.bounds.midX - storedDrawing.bounds.midX) < 0.5)
+    }
+
+    @Test func unreadableDrawingBlocksWritesAndExportUntilRecovery() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesUnreadableDrawing-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "unreadable.drawing")
+        let drawingURL = try drawingStorage.drawingURL(for: page)
+        let unreadableData = Data("preserve this unreadable drawing".utf8)
+        try unreadableData.write(to: drawingURL, options: [.atomic])
+
+        var exportResult: Result<Void, Error>?
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            exportPreparationCompleted: { requestID, result in
+                guard requestID == 109 else { return }
+                exportResult = result
+            }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        #expect(!canvasView.isUserInteractionEnabled)
+        canvasView.drawing = makeTestDrawing(color: .systemRed, xOffset: 90)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        coordinator.saveAllCanvases(force: true)
+        coordinator.prepareForExport(requestID: 109)
+
+        let deadline = ContinuousClock.now + .seconds(1)
+        while exportResult == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let result = try #require(exportResult)
+        #expect(throws: (any Error).self) {
+            try result.get()
+        }
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+        #expect(try Data(contentsOf: drawingURL) == unreadableData)
+    }
+
+    @Test func unreadableDrawingRetryRestoresInkAndEditing() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingLoadRetry-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "retry-load.drawing")
+        let drawingURL = try drawingStorage.drawingURL(for: page)
+        try Data("preserve this unreadable drawing".utf8).write(to: drawingURL, options: [.atomic])
+
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        #expect(!canvasView.isUserInteractionEnabled)
+        let recoveredDrawing = makeTestDrawing(color: .systemGreen, xOffset: 84)
+        try recoveredDrawing.dataRepresentation().write(to: drawingURL, options: [.atomic])
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !canvasView.isUserInteractionEnabled, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(canvasView.isUserInteractionEnabled)
+        #expect(canvasView.drawing.strokes.count == recoveredDrawing.strokes.count)
+        #expect(abs(canvasView.drawing.bounds.midX - recoveredDrawing.bounds.midX) < 0.5)
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+    }
+
+    @Test func unreadableDrawingStateSurvivesMissingFileCanvasRebuild() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingLoadRebuild-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "rebuild-load.drawing")
+        let drawingURL = try drawingStorage.drawingURL(for: page)
+        try Data("preserve this unreadable drawing".utf8).write(to: drawingURL, options: [.atomic])
+
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let firstPageView = DrawingCanvasView.PageCanvasView()
+        firstPageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in }
+        )
+        #expect(!firstPageView.canvasView.isUserInteractionEnabled)
+
+        try FileManager.default.removeItem(at: drawingURL)
+        coordinator.unregister(
+            canvasView: firstPageView.canvasView,
+            page: page,
+            flushDrawingBeforeRelease: false
+        )
+
+        let rebuiltPageView = DrawingCanvasView.PageCanvasView()
+        rebuiltPageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in }
+        )
+
+        #expect(!rebuiltPageView.canvasView.isUserInteractionEnabled)
+        #expect(coordinator.drawingLoadFailure(for: [page.id]) != nil)
+        coordinator.unregister(
+            canvasView: rebuiltPageView.canvasView,
+            page: page,
+            flushDrawingBeforeRelease: false
+        )
+    }
+
+    @Test func seamlessCanvasDoesNotWriteAnyPageAfterPartialLoadFailure() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPartialSeamlessLoad-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let firstPage = NotePage(pageOrder: 0, drawingFileName: "first-page.drawing")
+        let secondPage = NotePage(pageOrder: 1, drawingFileName: "second-page.drawing")
+        let firstDrawing = makeTestDrawing(color: .systemBlue, xOffset: 32)
+        try drawingStorage.save(firstDrawing, for: firstPage)
+        let firstURL = try drawingStorage.drawingURL(for: firstPage)
+        let secondURL = try drawingStorage.drawingURL(for: secondPage)
+        let firstData = try Data(contentsOf: firstURL)
+        let unreadableData = Data("preserve this unreadable drawing".utf8)
+        try unreadableData.write(to: secondURL, options: [.atomic])
+        DrawingStorageService.clearCache()
+
+        var captureError: Error?
+        let parent = makeDrawingCanvasView(
+            page: firstPage,
+            drawingStorage: drawingStorage,
+            pages: [firstPage, secondPage],
+            captureFailed: { captureError = $0 }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [firstPage, secondPage],
+            selectedPageID: firstPage.id,
+            pageFlowMode: .seamless,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        #expect(!canvasView.isUserInteractionEnabled)
+        #expect(canvasView.drawing.strokes.isEmpty)
+
+        parent.toolState.select(.capture)
+        coordinator.applyCustomToolIfNeeded()
+        let captureOverlay = try #require(container.captureSelectionOverlay)
+        let copyButton = try #require(
+            captureOverlay.subviews
+                .compactMap { $0 as? UIButton }
+                .first { $0.accessibilityIdentifier == "noteCaptureCopyButton" }
+        )
+        copyButton.sendActions(for: .touchUpInside)
+        #expect(captureError != nil)
+        parent.toolState.select(.pen)
+        coordinator.applyCustomToolIfNeeded()
+
+        // A temporarily missing file must not install the successfully loaded
+        // pages as a partial seamless drawing while recovery remains blocked.
+        try FileManager.default.removeItem(at: secondURL)
+        try await Task.sleep(for: .milliseconds(450))
+        #expect(!canvasView.isUserInteractionEnabled)
+        #expect(canvasView.drawing.strokes.isEmpty)
+        try unreadableData.write(to: secondURL, options: [.atomic])
+
+        canvasView.drawing = makeTestDrawing(color: .systemRed, xOffset: 140)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        coordinator.saveAllCanvases(force: true)
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+
+        #expect(try Data(contentsOf: firstURL) == firstData)
+        #expect(try Data(contentsOf: secondURL) == unreadableData)
+    }
+
+    @Test func drawingLoadRetriesContinueAtLowFrequencyAfterFastAttempts() {
+        #expect(DrawingCanvasView.Coordinator.drawingLoadRetryDelay(forAttempt: 1) == 0.25)
+        #expect(DrawingCanvasView.Coordinator.drawingLoadRetryDelay(forAttempt: 4) == 3)
+        #expect(DrawingCanvasView.Coordinator.drawingLoadRetryDelay(forAttempt: 5) == 10)
+        #expect(DrawingCanvasView.Coordinator.drawingLoadRetryDelay(forAttempt: 50) == 10)
+    }
+
+    @Test func forcedAsyncSaveTouchesPageForUnreportedInk() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesForcedAsyncMetadata-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "forced-async.drawing")
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        let drawing = makeTestDrawing(color: .systemPurple, xOffset: 52)
+        let delegate = canvasView.delegate
+        canvasView.delegate = nil
+        canvasView.drawing = drawing
+        canvasView.delegate = delegate
+        let initialUpdatedAt = Date(timeIntervalSinceReferenceDate: 100)
+        page.updatedAt = initialUpdatedAt
+
+        coordinator.saveAllCanvases(synchronously: false, force: true)
+        let deadline = ContinuousClock.now + .seconds(1)
+        while page.updatedAt == initialUpdatedAt, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(page.updatedAt > initialUpdatedAt)
+        let savedData = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        #expect(try PKDrawing(data: savedData).strokes.count == drawing.strokes.count)
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+    }
+
+    @Test func failedCanvasWriteDoesNotExposeUnsavedDrawingFromCache() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesFailedDrawingWrite-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "failed-write.drawing")
+        let storedDrawing = makeTestDrawing(color: .systemBlue, xOffset: 20)
+        try drawingStorage.save(storedDrawing, for: page)
+
+        // Make the drawing directory unwritable while leaving the last durable
+        // drawing in memory. A failed save must not replace that cache entry with
+        // ink that never reached disk.
+        let drawingsURL = rootURL.appendingPathComponent(
+            StorageDirectory.drawings.rawValue,
+            isDirectory: true
+        )
+        try FileManager.default.removeItem(at: drawingsURL)
+        try Data("not a directory".utf8).write(to: drawingsURL)
+
+        var saveEvents: [String] = []
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            saveStarted: { saveEvents.append("started") },
+            saveFailed: { _ in saveEvents.append("failed") }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        let unsavedDrawing = makeTestDrawing(color: .systemRed, xOffset: 140)
+        let delegate = canvasView.delegate
+        canvasView.delegate = nil
+        canvasView.drawing = unsavedDrawing
+        canvasView.delegate = delegate
+        coordinator.saveAllCanvases(force: true)
+
+        let failureDeadline = ContinuousClock.now + .seconds(1)
+        while saveEvents.last != "failed", ContinuousClock.now < failureDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(saveEvents.last == "failed")
+
+        saveEvents.removeAll()
+        canvasView.delegate = nil
+        canvasView.drawing = makeTestDrawing(color: .systemOrange, xOffset: 180)
+        canvasView.delegate = delegate
+        coordinator.canvasViewDrawingDidChange(canvasView)
+
+        let retryDeadline = ContinuousClock.now + .milliseconds(200)
+        while saveEvents.isEmpty, ContinuousClock.now < retryDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(saveEvents.first == "started")
+        #expect(coordinator.pendingSaves[page.id] != nil)
+
+        let cachedDrawing = try #require(
+            DrawingStorageService.cachedDrawing(
+                fileName: page.drawingFileName,
+                rootURL: rootURL
+            )
+        )
+        #expect(cachedDrawing.strokes.count == storedDrawing.strokes.count)
+        #expect(abs(cachedDrawing.bounds.midX - storedDrawing.bounds.midX) < 0.5)
+        #expect(abs(cachedDrawing.bounds.midX - unsavedDrawing.bounds.midX) > 20)
+        coordinator.unregister(
+            canvasView: canvasView,
+            page: page,
+            flushDrawingBeforeRelease: false
+        )
+    }
+
     @Test func exportPreparationFlushesLiveCanvasBeforeCompleting() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesExportPreparation-\(UUID().uuidString)", isDirectory: true)
@@ -5409,6 +5948,63 @@ struct BeanNotesTests {
         #expect(!coordinator.dirtyPageIDs.contains(page.id))
     }
 
+    @Test func exportPreparationRecoversWhenPencilKitOmitsToolEndCallback() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesExportToolFallback-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "fallback-export.drawing")
+        let drawing = makeTestDrawing(color: .systemIndigo, xOffset: 76)
+        var completionResult: Result<Void, Error>?
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            exportPreparationCompleted: { requestID, result in
+                guard requestID == 108 else { return }
+                completionResult = result
+            }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        canvasView.drawing = drawing
+        coordinator.canvasViewDidBeginUsingTool(canvasView)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        coordinator.prepareForExport(requestID: 108)
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while completionResult == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        try #require(completionResult).get()
+        let storedData = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        let storedDrawing = try PKDrawing(data: storedData)
+        #expect(storedDrawing.strokes.count == drawing.strokes.count)
+        #expect(!container.isLiveDrawingInteractionActive)
+        #expect(coordinator.pendingSaves[page.id] == nil)
+        #expect(!coordinator.dirtyPageIDs.contains(page.id))
+    }
+
     @Test func livePencilStrokeDefersAutosaveWorkUntilPencilLifts() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesLiveStroke-\(UUID().uuidString)", isDirectory: true)
@@ -5434,6 +6030,101 @@ struct BeanNotesTests {
 
         #expect(coordinator.pendingSaves[page.id] != nil)
         coordinator.unregister(canvasView: canvasView, page: page)
+    }
+
+    @Test func livePencilStrokePublishesSavingStateBeforePencilLifts() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesLiveSavingState-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "live-saving-state.drawing")
+        var saveStartedCount = 0
+        var changedPageIDs: [UUID] = []
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            drawingChanged: { changedPageIDs.append($0) },
+            saveStarted: { saveStartedCount += 1 }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let canvasView = PKCanvasView()
+        canvasView.drawing = makeTestDrawing(color: .systemBlue, xOffset: 0)
+
+        coordinator.register(canvasView: canvasView, page: page)
+        coordinator.canvasViewDidBeginUsingTool(canvasView)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        await Task.yield()
+
+        #expect(saveStartedCount == 1)
+        #expect(changedPageIDs == [page.id])
+        #expect(coordinator.pendingSaves[page.id] == nil)
+
+        coordinator.canvasViewDidEndUsingTool(canvasView)
+        coordinator.unregister(canvasView: canvasView, page: page)
+    }
+
+    @Test func olderAsyncSaveCannotMarkANewerLiveStrokeClean() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingSaveGeneration-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "save-generation.drawing")
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        let firstDrawing = makeTestDrawing(color: .systemOrange, xOffset: 24)
+        let newerDrawing = makeTestDrawing(color: .systemPurple, xOffset: 116)
+        canvasView.drawing = firstDrawing
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        coordinator.saveAllCanvases(synchronously: false)
+
+        coordinator.canvasViewDidBeginUsingTool(canvasView)
+        canvasView.drawing = newerDrawing
+        coordinator.canvasViewDrawingDidChange(canvasView)
+
+        let drawingURL = try drawingStorage.drawingURL(for: page)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !FileManager.default.fileExists(atPath: drawingURL.path),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(100))
+
+        let firstSavedData = try Data(contentsOf: drawingURL)
+        let firstSavedDrawing = try PKDrawing(data: firstSavedData)
+        #expect(abs(firstSavedDrawing.bounds.midX - firstDrawing.bounds.midX) < 0.5)
+        #expect(coordinator.dirtyPageIDs.contains(page.id))
+
+        coordinator.canvasViewDidEndUsingTool(canvasView)
+        #expect(coordinator.pendingSaves[page.id] != nil)
+        coordinator.unregister(canvasView: canvasView, page: page)
+
+        let finalData = try Data(contentsOf: drawingURL)
+        let finalDrawing = try PKDrawing(data: finalData)
+        #expect(abs(finalDrawing.bounds.midX - newerDrawing.bounds.midX) < 0.5)
     }
 
     @Test func canvasUnloadFlushesCurrentDrawingWhileAsyncSaveIsInFlight() async throws {
@@ -5982,6 +6673,11 @@ struct BeanNotesTests {
         pages: [NotePage]? = nil,
         finalViewportChanged: @escaping (DrawingCanvasViewport, UUID?) -> Void = { _, _ in },
         selectionRevision: @escaping () -> UInt64 = { 0 },
+        drawingChanged: @escaping (UUID) -> Void = { _ in },
+        captureFailed: @escaping (Error) -> Void = { _ in },
+        saveStarted: @escaping () -> Void = {},
+        saveSucceeded: @escaping () -> Void = {},
+        saveFailed: @escaping (Error) -> Void = { _ in },
         exportPreparationCompleted: @escaping (Int, Result<Void, Error>) -> Void = { _, _ in }
     ) -> DrawingCanvasView {
         let defaults = UserDefaults(suiteName: "BeanNotesCanvasTest-\(UUID().uuidString)")!
@@ -6007,10 +6703,11 @@ struct BeanNotesTests {
             drawingStorage: drawingStorage,
             attachmentChanged: {},
             deleteAttachment: { _ in },
-            drawingChanged: { _ in },
-            saveStarted: {},
-            saveSucceeded: {},
-            saveFailed: { _ in },
+            drawingChanged: drawingChanged,
+            captureFailed: captureFailed,
+            saveStarted: saveStarted,
+            saveSucceeded: saveSucceeded,
+            saveFailed: saveFailed,
             exportPreparationCompleted: exportPreparationCompleted,
             undoRedoAvailabilityChanged: { _, _ in },
             zoomScaleChanged: { _ in },
@@ -7836,6 +8533,7 @@ struct BeanNotesTests {
                 == ThumbnailService.thumbnailFileName(
                     pageID: page.id,
                     theme: .bean,
+                    contentRevision: NotePageRenderSnapshot.contentRevision(for: page),
                     showsBeanArtwork: false
                 )
         )
@@ -7843,6 +8541,61 @@ struct BeanNotesTests {
         #expect(page.thumbnailFileName?.components(separatedBy: "/").count == 2)
         #expect(max(thumbnail.size.width, thumbnail.size.height) <= 120.5)
         #expect(thumbnail.size.height > thumbnail.size.width)
+    }
+
+    @Test @MainActor func thumbnailRevisionTracksPageContentAndGeometry() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesThumbnailRevision-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let service = ThumbnailService(
+            storage: storage,
+            drawingStorage: DrawingStorageService(storage: storage)
+        )
+        let page = NotePage(
+            pageOrder: 0,
+            width: 240,
+            height: 320,
+            updatedAt: Date(timeIntervalSinceReferenceDate: 100)
+        )
+        let firstRevision = NotePageRenderSnapshot.contentRevision(for: page)
+        let portraitURL = try service.generateThumbnail(
+            for: page,
+            theme: .standard,
+            showsBeanArtwork: false,
+            maxDimension: 160
+        )
+
+        page.width = 320
+        page.height = 240
+        page.updatedAt = Date(timeIntervalSinceReferenceDate: 101)
+        let secondRevision = NotePageRenderSnapshot.contentRevision(for: page)
+        let landscapeURL = try service.generateThumbnail(
+            for: page,
+            theme: .standard,
+            showsBeanArtwork: false,
+            maxDimension: 160
+        )
+        let landscapeImage = try #require(UIImage(contentsOfFile: landscapeURL.path))
+
+        #expect(firstRevision != secondRevision)
+        #expect(portraitURL.lastPathComponent != landscapeURL.lastPathComponent)
+        #expect(!FileManager.default.fileExists(atPath: portraitURL.path))
+        #expect(landscapeImage.size.width > landscapeImage.size.height)
+        #expect(!ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(portraitURL.lastPathComponent)",
+            pageID: page.id,
+            theme: .standard,
+            contentRevision: secondRevision
+        ))
+        #expect(ThumbnailService.isCurrentThumbnailPath(
+            page.thumbnailFileName ?? "",
+            pageID: page.id,
+            theme: .standard,
+            contentRevision: secondRevision
+        ))
     }
 
     @Test @MainActor func backgroundThumbnailUsesLatestCachedDrawing() async throws {
@@ -7874,6 +8627,68 @@ struct BeanNotesTests {
         let thumbnail = try #require(UIImage(contentsOfFile: thumbnailURL.path))
 
         #expect(imageContainsDominantRedInk(thumbnail))
+    }
+
+    @Test @MainActor func unreadableDrawingPreservesExistingThumbnail() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesUnreadableThumbnail-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        let page = NotePage(
+            pageOrder: 0,
+            drawingFileName: "thumbnail-unreadable.drawing",
+            width: 240,
+            height: 320
+        )
+        let existingThumbnailData = Data("existing thumbnail must survive".utf8)
+        let existingThumbnail = try storage.saveData(
+            existingThumbnailData,
+            fileName: "existing-thumbnail.jpg",
+            contentType: .jpeg,
+            to: .thumbnails,
+            replacingExisting: true
+        )
+        page.thumbnailFileName = existingThumbnail.relativePath
+        let existingThumbnailURL = storage.url(forRelativePath: existingThumbnail.relativePath)
+        try Data("preserve this unreadable drawing".utf8).write(
+            to: drawingStorage.drawingURL(for: page),
+            options: [.atomic]
+        )
+        DrawingStorageService.clearCache()
+
+        #expect(throws: (any Error).self) {
+            try service.generateThumbnail(
+                for: page,
+                theme: .standard,
+                showsBeanArtwork: false,
+                maxDimension: 120
+            )
+        }
+        #expect(page.thumbnailFileName == existingThumbnail.relativePath)
+        #expect(try Data(contentsOf: existingThumbnailURL) == existingThumbnailData)
+
+        var backgroundGenerationFailed = false
+        do {
+            _ = try await service.generateThumbnailInBackground(
+                for: page,
+                theme: .currentFromDefaults(),
+                showsBeanArtwork: NoteBackground.showsArtwork(for: .currentFromDefaults()),
+                maxDimension: 120
+            )
+        } catch {
+            backgroundGenerationFailed = true
+        }
+
+        #expect(backgroundGenerationFailed)
+        #expect(page.thumbnailFileName == existingThumbnail.relativePath)
+        #expect(try Data(contentsOf: existingThumbnailURL) == existingThumbnailData)
     }
 
     @Test func documentVersionSwitchKeepsPageAndDrawingIdentityAndSeparatesCurrentFromLatest() throws {
@@ -8064,32 +8879,47 @@ struct BeanNotesTests {
 
     @Test func thumbnailCacheIdentityIncludesThemeAndRendererVersion() {
         let pageID = UUID()
+        let contentRevision = "revision-a"
         let beanFileName = ThumbnailService.thumbnailFileName(
             pageID: pageID,
             theme: .bean,
+            contentRevision: contentRevision,
             showsBeanArtwork: false
         )
         let beanArtworkFileName = ThumbnailService.thumbnailFileName(
             pageID: pageID,
             theme: .bean,
+            contentRevision: contentRevision,
             showsBeanArtwork: true
         )
         let blueberryFileName = ThumbnailService.thumbnailFileName(
             pageID: pageID,
             theme: .blueberry,
+            contentRevision: contentRevision,
             showsBeanArtwork: false
         )
         let blueberryArtworkFileName = ThumbnailService.thumbnailFileName(
             pageID: pageID,
             theme: .blueberry,
+            contentRevision: contentRevision,
             showsBeanArtwork: true
         )
-        let standardFileName = ThumbnailService.thumbnailFileName(pageID: pageID, theme: .standard)
+        let standardFileName = ThumbnailService.thumbnailFileName(
+            pageID: pageID,
+            theme: .standard,
+            contentRevision: contentRevision
+        )
+        let changedRevisionFileName = ThumbnailService.thumbnailFileName(
+            pageID: pageID,
+            theme: .bean,
+            contentRevision: "revision-b"
+        )
 
         #expect(beanFileName != standardFileName)
         #expect(beanFileName != beanArtworkFileName)
         #expect(blueberryFileName != blueberryArtworkFileName)
         #expect(beanFileName != blueberryFileName)
+        #expect(beanFileName != changedRevisionFileName)
         #expect(beanFileName.hasSuffix("-bean-off-v11.jpg"))
         #expect(beanArtworkFileName.hasSuffix("-bean-on-v11.jpg"))
         #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-v11.jpg"))
@@ -8097,29 +8927,40 @@ struct BeanNotesTests {
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,
-            theme: .bean
+            theme: .bean,
+            contentRevision: contentRevision
         ))
         #expect(!ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanArtworkFileName)",
             pageID: pageID,
             theme: .bean,
+            contentRevision: contentRevision,
             showsBeanArtwork: false
         ))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanArtworkFileName)",
             pageID: pageID,
             theme: .bean,
+            contentRevision: contentRevision,
             showsBeanArtwork: true
         ))
         #expect(!ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(pageID.uuidString).jpg",
             pageID: pageID,
-            theme: .bean
+            theme: .bean,
+            contentRevision: contentRevision
         ))
         #expect(!ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,
-            theme: .standard
+            theme: .standard,
+            contentRevision: contentRevision
+        ))
+        #expect(!ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(beanFileName)",
+            pageID: pageID,
+            theme: .bean,
+            contentRevision: "revision-b"
         ))
     }
 

@@ -1349,7 +1349,13 @@ struct NoteEditorView: View {
             return
         }
 
-        let page = NotePage(pageOrder: 0, background: defaultNoteBackground)
+        let pageSize = PaperSize.configuredDefaultDimensions()
+        let page = NotePage(
+            pageOrder: 0,
+            background: defaultNoteBackground,
+            width: pageSize.width,
+            height: pageSize.height
+        )
         note.pages.append(page)
         selectedPageID = page.id
 

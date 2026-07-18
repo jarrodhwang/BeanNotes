@@ -150,11 +150,11 @@ struct LibraryView: View {
     }
 
     private var defaultPageSize: CGSize {
-        if paperSizeRaw == CustomPaperSize.selectionRawValue {
-            return CustomPaperSize.dimensions(width: customPaperWidth, height: customPaperHeight)
-        }
-
-        return (PaperSize(rawValue: paperSizeRaw) ?? PaperSize.defaultPaperSize).dimensions
+        PaperSize.configuredDimensions(
+            selectionRawValue: paperSizeRaw,
+            customWidth: customPaperWidth,
+            customHeight: customPaperHeight
+        )
     }
 
     private var appTheme: AppTheme {
@@ -2657,6 +2657,7 @@ private struct NoteCardView: View {
                   relativePath,
                   pageID: page.id,
                   theme: theme,
+                  contentRevision: NotePageRenderSnapshot.contentRevision(for: page),
                   showsBeanArtwork: showsThemeArtwork
               ) else {
             return nil

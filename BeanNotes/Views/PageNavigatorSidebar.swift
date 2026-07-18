@@ -277,7 +277,8 @@ private struct PageNavigatorThumbnail: View {
     }
 
     private var previewRequestID: String {
-        "\(page.id.uuidString)-\(theme.rawValue)-\(showsThemeArtwork)-\(previewRevision)"
+        let contentRevision = NotePageRenderSnapshot.contentRevision(for: page)
+        return "\(page.id.uuidString)-\(contentRevision)-\(theme.rawValue)-\(showsThemeArtwork)-\(previewRevision)"
     }
 
     @MainActor
@@ -316,6 +317,7 @@ private struct PageNavigatorThumbnail: View {
                   relativePath,
                   pageID: page.id,
                   theme: theme,
+                  contentRevision: NotePageRenderSnapshot.contentRevision(for: page),
                   showsBeanArtwork: showsThemeArtwork
               ) else {
             return nil

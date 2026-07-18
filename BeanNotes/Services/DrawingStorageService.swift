@@ -8,6 +8,38 @@ import PencilKit
 import UIKit
 
 struct DrawingStorageService {
+    enum LoadResult {
+        case loaded(PKDrawing)
+        case missing
+        case unavailable(Error)
+
+        var drawing: PKDrawing {
+            switch self {
+            case let .loaded(drawing):
+                drawing
+            case .missing, .unavailable:
+                PKDrawing()
+            }
+        }
+
+        var error: Error? {
+            guard case let .unavailable(error) = self else { return nil }
+            return error
+        }
+    }
+
+    private struct DrawingLoadError: LocalizedError {
+        var underlyingError: Error
+
+        var errorDescription: String? {
+            "This drawing could not be opened. Editing is paused to protect the existing note."
+        }
+
+        var failureReason: String? {
+            underlyingError.localizedDescription
+        }
+    }
+
     private struct PrefetchState {
         var token: UUID
         var cacheVersion: UInt = 0
@@ -42,10 +74,14 @@ struct DrawingStorageService {
     }
 
     func loadDrawing(for page: NotePage) -> PKDrawing {
+        loadDrawingResult(for: page).drawing
+    }
+
+    func loadDrawingResult(for page: NotePage) -> LoadResult {
         Self.ensureMemoryWarningObservation()
         let cacheKey = Self.cacheKey(rootURL: storage.rootURL, fileName: page.drawingFileName)
         if let cached = Self.drawingCache.object(forKey: cacheKey) {
-            return cached.drawing
+            return .loaded(cached.drawing)
         }
 
         do {
@@ -54,10 +90,6 @@ struct DrawingStorageService {
             let url = storage.rootURL
                 .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
                 .appendingPathComponent(page.drawingFileName)
-            guard storage.fileManager.fileExists(atPath: url.path) else {
-                return PKDrawing()
-            }
-
             let data = try Data(contentsOf: url)
             let drawing = try PKDrawing(data: data)
             Self.cache(
@@ -66,9 +98,11 @@ struct DrawingStorageService {
                 rootURL: storage.rootURL,
                 approximateBytes: data.count
             )
-            return drawing
+            return .loaded(drawing)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return .missing
         } catch {
-            return PKDrawing()
+            return .unavailable(DrawingLoadError(underlyingError: error))
         }
     }
 
@@ -142,17 +176,13 @@ struct DrawingStorageService {
                 let url = rootURL
                     .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
                     .appendingPathComponent(fileName)
-                let drawing: PKDrawing
-                let approximateBytes: Int
-
-                if let data = try? Data(contentsOf: url),
-                   let storedDrawing = try? PKDrawing(data: data) {
-                    drawing = storedDrawing
-                    approximateBytes = data.count
-                } else {
-                    drawing = PKDrawing()
-                    approximateBytes = 1
-                }
+                let prefetchedDrawing: (drawing: PKDrawing, approximateBytes: Int)? = {
+                    guard let data = try? Data(contentsOf: url),
+                          let drawing = try? PKDrawing(data: data) else {
+                        return nil
+                    }
+                    return (drawing, data.count)
+                }()
 
                 prefetchLock.lock()
                 guard let currentState = prefetchStates[stringKey],
@@ -163,17 +193,27 @@ struct DrawingStorageService {
                 let shouldCache = currentState.cacheVersion == prefetchState.cacheVersion
                     && drawingCache.object(forKey: key) == nil
                 prefetchStates[stringKey] = nil
-                if shouldCache {
+                // A missing, temporarily unreadable, or corrupt file is not the same
+                // thing as a valid blank drawing. Caching a synthetic empty drawing
+                // prevents later loads from retrying disk and can turn a transient
+                // storage failure into permanent data loss when the canvas flushes.
+                if shouldCache, let prefetchedDrawing {
                     drawingCache.setObject(
-                        CachedDrawing(drawing),
+                        CachedDrawing(prefetchedDrawing.drawing),
                         forKey: key,
-                        cost: max(approximateBytes, 1)
+                        cost: max(prefetchedDrawing.approximateBytes, 1)
                     )
                 }
                 prefetchLock.unlock()
             }
         }
     }
+
+#if DEBUG
+    static func waitForPendingPrefetchesForTesting() {
+        prefetchQueue.sync {}
+    }
+#endif
 
     private static func cacheKey(rootURL: URL, fileName: String) -> NSString {
         "\(rootURL.standardizedFileURL.path)/\(StorageDirectory.drawings.rawValue)/\(fileName)" as NSString

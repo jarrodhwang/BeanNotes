@@ -64,6 +64,7 @@ struct NotePageRenderSnapshot: Sendable {
     var backgroundColorHex: String
     var width: Double
     var height: Double
+    var contentRevision: String
     var themeRaw: String
     var showsBeanArtwork: Bool
     var rendersPageBackground: Bool
@@ -94,6 +95,7 @@ struct NotePageRenderSnapshot: Sendable {
         self.backgroundColorHex = page.backgroundColorHex
         self.width = Double(pageSize.width)
         self.height = Double(pageSize.height)
+        self.contentRevision = Self.contentRevision(for: page)
         self.themeRaw = theme.rawValue
         self.showsBeanArtwork = showsBeanArtwork ?? NoteBackground.showsArtwork(for: theme)
         self.rendersPageBackground = rendersPageBackground
@@ -108,6 +110,17 @@ struct NotePageRenderSnapshot: Sendable {
 
     nonisolated var theme: BeanNotesTheme {
         BeanNotesTheme(rawValue: themeRaw) ?? .standard
+    }
+
+    @MainActor
+    static func contentRevision(for page: NotePage) -> String {
+        let pageSize = page.pageSize
+        let updated = page.updatedAt.timeIntervalSinceReferenceDate.bitPattern
+        let width = Double(pageSize.width).bitPattern
+        let height = Double(pageSize.height).bitPattern
+        return [updated, width, height]
+            .map { String($0, radix: 16) }
+            .joined(separator: "-")
     }
 }
 
@@ -139,21 +152,24 @@ struct ThumbnailService {
     nonisolated static func thumbnailFileName(
         pageID: UUID,
         theme: BeanNotesTheme,
+        contentRevision: String,
         showsBeanArtwork: Bool = false
     ) -> String {
         let artwork = showsBeanArtwork ? "bean-on" : "bean-off"
-        return "\(pageID.uuidString)-\(theme.rawValue)-\(artwork)-v\(thumbnailRenderVersion).jpg"
+        return "\(pageID.uuidString)-\(contentRevision)-\(theme.rawValue)-\(artwork)-v\(thumbnailRenderVersion).jpg"
     }
 
     nonisolated static func isCurrentThumbnailPath(
         _ relativePath: String,
         pageID: UUID,
         theme: BeanNotesTheme,
+        contentRevision: String,
         showsBeanArtwork: Bool = false
     ) -> Bool {
         URL(fileURLWithPath: relativePath).lastPathComponent == thumbnailFileName(
             pageID: pageID,
             theme: theme,
+            contentRevision: contentRevision,
             showsBeanArtwork: showsBeanArtwork
         )
     }
@@ -171,7 +187,15 @@ struct ThumbnailService {
             theme: resolvedTheme,
             showsBeanArtwork: resolvedShowsArtwork
         )
-        let drawing = drawingStorage.loadDrawing(for: page)
+        let drawing: PKDrawing
+        switch drawingStorage.loadDrawingResult(for: page) {
+        case let .loaded(loadedDrawing):
+            drawing = loadedDrawing
+        case .missing:
+            drawing = PKDrawing()
+        case let .unavailable(error):
+            throw error
+        }
         let thumbnail = Self.renderThumbnailImage(
             snapshot: snapshot,
             drawing: drawing,
@@ -182,6 +206,7 @@ struct ThumbnailService {
         let fileName = Self.thumbnailFileName(
             pageID: page.id,
             theme: resolvedTheme,
+            contentRevision: snapshot.contentRevision,
             showsBeanArtwork: snapshot.showsBeanArtwork
         )
         let stored = try storage.saveData(
@@ -218,6 +243,7 @@ struct ThumbnailService {
         let fileName = Self.thumbnailFileName(
             pageID: page.id,
             theme: resolvedTheme,
+            contentRevision: snapshot.contentRevision,
             showsBeanArtwork: snapshot.showsBeanArtwork
         )
         let data = try await Self.renderThumbnailData(
@@ -229,7 +255,8 @@ struct ThumbnailService {
         )
         try Task.checkCancellation()
         guard resolvedTheme == .currentFromDefaults(),
-              resolvedShowsArtwork == NoteBackground.showsArtwork(for: resolvedTheme) else {
+              resolvedShowsArtwork == NoteBackground.showsArtwork(for: resolvedTheme),
+              snapshot.contentRevision == NotePageRenderSnapshot.contentRevision(for: page) else {
             throw CancellationError()
         }
 
@@ -244,7 +271,8 @@ struct ThumbnailService {
 
         guard !Task.isCancelled,
               resolvedTheme == .currentFromDefaults(),
-              resolvedShowsArtwork == NoteBackground.showsArtwork(for: resolvedTheme) else {
+              resolvedShowsArtwork == NoteBackground.showsArtwork(for: resolvedTheme),
+              snapshot.contentRevision == NotePageRenderSnapshot.contentRevision(for: page) else {
             if page.thumbnailFileName != stored.relativePath {
                 try? storage.removeFile(relativePath: stored.relativePath)
             }
@@ -471,31 +499,26 @@ struct ThumbnailService {
     }
 
     nonisolated static func loadDrawing(fileName: String, rootURL: URL) -> PKDrawing {
+        (try? loadDrawingForRendering(fileName: fileName, rootURL: rootURL)) ?? PKDrawing()
+    }
+
+    nonisolated static func loadDrawingForExport(fileName: String, rootURL: URL) throws -> PKDrawing {
+        try loadDrawingForRendering(fileName: fileName, rootURL: rootURL)
+    }
+
+    nonisolated private static func loadDrawingForRendering(
+        fileName: String,
+        rootURL: URL
+    ) throws -> PKDrawing {
         let drawingURL = rootURL
             .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
             .appendingPathComponent(fileName)
 
         do {
-            guard FileManager.default.fileExists(atPath: drawingURL.path) else {
-                return PKDrawing()
-            }
-
             return try PKDrawing(data: Data(contentsOf: drawingURL))
-        } catch {
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return PKDrawing()
         }
-    }
-
-    nonisolated static func loadDrawingForExport(fileName: String, rootURL: URL) throws -> PKDrawing {
-        let drawingURL = rootURL
-            .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
-            .appendingPathComponent(fileName)
-
-        guard FileManager.default.fileExists(atPath: drawingURL.path) else {
-            return PKDrawing()
-        }
-
-        return try PKDrawing(data: Data(contentsOf: drawingURL))
     }
 
     nonisolated private static func renderThumbnailData(
@@ -511,8 +534,8 @@ struct ThumbnailService {
                 // Capture live cached ink at request time so cache eviction cannot make
                 // a preview lag behind its debounced disk save. Cache misses perform all
                 // file I/O and decoding here on the detached utility task.
-                let drawing = cachedDrawing?.drawing
-                    ?? loadDrawing(
+                let drawing = try cachedDrawing?.drawing
+                    ?? loadDrawingForRendering(
                         fileName: drawingFileName,
                         rootURL: rootURL
                     )

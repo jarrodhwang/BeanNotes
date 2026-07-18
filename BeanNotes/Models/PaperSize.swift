@@ -92,6 +92,30 @@ enum PaperSize: String, CaseIterable, Identifiable {
         }
     }
 
+    static func configuredDimensions(
+        selectionRawValue: String,
+        customWidth: Double,
+        customHeight: Double
+    ) -> CGSize {
+        if selectionRawValue == CustomPaperSize.selectionRawValue {
+            return CustomPaperSize.dimensions(width: customWidth, height: customHeight)
+        }
+
+        return (PaperSize(rawValue: selectionRawValue) ?? defaultPaperSize).dimensions
+    }
+
+    static func configuredDefaultDimensions(in defaults: UserDefaults = .standard) -> CGSize {
+        configuredDimensions(
+            selectionRawValue: defaults.string(forKey: storageKey) ?? defaultPaperSize.rawValue,
+            customWidth: defaults.object(forKey: CustomPaperSize.widthStorageKey) == nil
+                ? CustomPaperSize.defaultDimensions.width
+                : defaults.double(forKey: CustomPaperSize.widthStorageKey),
+            customHeight: defaults.object(forKey: CustomPaperSize.heightStorageKey) == nil
+                ? CustomPaperSize.defaultDimensions.height
+                : defaults.double(forKey: CustomPaperSize.heightStorageKey)
+        )
+    }
+
     func fits(minimumSize: CGSize) -> Bool {
         dimensions.width >= minimumSize.width
             && dimensions.height >= minimumSize.height

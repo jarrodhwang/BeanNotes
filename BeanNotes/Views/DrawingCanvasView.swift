@@ -475,6 +475,15 @@ struct DrawingCanvasView: UIViewRepresentable {
     }
 
     final class CanvasContainerView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+        struct ContinuousDrawingLoadBundle {
+            var drawing: PKDrawing?
+            var results: [(NotePage, DrawingStorageService.LoadResult)]
+
+            var firstError: Error? {
+                results.lazy.compactMap { $0.1.error }.first
+            }
+        }
+
         private struct ContinuousStrokePointSignature: Hashable {
             var x: Int64
             var y: Int64
@@ -1368,6 +1377,17 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
+            let loadBundle = continuousDrawingLoadBundle(storage: drawingStorage)
+            if loadBundle.drawing == nil, let continuousPageView {
+                // Keep the already materialized drawing when a relayout encounters a
+                // transient read failure. Replacing it with a partial aggregate could
+                // erase the page that failed to load on the next split save.
+                continuousPageView.frame = drawingFrame
+                continuousPageView.applyInputMode(inputMode)
+                continuousPageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
+                return
+            }
+
             releaseContinuousPageView(flushDrawingBeforeRelease: false)
             let pageView = PageCanvasView(frame: drawingFrame)
             continuousPageView = pageView
@@ -1375,7 +1395,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageView.configureContinuousDrawingOverlay(
                 representativePage: representativePage,
                 pageSize: drawingFrame.size,
-                drawing: joinedContinuousDrawing(storage: drawingStorage),
+                drawing: loadBundle.drawing ?? PKDrawing(),
+                drawingLoadResults: loadBundle.results,
                 inputMode: inputMode,
                 coordinator: coordinator,
                 pageIDForPageAction: { [weak self] localPoint in
@@ -1403,18 +1424,30 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
         }
 
-        private func joinedContinuousDrawing(storage: DrawingStorageService) -> PKDrawing {
-            guard let drawingFrame = continuousDrawingFrame else { return PKDrawing() }
+        private func continuousDrawingLoadBundle(
+            storage: DrawingStorageService
+        ) -> ContinuousDrawingLoadBundle {
+            guard let drawingFrame = continuousDrawingFrame else {
+                return ContinuousDrawingLoadBundle(drawing: PKDrawing(), results: [])
+            }
 
             var joinedStrokes: [PKStroke] = []
             var seenStrokes: Set<ContinuousStrokeSignature> = []
+            var results: [(NotePage, DrawingStorageService.LoadResult)] = []
+            var encounteredUnavailableDrawing = false
             for id in orderedPageIDs {
                 guard let page = pagesByID[id], let frame = pageFrames[id] else { continue }
+                let loadResult = storage.loadDrawingResult(for: page)
+                results.append((page, loadResult))
+                if loadResult.error != nil {
+                    encounteredUnavailableDrawing = true
+                    continue
+                }
                 let translation = CGAffineTransform(
                     translationX: frame.minX - drawingFrame.minX,
                     y: frame.minY - drawingFrame.minY
                 )
-                let translatedDrawing = storage.loadDrawing(for: page).transformed(using: translation)
+                let translatedDrawing = loadResult.drawing.transformed(using: translation)
                 for stroke in translatedDrawing.strokes {
                     let signature = continuousStrokeSignature(stroke)
                     if seenStrokes.insert(signature).inserted {
@@ -1422,7 +1455,20 @@ struct DrawingCanvasView: UIViewRepresentable {
                     }
                 }
             }
-            return PKDrawing(strokes: joinedStrokes)
+            return ContinuousDrawingLoadBundle(
+                drawing: encounteredUnavailableDrawing ? nil : PKDrawing(strokes: joinedStrokes),
+                results: results
+            )
+        }
+
+        func retryContinuousDrawingLoad(
+            for canvasView: PKCanvasView
+        ) -> ContinuousDrawingLoadBundle? {
+            guard let continuousPageView,
+                  continuousPageView.canvasView === canvasView,
+                  let drawingStorage else { return nil }
+
+            return continuousDrawingLoadBundle(storage: drawingStorage)
         }
 
         private func continuousStrokeSignature(_ stroke: PKStroke) -> ContinuousStrokeSignature {
@@ -1569,6 +1615,12 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
+            let capturePageIDs = continuousPageView == nil ? [pageID] : orderedPageIDs
+            if let error = coordinator.drawingLoadFailure(for: capturePageIDs) {
+                coordinator.reportCaptureFailure(error, overlay: overlay)
+                return
+            }
+
             let selectionRect = documentRect.offsetBy(dx: -pageFrame.minX, dy: -pageFrame.minY)
             let drawing: PKDrawing
             if let continuousPageView,
@@ -1578,7 +1630,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             } else if let pageView = pageViews[pageID], pageView.canvasView.delegate != nil {
                 drawing = pageView.canvasView.drawing
             } else if let drawingStorage {
-                drawing = drawingStorage.loadDrawing(for: page)
+                switch drawingStorage.loadDrawingResult(for: page) {
+                case let .loaded(loadedDrawing):
+                    drawing = loadedDrawing
+                case .missing:
+                    drawing = PKDrawing()
+                case let .unavailable(error):
+                    coordinator.reportCaptureFailure(error, overlay: overlay)
+                    return
+                }
             } else {
                 drawing = PKDrawing()
             }
@@ -3802,6 +3862,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var laidOutPageBounds: CGRect = .null
         private var drawingPageSizeOverride: CGSize?
         private var isDrawingSurfaceEnabled = true
+        private var isDrawingLoadBlocked = false
         private var activeDrawingViewportRect: CGRect = .null
         private var nativeZoomScale: CGFloat = 1
         private var pendingNativeViewport: NativeViewportRequest?
@@ -3827,6 +3888,14 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         var isUsingCustomRubEraser: Bool {
             rubEraserConfiguration != nil
+        }
+
+        var hasActiveDrawingGesture: Bool {
+            [
+                canvasView.drawingGestureRecognizer.state,
+                eraserScopeGesture.state,
+                highlighterStraightLineGesture.state
+            ].contains { $0 == .began || $0 == .changed }
         }
 
         private var usesCustomEraserInput: Bool {
@@ -3878,6 +3947,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageActionRequested: @escaping (UUID, NotePageContextAction) -> Void = { _, _ in },
             pageContextMenuWillOpen: @escaping (UUID) -> Void = { _ in }
         ) {
+            var drawingLoadResults: [(NotePage, DrawingStorageService.LoadResult)]?
             let wasDrawingSurfaceEnabled = isDrawingSurfaceEnabled
             let wasRegisteredForDrawing = canvasView.delegate != nil
             let isNewPage = self.page?.id != page.id
@@ -3914,8 +3984,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             updateDrawingInteractionRecognizers()
 
             applyInputMode(inputMode)
-            canvasView.isUserInteractionEnabled = drawingEnabled
+            canvasView.isUserInteractionEnabled = drawingEnabled && !isDrawingLoadBlocked
             if !drawingEnabled {
+                setDrawingLoadBlocked(false)
                 drawingViewportView.isHidden = true
                 canvasView.delegate = nil
                 canvasView.drawing = PKDrawing()
@@ -3938,14 +4009,22 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if drawingEnabled, isNewPage || !wasDrawingSurfaceEnabled {
                 resetNativeCanvas(pageSize: page.pageSize)
-                canvasView.drawing = drawingStorage.loadDrawing(for: page)
+                let loadResult = drawingStorage.loadDrawingResult(for: page)
+                drawingLoadResults = [(page, loadResult)]
+                canvasView.drawing = loadResult.drawing
+                setDrawingLoadBlocked(loadResult.error != nil)
             } else if drawingEnabled, pageSizeChanged {
                 resetNativeCanvas(pageSize: page.pageSize)
             }
 
             if drawingEnabled {
                 canvasView.delegate = coordinator
-                coordinator.register(canvasView: canvasView, page: page, pageView: self)
+                coordinator.register(
+                    canvasView: canvasView,
+                    page: page,
+                    pageView: self,
+                    drawingLoadResults: drawingLoadResults
+                )
             } else if wasDrawingSurfaceEnabled, wasRegisteredForDrawing {
                 coordinator.unregister(
                     canvasView: canvasView,
@@ -3962,6 +4041,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             representativePage: NotePage,
             pageSize: CGSize,
             drawing: PKDrawing,
+            drawingLoadResults: [(NotePage, DrawingStorageService.LoadResult)],
             inputMode: DrawingInputMode,
             coordinator: Coordinator,
             pageIDForPageAction: @escaping (CGPoint) -> UUID?,
@@ -3995,7 +4075,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             foregroundImageContainerView.isHidden = true
             attachmentSelectionGesture?.isEnabled = false
             updateDrawingInteractionRecognizers()
-            canvasView.isUserInteractionEnabled = true
+            let hasUnavailableDrawing = drawingLoadResults.contains { $0.1.error != nil }
+            setDrawingLoadBlocked(hasUnavailableDrawing)
             applyInputMode(inputMode)
 
             if needsCanvasReset {
@@ -4009,7 +4090,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
             canvasView.drawing = drawing
             canvasView.delegate = coordinator
-            coordinator.register(canvasView: canvasView, page: representativePage, pageView: self)
+            coordinator.register(
+                canvasView: canvasView,
+                page: representativePage,
+                pageView: self,
+                drawingLoadResults: drawingLoadResults
+            )
             layoutPage()
             restoreDrawingLayerOrder()
         }
@@ -4028,10 +4114,17 @@ struct DrawingCanvasView: UIViewRepresentable {
             // Reassert the editable state whenever SwiftUI configures the canvas so
             // a recycled page cannot remain permanently non-interactive. Custom ink
             // tools own this recognizer's input while they render their own preview.
-            canvasView.isUserInteractionEnabled = true
+            canvasView.isUserInteractionEnabled = isDrawingSurfaceEnabled && !isDrawingLoadBlocked
             updateDrawingInteractionRecognizers()
             guard canvasView.drawingPolicy != inputMode.drawingPolicy else { return }
             canvasView.drawingPolicy = inputMode.drawingPolicy
+        }
+
+        func setDrawingLoadBlocked(_ blocked: Bool) {
+            guard isDrawingLoadBlocked != blocked else { return }
+            isDrawingLoadBlocked = blocked
+            canvasView.isUserInteractionEnabled = isDrawingSurfaceEnabled && !blocked
+            updateDrawingInteractionRecognizers()
         }
 
         func setCaptureInteractionEnabled(_ enabled: Bool) {
@@ -4961,7 +5054,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func updateDrawingInteractionRecognizers() {
-            let allowsCustomInput = !isCaptureInteractionEnabled
+            let allowsCustomInput = !isCaptureInteractionEnabled && !isDrawingLoadBlocked
             eraserScopeGesture.isEnabled = allowsCustomInput && eraserPreviewDiameter != nil
             highlighterStraightLineGesture.isEnabled = allowsCustomInput && usesCustomHighlighterInput
             pageActionLongPressGesture?.isEnabled = allowsPageActionLongPress
@@ -6451,6 +6544,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        private enum DrawingSaveError: LocalizedError {
+            case snapshotUnavailable
+
+            var errorDescription: String? {
+                "The current drawing could not be captured for saving."
+            }
+        }
+
         var parent: DrawingCanvasView
         var selectedPageID: UUID?
         private(set) var pendingVisiblePageID: UUID?
@@ -6477,7 +6578,16 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var firstDirtyTimestamps: [UUID: CFTimeInterval] = [:]
         private var activeToolCanvasIDs: Set<ObjectIdentifier> = []
         private var deferredExportPreparationRequestID: Int?
+        private var deferredExportPreparationDeadline: CFTimeInterval?
+        private var deferredExportFallbackWorkItem: DispatchWorkItem?
         private var deferredDrawingChangeNotifications: Set<UUID> = []
+        private var loadedDrawingDataByPageID: [UUID: Data] = [:]
+        private var drawingChangeRevisionsByPageID: [UUID: UInt64] = [:]
+        private var registeredPageIDsByCanvasID: [ObjectIdentifier: Set<UUID>] = [:]
+        private var drawingLoadPagesByPageID: [UUID: NotePage] = [:]
+        private var unavailableDrawingErrorsByPageID: [UUID: Error] = [:]
+        private var drawingLoadRetryWorkItems: [ObjectIdentifier: DispatchWorkItem] = [:]
+        private var drawingLoadRetryAttempts: [ObjectIdentifier: Int] = [:]
         var toolStateCancellable: AnyCancellable?
         weak var observedToolState: DrawingToolState?
         weak var containerView: CanvasContainerView?
@@ -6513,6 +6623,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             var drawing: PKDrawing
             var rootURL: URL
             var drawingFileName: String
+            var drawingChangeRevision: UInt64
             var token: UUID?
         }
 
@@ -6603,6 +6714,18 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        func drawingLoadFailure(for pageIDs: [UUID]) -> Error? {
+            unavailableDrawingError(for: pageIDs)
+        }
+
+        func reportCaptureFailure(
+            _ error: Error,
+            overlay: NoteCaptureSelectionOverlayView
+        ) {
+            overlay.showCopyFailed()
+            parent.captureFailed(error)
+        }
+
         private func notifyVisiblePageChanged(_ pageID: UUID, selectionRevision: UInt64) {
             let selectedPageID = parent.$selectedPageID
             let currentSelectionRevision = parent.selectionRevision
@@ -6640,7 +6763,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 guard let self,
                       self.pendingSaves.isEmpty,
                       self.dirtyPageIDs.isEmpty,
-                      !self.hasAnyInFlightSaves else { return }
+                      !self.hasAnyInFlightSaves,
+                      self.unavailableDrawingErrorsByPageID.isEmpty else { return }
                 saveSucceeded()
             }
         }
@@ -6749,6 +6873,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         deinit {
+            deferredExportFallbackWorkItem?.cancel()
+            drawingLoadRetryWorkItems.values.forEach { $0.cancel() }
             removePencilInteraction()
             for observer in lifecycleObservers {
                 NotificationCenter.default.removeObserver(observer)
@@ -6802,11 +6928,59 @@ struct DrawingCanvasView: UIViewRepresentable {
         func register(
             canvasView: PKCanvasView,
             page: NotePage,
-            pageView: PageCanvasView? = nil
+            pageView: PageCanvasView? = nil,
+            drawingLoadResults: [(NotePage, DrawingStorageService.LoadResult)]? = nil
         ) {
             let id = ObjectIdentifier(canvasView)
             canvasPages[id] = page
             canvasPageViews[id] = WeakPageCanvasView(pageView)
+            if let drawingLoadResults {
+                let pageIDs = Set(drawingLoadResults.map { $0.0.id })
+                registeredPageIDsByCanvasID[id] = pageIDs
+                var firstNewError: Error?
+                for (loadedPage, result) in drawingLoadResults {
+                    drawingLoadPagesByPageID[loadedPage.id] = loadedPage
+                    switch result {
+                    case .loaded:
+                        unavailableDrawingErrorsByPageID[loadedPage.id] = nil
+                    case .missing:
+                        // A missing file is a valid blank only when there was no
+                        // earlier read/decode failure for this page. Internal canvas
+                        // rebuilds can overlap an atomic or coordinated replacement.
+                        break
+                    case let .unavailable(error):
+                        if unavailableDrawingErrorsByPageID[loadedPage.id] == nil,
+                           firstNewError == nil {
+                            firstNewError = error
+                        }
+                        unavailableDrawingErrorsByPageID[loadedPage.id] = error
+                    }
+                }
+
+                let isBlocked = pageIDs.contains {
+                    unavailableDrawingErrorsByPageID[$0] != nil
+                }
+                pageView?.setDrawingLoadBlocked(isBlocked)
+                if isBlocked {
+                    if let firstNewError {
+                        notifySaveFailed(firstNewError)
+                    }
+                    scheduleDrawingLoadRetry(for: canvasView)
+                } else {
+                    cancelDrawingLoadRetry(for: id)
+                    recordLoadedDrawingBaselineIfClean(canvasView, page: page)
+                }
+            } else {
+                let registeredPageIDs = registeredPageIDsByCanvasID[id] ?? [page.id]
+                registeredPageIDsByCanvasID[id] = registeredPageIDs
+                let isBlocked = registeredPageIDs.contains {
+                    unavailableDrawingErrorsByPageID[$0] != nil
+                }
+                pageView?.setDrawingLoadBlocked(isBlocked)
+                if !isBlocked {
+                    recordLoadedDrawingBaselineIfClean(canvasView, page: page)
+                }
+            }
             pageView?.objectEraserDidBegin = { [weak self, weak canvasView] in
                 guard let self, let canvasView else { return }
                 self.canvasViewDidBeginUsingTool(canvasView)
@@ -6850,12 +7024,26 @@ struct DrawingCanvasView: UIViewRepresentable {
             flushDrawingBeforeRelease: Bool = true
         ) {
             let id = ObjectIdentifier(canvasView)
+            let affectedPageIDs = registeredPageIDsByCanvasID[id] ?? [page.id]
+            if activeToolCanvasIDs.contains(id) {
+                canvasViewDidEndUsingTool(canvasView)
+            }
             if flushDrawingBeforeRelease {
                 flushDrawingBeforeCanvasRelease(canvasView, for: page)
             }
-            pendingSaves[page.id]?.cancel()
-            pendingSaves[page.id] = nil
-            pendingSaveTokens[page.id] = nil
+            for pageID in affectedPageIDs {
+                pendingSaves[pageID]?.cancel()
+                pendingSaves[pageID] = nil
+                pendingSaveTokens[pageID] = nil
+                loadedDrawingDataByPageID[pageID] = nil
+                drawingChangeRevisionsByPageID[pageID] = nil
+                if !parent.pages.contains(where: { $0.id == pageID }) {
+                    drawingLoadPagesByPageID[pageID] = nil
+                    unavailableDrawingErrorsByPageID[pageID] = nil
+                }
+            }
+            registeredPageIDsByCanvasID[id] = nil
+            cancelDrawingLoadRetry(for: id)
             if toolPickerObservedCanvasIDs.remove(id) != nil {
                 toolPicker.removeObserver(canvasView)
             }
@@ -6878,11 +7066,154 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         }
 
+        private func recordLoadedDrawingBaselineIfClean(
+            _ canvasView: PKCanvasView,
+            page: NotePage
+        ) {
+            if containerView?.isContinuousCanvas(canvasView) == true,
+               let pageDrawings = containerView?.continuousPageDrawings(from: canvasView.drawing) {
+                for (continuousPage, drawing) in pageDrawings
+                where !hasPendingDrawingWork(for: continuousPage.id) {
+                    loadedDrawingDataByPageID[continuousPage.id] = drawing.dataRepresentation()
+                }
+            } else if !hasPendingDrawingWork(for: page.id) {
+                loadedDrawingDataByPageID[page.id] = canvasView.drawing.dataRepresentation()
+            }
+        }
+
+        private func scheduleDrawingLoadRetry(for canvasView: PKCanvasView) {
+            let canvasID = ObjectIdentifier(canvasView)
+            guard drawingLoadRetryWorkItems[canvasID] == nil else { return }
+
+            let attempt = (drawingLoadRetryAttempts[canvasID] ?? 0) + 1
+            let delay = Self.drawingLoadRetryDelay(forAttempt: attempt)
+            drawingLoadRetryAttempts[canvasID] = attempt
+
+            let retry = DispatchWorkItem { [weak self, weak canvasView] in
+                guard let self else { return }
+                self.drawingLoadRetryWorkItems[canvasID] = nil
+                guard let canvasView,
+                      self.registeredCanvasIDs.contains(canvasID) else { return }
+                self.retryUnavailableDrawingLoad(
+                    for: canvasView,
+                    attempt: attempt
+                )
+            }
+            drawingLoadRetryWorkItems[canvasID] = retry
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: retry)
+        }
+
+        static func drawingLoadRetryDelay(forAttempt attempt: Int) -> TimeInterval {
+            let initialDelays: [TimeInterval] = [0.25, 0.75, 1.5, 3]
+            guard attempt > 0 else { return initialDelays[0] }
+            guard attempt <= initialDelays.count else { return 10 }
+            return initialDelays[attempt - 1]
+        }
+
+        private func retryUnavailableDrawingLoad(
+            for canvasView: PKCanvasView,
+            attempt: Int
+        ) {
+            let canvasID = ObjectIdentifier(canvasView)
+            let pageIDs = registeredPageIDsByCanvasID[canvasID] ?? []
+            guard !pageIDs.isEmpty else { return }
+            guard !activeToolCanvasIDs.contains(canvasID),
+                  !pageIDs.contains(where: hasPendingDrawingWork(for:)) else {
+                scheduleDrawingLoadRetry(for: canvasView)
+                return
+            }
+
+            let resolved: Bool
+            if containerView?.isContinuousCanvas(canvasView) == true {
+                guard let loadBundle = containerView?.retryContinuousDrawingLoad(for: canvasView) else {
+                    scheduleDrawingLoadRetry(for: canvasView)
+                    return
+                }
+                updateUnavailableDrawingErrors(from: loadBundle.results)
+                if let drawing = loadBundle.drawing,
+                   !pageIDs.contains(where: { unavailableDrawingErrorsByPageID[$0] != nil }) {
+                    let delegate = canvasView.delegate
+                    canvasView.delegate = nil
+                    canvasView.drawing = drawing
+                    canvasView.delegate = delegate
+                    resolved = true
+                } else {
+                    resolved = false
+                }
+            } else if let pageID = pageIDs.first,
+                      let page = drawingLoadPagesByPageID[pageID] {
+                let loadResult = parent.drawingStorage.loadDrawingResult(for: page)
+                switch loadResult {
+                case let .loaded(drawing):
+                    let delegate = canvasView.delegate
+                    canvasView.delegate = nil
+                    canvasView.drawing = drawing
+                    canvasView.delegate = delegate
+                    unavailableDrawingErrorsByPageID[pageID] = nil
+                    resolved = true
+                case .missing:
+                    // A file that was previously present but unreadable disappearing
+                    // is not proof that it became a legitimate blank page.
+                    resolved = false
+                case let .unavailable(error):
+                    unavailableDrawingErrorsByPageID[pageID] = error
+                    resolved = false
+                }
+            } else {
+                resolved = false
+            }
+
+            guard resolved else {
+                if attempt == 4,
+                   let error = pageIDs.lazy.compactMap({ self.unavailableDrawingErrorsByPageID[$0] }).first {
+                    notifySaveFailed(error)
+                }
+                scheduleDrawingLoadRetry(for: canvasView)
+                return
+            }
+
+            drawingLoadRetryAttempts[canvasID] = nil
+            canvasPageViews[canvasID]?.value?.setDrawingLoadBlocked(false)
+            if let page = canvasPages[canvasID] {
+                recordLoadedDrawingBaselineIfClean(canvasView, page: page)
+            }
+            notifySaveSucceededIfClean()
+        }
+
+        private func updateUnavailableDrawingErrors(
+            from results: [(NotePage, DrawingStorageService.LoadResult)]
+        ) {
+            for (page, result) in results {
+                drawingLoadPagesByPageID[page.id] = page
+                switch result {
+                case .loaded:
+                    unavailableDrawingErrorsByPageID[page.id] = nil
+                case .missing:
+                    // Preserve an existing unavailable state during retry; the file
+                    // may be between coordinated replacement steps.
+                    break
+                case let .unavailable(error):
+                    unavailableDrawingErrorsByPageID[page.id] = error
+                }
+            }
+        }
+
+        private func cancelDrawingLoadRetry(for canvasID: ObjectIdentifier) {
+            drawingLoadRetryWorkItems[canvasID]?.cancel()
+            drawingLoadRetryWorkItems[canvasID] = nil
+            drawingLoadRetryAttempts[canvasID] = nil
+        }
+
         func hasPendingDrawingWork(for pageID: UUID) -> Bool {
             dirtyPageIDs.contains(pageID)
                 || pendingSaves[pageID] != nil
                 || pendingSaveTokens[pageID] != nil
                 || hasInFlightSave(for: pageID)
+        }
+
+        private func unavailableDrawingError<S: Sequence>(for pageIDs: S) -> Error?
+        where S.Element == UUID {
+            pageIDs.lazy.compactMap { unavailableDrawingErrorsByPageID[$0] }.first
         }
 
         func selectVisiblePage(_ pageID: UUID) {
@@ -7134,6 +7465,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if containerView?.isContinuousCanvas(canvasView) == true {
                 let pageIDs = containerView?.continuousPageIDs ?? [page.id]
+                advanceDrawingChangeRevisions(for: pageIDs)
                 let wasAlreadyDirty = pageIDs.contains {
                     dirtyPageIDs.contains($0)
                         || pendingSaves[$0] != nil
@@ -7144,13 +7476,19 @@ struct DrawingCanvasView: UIViewRepresentable {
                 if activeToolCanvasIDs.contains(key) {
                     if !wasAlreadyDirty {
                         deferredDrawingChangeNotifications.insert(page.id)
+                        for pageID in pageIDs {
+                            notifyDrawingChanged(pageID: pageID)
+                        }
+                        notifySaveStarted()
                     }
                     return
                 }
 
                 canvasPageViews[key]?.value?.drawingDidChange()
                 if !wasAlreadyDirty {
-                    notifyDrawingChanged(pageID: page.id)
+                    for pageID in pageIDs {
+                        notifyDrawingChanged(pageID: pageID)
+                    }
                     notifySaveStarted()
                 }
                 scheduleContinuousDrawingSave(canvasView)
@@ -7158,6 +7496,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
+            advanceDrawingChangeRevision(for: page.id)
             let didBecomeDirty = markDirty(page.id)
             let wasAlreadyDirty = !didBecomeDirty
                 || pendingSaves[page.id] != nil
@@ -7166,6 +7505,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             if activeToolCanvasIDs.contains(key) {
                 if !wasAlreadyDirty {
                     deferredDrawingChangeNotifications.insert(page.id)
+                    notifyDrawingChanged(pageID: page.id)
+                    notifySaveStarted()
                 }
                 return
             }
@@ -7182,6 +7523,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func scheduleContinuousDrawingSave(_ canvasView: PKCanvasView) {
             guard let pageIDs = containerView?.continuousPageIDs, !pageIDs.isEmpty else { return }
+            if let error = unavailableDrawingError(for: pageIDs) {
+                notifySaveFailed(error)
+                return
+            }
+            notifySaveStarted()
 
             let token = UUID()
             for pageID in pageIDs {
@@ -7197,36 +7543,54 @@ struct DrawingCanvasView: UIViewRepresentable {
                 let activePageIDs = Set(pageIDs.filter {
                     self.pendingSaveTokens[$0] == token
                 })
-                for pageID in activePageIDs {
-                    self.pendingSaves[pageID] = nil
-                    self.pendingSaveTokens[pageID] = nil
-                }
-                guard !activePageIDs.isEmpty,
-                      let canvasView,
+                guard !activePageIDs.isEmpty else { return }
+                guard let canvasView,
                       let pageDrawings = self.containerView?.continuousPageDrawings(
-                        from: canvasView.drawing
-                      ) else { return }
+                          from: canvasView.drawing
+                      ) else {
+                    self.failPendingSave(
+                        pageIDs: activePageIDs,
+                        token: token,
+                        error: DrawingSaveError.snapshotUnavailable
+                    )
+                    return
+                }
 
                 let rootURL = self.parent.drawingStorage.storage.rootURL
+                var capturedPageIDs: Set<UUID> = []
                 for (page, drawing) in pageDrawings where activePageIDs.contains(page.id) {
                     let pageID = page.id
+                    let drawingChangeRevision = self.drawingChangeRevision(for: pageID)
+                    capturedPageIDs.insert(pageID)
+                    self.pendingSaves[pageID] = nil
+                    self.pendingSaveTokens[pageID] = nil
                     let drawingFileName = page.drawingFileName
                     self.beginInFlightSave(pageID: pageID, token: token)
-                    DrawingStorageService.cache(
-                        drawing,
-                        fileName: drawingFileName,
-                        rootURL: rootURL
-                    )
                     Self.writeDrawing(
                         drawing,
                         rootURL: rootURL,
                         drawingFileName: drawingFileName,
-                        onSuccess: { [weak self] in
-                            self?.reportDrawingSaveSuccess(pageID: pageID, token: token)
+                        onSuccess: { [weak self] savedData in
+                            self?.reportDrawingSaveSuccess(
+                                pageID: pageID,
+                                token: token,
+                                page: page,
+                                savedDrawingData: savedData,
+                                drawingChangeRevision: drawingChangeRevision
+                            )
                         },
                         onFailure: { [weak self] error in
                             self?.reportDrawingSaveFailure(error, pageID: pageID, token: token)
                         }
+                    )
+                }
+
+                let missingPageIDs = activePageIDs.subtracting(capturedPageIDs)
+                if !missingPageIDs.isEmpty {
+                    self.failPendingSave(
+                        pageIDs: missingPageIDs,
+                        token: token,
+                        error: DrawingSaveError.snapshotUnavailable
                     )
                 }
             }
@@ -7251,6 +7615,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             drawingProvider: @escaping () -> PKDrawing?
         ) {
             let pageID = page.id
+            if let error = unavailableDrawingErrorsByPageID[pageID] {
+                notifySaveFailed(error)
+                return
+            }
+            notifySaveStarted()
             let rootURL = parent.drawingStorage.storage.rootURL
             let drawingFileName = page.drawingFileName
             let token = UUID()
@@ -7259,21 +7628,33 @@ struct DrawingCanvasView: UIViewRepresentable {
             pendingSaveTokens[pageID] = token
 
             let save = DispatchWorkItem { [weak self] in
-                guard let self,
-                      self.pendingSaveTokens[pageID] == token,
-                      let drawing = drawingProvider() else { return }
+                guard let self, self.pendingSaveTokens[pageID] == token else { return }
+                guard let drawing = drawingProvider() else {
+                    self.failPendingSave(
+                        pageIDs: [pageID],
+                        token: token,
+                        error: DrawingSaveError.snapshotUnavailable
+                    )
+                    return
+                }
 
                 self.pendingSaves[pageID] = nil
                 self.pendingSaveTokens[pageID] = nil
                 self.beginInFlightSave(pageID: pageID, token: token)
+                let drawingChangeRevision = self.drawingChangeRevision(for: pageID)
 
-                DrawingStorageService.cache(drawing, fileName: drawingFileName, rootURL: rootURL)
                 Self.writeDrawing(
                     drawing,
                     rootURL: rootURL,
                     drawingFileName: drawingFileName,
-                    onSuccess: { [weak self] in
-                        self?.reportDrawingSaveSuccess(pageID: pageID, token: token)
+                    onSuccess: { [weak self] savedData in
+                        self?.reportDrawingSaveSuccess(
+                            pageID: pageID,
+                            token: token,
+                            page: page,
+                            savedDrawingData: savedData,
+                            drawingChangeRevision: drawingChangeRevision
+                        )
                     },
                     onFailure: { [weak self] error in
                         self?.reportDrawingSaveFailure(error, pageID: pageID, token: token)
@@ -7288,7 +7669,29 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
         }
 
+        private func failPendingSave<S: Sequence>(
+            pageIDs: S,
+            token: UUID,
+            error: Error
+        ) where S.Element == UUID {
+            var failedPageIDs: [UUID] = []
+            for pageID in pageIDs where pendingSaveTokens[pageID] == token {
+                pendingSaves[pageID]?.cancel()
+                pendingSaves[pageID] = nil
+                pendingSaveTokens[pageID] = nil
+                markDirty(pageID)
+                failedPageIDs.append(pageID)
+            }
+            guard !failedPageIDs.isEmpty else { return }
+            notifySaveFailed(error)
+        }
+
         private func flushDrawingBeforeCanvasRelease(_ canvasView: PKCanvasView, for page: NotePage) {
+            let affectedPageIDs = registeredPageIDsByCanvasID[ObjectIdentifier(canvasView)] ?? [page.id]
+            if let error = unavailableDrawingError(for: affectedPageIDs) {
+                notifySaveFailed(error)
+                return
+            }
             if containerView?.isContinuousCanvas(canvasView) == true {
                 saveAllCanvases(force: true)
                 return
@@ -7304,15 +7707,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             let drawingFileName = page.drawingFileName
             let drawing = canvasView.drawing
             notifySaveStarted()
-            DrawingStorageService.cache(drawing, fileName: drawingFileName, rootURL: rootURL)
 
             do {
-                try Self.writeDrawingSynchronously(
+                let savedData = try Self.writeDrawingSynchronously(
                     drawing,
                     rootURL: rootURL,
                     drawingFileName: drawingFileName
                 )
                 page.touch()
+                loadedDrawingDataByPageID[page.id] = savedData
                 markClean(page.id)
                 reportDrawingSaveSuccess()
             } catch {
@@ -7325,15 +7728,19 @@ struct DrawingCanvasView: UIViewRepresentable {
             _ drawing: PKDrawing,
             rootURL: URL,
             drawingFileName: String,
-            onSuccess: @escaping () -> Void,
+            onSuccess: @escaping (Data) -> Void,
             onFailure: @escaping (Error) -> Void
         ) {
             drawingWriteQueue.async {
                 autoreleasepool {
                     do {
-                        try writeDrawingFile(drawing, rootURL: rootURL, drawingFileName: drawingFileName)
+                        let savedData = try writeDrawingFile(
+                            drawing,
+                            rootURL: rootURL,
+                            drawingFileName: drawingFileName
+                        )
                         DispatchQueue.main.async {
-                            onSuccess()
+                            onSuccess(savedData)
                         }
                     } catch {
                         DispatchQueue.main.async {
@@ -7348,13 +7755,16 @@ struct DrawingCanvasView: UIViewRepresentable {
             _ drawing: PKDrawing,
             rootURL: URL,
             drawingFileName: String
-        ) throws {
+        ) throws -> Data {
             if DispatchQueue.getSpecific(key: drawingWriteQueueKey) != nil {
-                try writeDrawingFile(drawing, rootURL: rootURL, drawingFileName: drawingFileName)
-                return
+                return try writeDrawingFile(
+                    drawing,
+                    rootURL: rootURL,
+                    drawingFileName: drawingFileName
+                )
             }
 
-            var result: Result<Void, Error> = .success(())
+            var result: Result<Data, Error>!
             drawingWriteQueue.sync {
                 autoreleasepool {
                     result = Result {
@@ -7362,14 +7772,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                     }
                 }
             }
-            try result.get()
+            return try result.get()
         }
 
         private static func writeDrawingFile(
             _ drawing: PKDrawing,
             rootURL: URL,
             drawingFileName: String
-        ) throws {
+        ) throws -> Data {
             let drawingsURL = rootURL.appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
             try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
             let data = drawing.dataRepresentation()
@@ -7380,17 +7790,34 @@ struct DrawingCanvasView: UIViewRepresentable {
                 rootURL: rootURL,
                 approximateBytes: data.count
             )
+            return data
         }
 
-        private func reportDrawingSaveSuccess(pageID: UUID? = nil, token: UUID? = nil) {
+        private func reportDrawingSaveSuccess(
+            pageID: UUID? = nil,
+            token: UUID? = nil,
+            page: NotePage? = nil,
+            savedDrawingData: Data? = nil,
+            drawingChangeRevision: UInt64? = nil
+        ) {
             if let pageID {
                 if let token {
                     guard finishInFlightSave(pageID: pageID, token: token) else { return }
                 }
 
-                if pendingSaves[pageID] == nil,
+                let savedCurrentDrawing = drawingChangeRevision.map {
+                    $0 == self.drawingChangeRevision(for: pageID)
+                } ?? true
+                if savedCurrentDrawing {
+                    page?.touch()
+                }
+                if savedCurrentDrawing,
+                   pendingSaves[pageID] == nil,
                    pendingSaveTokens[pageID] == nil,
                    !hasInFlightSave(for: pageID) {
+                    if let savedDrawingData {
+                        loadedDrawingDataByPageID[pageID] = savedDrawingData
+                    }
                     markClean(pageID)
                 }
             }
@@ -7425,6 +7852,21 @@ struct DrawingCanvasView: UIViewRepresentable {
                     firstDirtyTimestamps[pageID] = now
                 }
             }
+        }
+
+        private func advanceDrawingChangeRevision(for pageID: UUID) {
+            drawingChangeRevisionsByPageID[pageID, default: 0] &+= 1
+        }
+
+        private func advanceDrawingChangeRevisions<S: Sequence>(for pageIDs: S)
+        where S.Element == UUID {
+            for pageID in pageIDs {
+                advanceDrawingChangeRevision(for: pageID)
+            }
+        }
+
+        private func drawingChangeRevision(for pageID: UUID) -> UInt64 {
+            drawingChangeRevisionsByPageID[pageID, default: 0]
         }
 
         private func markClean(_ pageID: UUID) {
@@ -7500,8 +7942,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if let page = canvasPages[id] {
                 if deferredDrawingChangeNotifications.remove(page.id) != nil {
-                    notifyDrawingChanged(pageID: page.id)
-                    notifySaveStarted()
+                    canvasPageViews[id]?.value?.drawingDidChange()
                 }
                 if containerView?.isContinuousCanvas(canvasView) == true,
                    (containerView?.continuousPageIDs.contains(where: dirtyPageIDs.contains) == true) {
@@ -7570,12 +8011,28 @@ struct DrawingCanvasView: UIViewRepresentable {
                     queue: .main
                 ) { [weak self] _ in
                     self?.handleMemoryWarning()
+                },
+                center.addObserver(
+                    forName: UIApplication.didBecomeActiveNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.restartUnavailableDrawingLoadRetries()
                 }
             ]
         }
 
         private func handleMemoryWarning() {
             containerView?.reduceMemoryFootprint()
+        }
+
+        private func restartUnavailableDrawingLoadRetries() {
+            for (canvasID, pageIDs) in registeredPageIDsByCanvasID
+            where pageIDs.contains(where: { unavailableDrawingErrorsByPageID[$0] != nil }) {
+                guard let canvasView = canvasView(for: canvasID) else { continue }
+                cancelDrawingLoadRetry(for: canvasID)
+                scheduleDrawingLoadRetry(for: canvasView)
+            }
         }
 
         private func saveAllCanvasesInBackgroundTask(reason: String, force: Bool) {
@@ -7604,8 +8061,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                     request.drawing,
                     rootURL: request.rootURL,
                     drawingFileName: request.drawingFileName,
-                    onSuccess: { [weak self] in
-                        self?.reportDrawingSaveSuccess(pageID: request.page.id, token: request.token)
+                    onSuccess: { [weak self] savedData in
+                        self?.reportDrawingSaveSuccess(
+                            pageID: request.page.id,
+                            token: request.token,
+                            page: request.page,
+                            savedDrawingData: savedData,
+                            drawingChangeRevision: request.drawingChangeRevision
+                        )
                         group.leave()
                     },
                     onFailure: { [weak self] error in
@@ -7629,12 +8092,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             for request in requests {
                 if synchronously {
                     do {
-                        try Self.writeDrawingSynchronously(
+                        let savedData = try Self.writeDrawingSynchronously(
                             request.drawing,
                             rootURL: request.rootURL,
                             drawingFileName: request.drawingFileName
                         )
                         request.page.touch()
+                        loadedDrawingDataByPageID[request.page.id] = savedData
                         markClean(request.page.id)
                         savedAtLeastOneCanvas = true
                     } catch {
@@ -7645,8 +8109,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                         request.drawing,
                         rootURL: request.rootURL,
                         drawingFileName: request.drawingFileName,
-                        onSuccess: { [weak self] in
-                            self?.reportDrawingSaveSuccess(pageID: request.page.id, token: request.token)
+                        onSuccess: { [weak self] savedData in
+                            self?.reportDrawingSaveSuccess(
+                                pageID: request.page.id,
+                                token: request.token,
+                                page: request.page,
+                                savedDrawingData: savedData,
+                                drawingChangeRevision: request.drawingChangeRevision
+                            )
                         },
                         onFailure: { [weak self] error in
                             self?.reportDrawingSaveFailure(error, pageID: request.page.id, token: request.token)
@@ -7666,10 +8136,26 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func prepareForExport(requestID: Int) {
             guard activeToolCanvasIDs.isEmpty else {
+                if deferredExportPreparationRequestID != requestID {
+                    deferredExportPreparationDeadline = CACurrentMediaTime() + 5
+                }
                 deferredExportPreparationRequestID = requestID
+                scheduleDeferredExportFallback(requestID: requestID, after: 1)
                 return
             }
+            deferredExportFallbackWorkItem?.cancel()
+            deferredExportFallbackWorkItem = nil
             deferredExportPreparationRequestID = nil
+            deferredExportPreparationDeadline = nil
+
+            if let loadError = unavailableDrawingErrorsByPageID.values.first {
+                notifySaveFailed(loadError)
+                let exportPreparationCompleted = parent.exportPreparationCompleted
+                dispatchToSwiftUI {
+                    exportPreparationCompleted(requestID, .failure(loadError))
+                }
+                return
+            }
 
             let requests = canvasSaveRequests(
                 // PencilKit can deliver its final change callback just after the user taps
@@ -7683,12 +8169,13 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             for request in requests {
                 do {
-                    try Self.writeDrawingSynchronously(
+                    let savedData = try Self.writeDrawingSynchronously(
                         request.drawing,
                         rootURL: request.rootURL,
                         drawingFileName: request.drawingFileName
                     )
                     request.page.touch()
+                    loadedDrawingDataByPageID[request.page.id] = savedData
                     markClean(request.page.id)
                 } catch {
                     markDirty(request.page.id)
@@ -7716,6 +8203,59 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        private func scheduleDeferredExportFallback(
+            requestID: Int,
+            after delay: TimeInterval
+        ) {
+            deferredExportFallbackWorkItem?.cancel()
+            let fallback = DispatchWorkItem { [weak self] in
+                guard let self,
+                      self.deferredExportPreparationRequestID == requestID else { return }
+
+                var stillDrawing = false
+                for canvasID in Array(self.activeToolCanvasIDs) {
+                    guard let canvasView = self.canvasView(for: canvasID) else {
+                        self.activeToolCanvasIDs.remove(canvasID)
+                        continue
+                    }
+                    if self.canvasPageViews[canvasID]?.value?.hasActiveDrawingGesture == true {
+                        stillDrawing = true
+                        continue
+                    }
+                    // The recognizers are idle, so this is a stale PencilKit lifecycle
+                    // flag rather than an in-progress stroke.
+                    self.canvasViewDidEndUsingTool(canvasView)
+                }
+
+                guard self.deferredExportPreparationRequestID == requestID else { return }
+                if self.activeToolCanvasIDs.isEmpty {
+                    self.deferredExportPreparationRequestID = nil
+                    self.prepareForExport(requestID: requestID)
+                } else if stillDrawing,
+                          CACurrentMediaTime() < (self.deferredExportPreparationDeadline ?? 0) {
+                    self.scheduleDeferredExportFallback(requestID: requestID, after: 0.25)
+                } else {
+                    self.failDeferredExportPreparation(requestID: requestID)
+                }
+            }
+            deferredExportFallbackWorkItem = fallback
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: fallback)
+        }
+
+        private func failDeferredExportPreparation(requestID: Int) {
+            guard deferredExportPreparationRequestID == requestID else { return }
+            deferredExportPreparationRequestID = nil
+            deferredExportPreparationDeadline = nil
+            deferredExportFallbackWorkItem?.cancel()
+            deferredExportFallbackWorkItem = nil
+            let error = ImportExportError.exportFailed
+            notifySaveFailed(error)
+            let exportPreparationCompleted = parent.exportPreparationCompleted
+            dispatchToSwiftUI {
+                exportPreparationCompleted(requestID, .failure(error))
+            }
+        }
+
         private func canvasSaveRequests(
             force: Bool,
             trackInFlight: Bool = true,
@@ -7723,8 +8263,19 @@ struct DrawingCanvasView: UIViewRepresentable {
         ) -> [CanvasSaveRequest] {
             let snapshots: [(NotePage, PKDrawing)]
             if let canvasView = containerView?.activeCanvasView,
-               containerView?.isContinuousCanvas(canvasView) == true,
-               let continuousSnapshots = containerView?.continuousPageDrawings(from: canvasView.drawing) {
+               containerView?.isContinuousCanvas(canvasView) == true {
+                let canvasID = ObjectIdentifier(canvasView)
+                let pageIDs = registeredPageIDsByCanvasID[canvasID]
+                    ?? Set(containerView?.continuousPageIDs ?? [])
+                if let error = unavailableDrawingError(for: pageIDs) {
+                    notifySaveFailed(error)
+                    return []
+                }
+                guard let continuousSnapshots = containerView?.continuousPageDrawings(
+                    from: canvasView.drawing
+                ) else {
+                    return []
+                }
                 snapshots = continuousSnapshots
             } else {
                 snapshots = (containerView?.canvasPagePairs ?? []).map { page, canvasView in
@@ -7734,10 +8285,20 @@ struct DrawingCanvasView: UIViewRepresentable {
             var requests: [CanvasSaveRequest] = []
 
             for (page, drawing) in snapshots {
-                guard force
-                        || dirtyPageIDs.contains(page.id)
+                if let error = unavailableDrawingErrorsByPageID[page.id] {
+                    notifySaveFailed(error)
+                    continue
+                }
+                let hasTrackedChanges = dirtyPageIDs.contains(page.id)
                         || pendingSaves[page.id] != nil
-                        || pendingSaveTokens[page.id] != nil else { continue }
+                        || pendingSaveTokens[page.id] != nil
+                let hasUnreportedDrawingChange: Bool
+                if force, let loadedData = loadedDrawingDataByPageID[page.id] {
+                    hasUnreportedDrawingChange = drawing.dataRepresentation() != loadedData
+                } else {
+                    hasUnreportedDrawingChange = false
+                }
+                guard hasTrackedChanges || hasUnreportedDrawingChange else { continue }
 
                 pendingSaves[page.id]?.cancel()
                 pendingSaves[page.id] = nil
@@ -7750,11 +8311,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                     beginInFlightSave(pageID: page.id, token: token)
                 }
                 notifySaveStarted()
-                DrawingStorageService.cache(
-                    drawing,
-                    fileName: page.drawingFileName,
-                    rootURL: parent.drawingStorage.storage.rootURL
-                )
 
                 requests.append(
                     CanvasSaveRequest(
@@ -7762,12 +8318,24 @@ struct DrawingCanvasView: UIViewRepresentable {
                         drawing: drawing,
                         rootURL: parent.drawingStorage.storage.rootURL,
                         drawingFileName: page.drawingFileName,
+                        drawingChangeRevision: drawingChangeRevision(for: page.id),
                         token: token
                     )
                 )
             }
 
             return requests
+        }
+
+        private func canvasView(for id: ObjectIdentifier) -> PKCanvasView? {
+            guard let containerView else { return nil }
+            if let activeCanvasView = containerView.activeCanvasView,
+               ObjectIdentifier(activeCanvasView) == id {
+                return activeCanvasView
+            }
+            return containerView.canvasPagePairs
+                .map(\.1)
+                .first { ObjectIdentifier($0) == id }
         }
 
         @objc func handleTwoFingerTap(_ recognizer: UITapGestureRecognizer) {

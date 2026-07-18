@@ -1415,7 +1415,12 @@ struct ImportExportService {
         }
 
         if note.pages.isEmpty {
-            let page = NotePage(pageOrder: 0)
+            let pageSize = PaperSize.configuredDefaultDimensions()
+            let page = NotePage(
+                pageOrder: 0,
+                width: pageSize.width,
+                height: pageSize.height
+            )
             note.pages.append(page)
         }
 
@@ -1481,7 +1486,12 @@ struct ImportExportService {
                 staging.removeStagedFiles(excluding: retainedStagedFiles)
 
                 let page = attachmentPage ?? {
-                    let page = NotePage(pageOrder: (note.pages.map(\.pageOrder).max() ?? -1) + 1)
+                    let pageSize = PaperSize.configuredDefaultDimensions()
+                    let page = NotePage(
+                        pageOrder: (note.pages.map(\.pageOrder).max() ?? -1) + 1,
+                        width: pageSize.width,
+                        height: pageSize.height
+                    )
                     note.pages.append(page)
                     attachmentPage = page
                     return page
@@ -1496,7 +1506,12 @@ struct ImportExportService {
         into note: NoteDocument,
         staging: ImportStagingTransaction
     ) throws {
-        let page = NotePage(pageOrder: 0)
+        let pageSize = PaperSize.configuredDefaultDimensions()
+        let page = NotePage(
+            pageOrder: 0,
+            width: pageSize.width,
+            height: pageSize.height
+        )
         note.pages.append(page)
 
         for fileURL in fileURLs {
