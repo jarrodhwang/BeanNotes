@@ -199,9 +199,8 @@ struct PenPaletteView: View {
             } label: {
                 Image(systemName: "curlybraces.square")
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.indigo)
+                    .foregroundStyle(.secondary)
                     .frame(width: 38, height: 38)
-                    .background(Color.indigo.opacity(0.12), in: Circle())
             }
             .buttonStyle(.plain)
             .palettePrimaryHitTarget()
