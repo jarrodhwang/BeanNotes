@@ -413,8 +413,8 @@ struct CodeSnippetInlineEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-                .frame(minHeight: 48)
-                .padding(.horizontal, 10)
+                .frame(height: 38)
+                .padding(.horizontal, 8)
 
             Divider()
                 .overlay(foregroundColor.opacity(0.18))
@@ -429,6 +429,7 @@ struct CodeSnippetInlineEditor: View {
                         foregroundColor: foregroundUIColor,
                         maximumUTF16Length: Constants.maximumCodeUTF16Length,
                         pasteRequest: pasteRequest,
+                        shouldFocusOnAppear: true,
                         onLengthLimitReached: {
                             errorMessage = "Code snippets are limited to \(Constants.maximumCodeUTF16Length.formatted()) characters."
                         }
@@ -499,6 +500,8 @@ struct CodeSnippetInlineEditor: View {
                 }
             } label: {
                 Label(draft.language.label, systemImage: "chevron.left.forwardslash.chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .imageScale(.small)
                     .lineLimit(1)
             }
             .buttonStyle(.borderless)
@@ -608,7 +611,7 @@ struct CodeSnippetInlineEditor: View {
             draft.preferredInputMode = mode
         } label: {
             Image(systemName: systemImage)
-                .frame(width: 24, height: 24)
+                .frame(width: 20, height: 20)
                 .background(
                     draft.preferredInputMode == mode
                         ? foregroundColor.opacity(0.14)
@@ -769,6 +772,7 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
     var foregroundColor: UIColor
     var maximumUTF16Length: Int
     var pasteRequest: Int
+    var shouldFocusOnAppear = false
     var onLengthLimitReached: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -802,6 +806,11 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
         context.coordinator.configure(parent: self, textView: textView)
         _ = context.coordinator.replaceTextIfNeeded(in: textView, with: text)
         context.coordinator.applyHighlighting(to: textView)
+        if shouldFocusOnAppear {
+            DispatchQueue.main.async {
+                textView.becomeFirstResponder()
+            }
+        }
         return textView
     }
 

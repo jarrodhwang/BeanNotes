@@ -4646,7 +4646,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     return view
                 }()
 
-                let imageContainer = attachment.rendersBehindDrawing
+                let imageContainer = (attachment.isCodeSnippet || attachment.rendersBehindDrawing)
                     ? behindImageContainerView
                     : foregroundImageContainerView
                 if imageView.superview !== imageContainer {
@@ -4683,18 +4683,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                           !existingIDs.contains($0.id) && !$0.isLocked
                       }) {
                 beginEditingAttachment(addedAttachment)
-                if addedAttachment.isCodeSnippet,
-                   (addedAttachment.codeSnippetText ?? "").isEmpty,
-                   saveCodeSnippet != nil {
-                    DispatchQueue.main.async { [weak self, weak addedAttachment] in
-                        guard let self,
-                              let addedAttachment,
-                              self.selectedAttachmentID == addedAttachment.id else {
-                            return
-                        }
-                        self.beginInlineCodeSnippetEditing(addedAttachment)
-                    }
-                }
             }
 
             hasConfiguredImageAttachments = true
@@ -4778,6 +4766,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
+            if attachment.isCodeSnippet {
+                if saveCodeSnippet != nil {
+                    beginInlineCodeSnippetEditing(attachment)
+                } else {
+                    editCodeSnippet?(attachment)
+                }
+                return
+            }
+
             selectedAttachmentID = attachment.id
             let overlay = attachmentEditingOverlay ?? {
                 let overlay = AttachmentEditingOverlayView()
@@ -4805,17 +4802,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self.clearAttachmentSelection()
                     self.deleteAttachment?(attachment)
                 },
-                editRequested: attachment.isCodeSnippet ? { [weak self] in
-                    guard let self,
-                          self.selectedAttachmentID == attachmentID else {
-                        return
-                    }
-                    if self.saveCodeSnippet != nil {
-                        self.beginInlineCodeSnippetEditing(attachment)
-                    } else {
-                        self.editCodeSnippet?(attachment)
-                    }
-                } : nil,
                 dismiss: { [weak self] in
                     self?.clearAttachmentSelection()
                 }
@@ -4896,8 +4882,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func topmostEditableAttachment(at point: CGPoint) -> Attachment? {
             guard let page else { return nil }
             let attachments = page.visualAttachments.filter { !$0.isLocked }
-            let foreground = attachments.filter { !$0.rendersBehindDrawing }.reversed()
-            let background = attachments.filter(\.rendersBehindDrawing).reversed()
+            let foreground = attachments.filter {
+                !$0.isCodeSnippet && !$0.rendersBehindDrawing
+            }.reversed()
+            let background = attachments.filter {
+                $0.isCodeSnippet || $0.rendersBehindDrawing
+            }.reversed()
 
             return (Array(foreground) + Array(background)).first(where: {
                 $0.normalizedFrame(for: page.pageSize).contains(point)
@@ -5747,8 +5737,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let outerBorderView = UIView()
         private let innerBorderView = UIView()
         private let deleteButton = UIButton(type: .custom)
-        private let editButton = UIButton(type: .custom)
-        private var resizeIndicators: [AttachmentResizeHandle: UIView] = [:]
         private weak var attachment: Attachment?
         private var pageSize: CGSize = .zero
         private var dragStart: CGRect?
@@ -5758,7 +5746,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var frameChanged: ((CGRect) -> Void)?
         private var changeCommitted: (() -> Void)?
         private var deleteRequested: (() -> Void)?
-        private var editRequested: (() -> Void)?
         private var dismiss: (() -> Void)?
         private(set) var editingPanGestureRecognizers: [UIPanGestureRecognizer] = []
         private let resizeHitWidth: CGFloat = 22
@@ -5783,14 +5770,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             frameChanged: @escaping (CGRect) -> Void,
             changeCommitted: @escaping () -> Void,
             deleteRequested: @escaping () -> Void,
-            editRequested: (() -> Void)? = nil,
             dismiss: @escaping () -> Void
         ) {
             self.attachment = attachment
             self.frameChanged = frameChanged
             self.changeCommitted = changeCommitted
             self.deleteRequested = deleteRequested
-            self.editRequested = editRequested
             self.dismiss = dismiss
             if let previewFrame {
                 self.pageSize = pageSize
@@ -5822,14 +5807,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self?.resize(by: CGPoint(x: -16, y: -16)) ?? false
                 }
             ]
-            if editRequested != nil {
-                accessibilityActions.append(
-                    UIAccessibilityCustomAction(name: "Edit code snippet") { [weak self] _ in
-                        self?.editRequested?()
-                        return self?.editRequested != nil
-                    }
-                )
-            }
             accessibilityActions.append(
                 UIAccessibilityCustomAction(name: "Finish editing") { [weak self] _ in
                     guard let self else { return false }
@@ -5842,9 +5819,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             deleteButton.accessibilityHint = attachment.isCodeSnippet
                 ? "Removes the code snippet after confirmation"
                 : "Removes the image after confirmation"
-            editButton.isHidden = editRequested == nil
-            editButton.accessibilityLabel = "Edit code snippet"
-            editButton.accessibilityHint = "Edits code and language directly inside the code box"
         }
 
         func updateFrame(_ frame: CGRect, pageSize: CGSize) {
@@ -5891,26 +5865,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 )
             }
 
-            if deleteButton.frame.minY < 0 || deleteButton.frame.minY >= bounds.maxY {
-                editButton.frame = deleteButton.frame.offsetBy(dx: -controlOffset, dy: 0)
-            } else {
-                editButton.frame = deleteButton.frame.offsetBy(dx: 0, dy: controlOffset)
-            }
-
-            for (handle, indicator) in resizeIndicators {
-                let center = resizeIndicatorCenter(for: handle)
-                let isCorner = handle.movesLeftEdge || handle.movesRightEdge
-                    ? handle.movesTopEdge || handle.movesBottomEdge
-                    : false
-                let indicatorSize = isCorner
-                    ? CGSize(width: 14, height: 14)
-                    : (handle.movesLeftEdge || handle.movesRightEdge
-                        ? CGSize(width: 8, height: 22)
-                        : CGSize(width: 22, height: 8))
-                indicator.bounds = CGRect(origin: .zero, size: indicatorSize)
-                indicator.center = center
-                indicator.layer.cornerRadius = min(indicatorSize.width, indicatorSize.height) / 2
-            }
         }
 
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -5924,12 +5878,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return deleteButton.hitTest(deleteButton.convert(point, from: self), with: event)
             }
 
-            if editButton.frame.contains(point),
-               !editButton.isHidden,
-               editButton.alpha > 0.01 {
-                return editButton.hitTest(editButton.convert(point, from: self), with: event)
-            }
-
             let resizeRegion = bounds.insetBy(dx: -resizeHitWidth, dy: -resizeHitWidth)
             return resizeRegion.contains(point) ? self : nil
         }
@@ -5940,31 +5888,15 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             outerBorderView.isUserInteractionEnabled = false
             outerBorderView.backgroundColor = .clear
-            outerBorderView.layer.borderWidth = 4
-            outerBorderView.layer.borderColor = UIColor.systemBackground.withAlphaComponent(0.92).cgColor
+            outerBorderView.layer.borderWidth = 0
             outerBorderView.isAccessibilityElement = true
             addSubview(outerBorderView)
 
             innerBorderView.isUserInteractionEnabled = false
             innerBorderView.backgroundColor = .clear
-            innerBorderView.layer.borderWidth = 2
-            innerBorderView.layer.borderColor = UIColor.systemBlue.cgColor
+            innerBorderView.layer.borderWidth = 1
+            innerBorderView.layer.borderColor = UIColor.separator.withAlphaComponent(0.9).cgColor
             addSubview(innerBorderView)
-
-            for handle in AttachmentResizeHandle.allCases {
-                let indicator = UIView()
-                indicator.isUserInteractionEnabled = false
-                indicator.isAccessibilityElement = false
-                indicator.backgroundColor = .white
-                indicator.layer.borderWidth = 2
-                indicator.layer.borderColor = UIColor.systemBlue.cgColor
-                indicator.layer.shadowColor = UIColor.black.cgColor
-                indicator.layer.shadowOpacity = 0.16
-                indicator.layer.shadowRadius = 2
-                indicator.layer.shadowOffset = .zero
-                addSubview(indicator)
-                resizeIndicators[handle] = indicator
-            }
 
             configureHandle(
                 deleteButton,
@@ -5973,14 +5905,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
             deleteButton.addTarget(self, action: #selector(requestDeletion), for: .touchUpInside)
             addSubview(deleteButton)
-
-            configureHandle(
-                editButton,
-                systemImage: "pencil",
-                backgroundColor: UIColor.systemIndigo.withAlphaComponent(0.94)
-            )
-            editButton.addTarget(self, action: #selector(requestEditing), for: .touchUpInside)
-            addSubview(editButton)
 
             let editingGesture = UIPanGestureRecognizer(target: self, action: #selector(handleEditingPan(_:)))
             editingGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -6014,8 +5938,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard let touchedView = touch.view else { return true }
             return touchedView !== deleteButton
                 && !touchedView.isDescendant(of: deleteButton)
-                && touchedView !== editButton
-                && !touchedView.isDescendant(of: editButton)
         }
 
         func gestureRecognizer(
@@ -6035,10 +5957,6 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         @objc private func requestDeletion() {
             deleteRequested?()
-        }
-
-        @objc private func requestEditing() {
-            editRequested?()
         }
 
         @objc private func handleEditingPan(_ recognizer: UIPanGestureRecognizer) {
@@ -6114,19 +6032,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             case (_, _, _, true): return .bottom
             case (true, _, _, _): return .left
             default: return nil
-            }
-        }
-
-        private func resizeIndicatorCenter(for handle: AttachmentResizeHandle) -> CGPoint {
-            switch handle {
-            case .topLeft: return CGPoint(x: bounds.minX, y: bounds.minY)
-            case .top: return CGPoint(x: bounds.midX, y: bounds.minY)
-            case .topRight: return CGPoint(x: bounds.maxX, y: bounds.minY)
-            case .right: return CGPoint(x: bounds.maxX, y: bounds.midY)
-            case .bottomRight: return CGPoint(x: bounds.maxX, y: bounds.maxY)
-            case .bottom: return CGPoint(x: bounds.midX, y: bounds.maxY)
-            case .bottomLeft: return CGPoint(x: bounds.minX, y: bounds.maxY)
-            case .left: return CGPoint(x: bounds.minX, y: bounds.midY)
             }
         }
 

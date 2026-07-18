@@ -1491,7 +1491,7 @@ struct NoteEditorView: View {
                 y: Double(frame.minY),
                 width: Double(frame.width),
                 height: Double(frame.height),
-                rendersBehindDrawing: false,
+                rendersBehindDrawing: true,
                 codeSnippetText: draft.code,
                 codeSnippetLanguageRaw: draft.language.rawValue,
                 codeSnippetFontRaw: draft.font.rawValue,
@@ -1528,6 +1528,7 @@ struct NoteEditorView: View {
             let previousFontRaw = attachment.codeSnippetFontRaw
             let previousFontSize = attachment.codeSnippetFontSize
             let previousBackgroundRaw = attachment.codeSnippetBackgroundRaw
+            let previousRendersBehindDrawing = attachment.rendersBehindDrawing
 
             attachment.storedFileName = storedFile.relativePath
             attachment.originalFileName = storedFile.fileName
@@ -1541,6 +1542,7 @@ struct NoteEditorView: View {
             attachment.codeSnippetFontRaw = draft.font.rawValue
             attachment.codeSnippetFontSize = CodeSnippetPreferences.normalizedFontSize(draft.fontSize)
             attachment.codeSnippetBackgroundRaw = draft.backgroundStyle.rawValue
+            attachment.rendersBehindDrawing = true
             attachment.touch()
 
             guard saveEditorChanges("save the code snippet") else {
@@ -1553,6 +1555,7 @@ struct NoteEditorView: View {
                 attachment.codeSnippetFontRaw = previousFontRaw
                 attachment.codeSnippetFontSize = previousFontSize
                 attachment.codeSnippetBackgroundRaw = previousBackgroundRaw
+                attachment.rendersBehindDrawing = previousRendersBehindDrawing
                 _ = try? storage.removeFile(relativePath: storedFile.relativePath)
                 return false
             }

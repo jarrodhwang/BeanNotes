@@ -18,10 +18,10 @@ enum CodeSnippetPreviewRenderer {
     private static let maximumLogicalSize = CGSize(width: 1_200, height: 900)
     private static let renderScale: CGFloat = 2
     private static let cornerRadius: CGFloat = 22
-    private static let headerHeight: CGFloat = 54
-    private static let horizontalPadding: CGFloat = 20
-    private static let codeTopPadding: CGFloat = 15
-    private static let codeBottomPadding: CGFloat = 18
+    private static let headerHeight: CGFloat = 40
+    private static let horizontalPadding: CGFloat = 16
+    private static let codeTopPadding: CGFloat = 12
+    private static let codeBottomPadding: CGFloat = 16
     private static let minimumFontSize: CGFloat = 8
     private static let maximumFontSize: CGFloat = 40
 
@@ -175,7 +175,7 @@ enum CodeSnippetPreviewRenderer {
         context.strokePath()
         context.restoreGState()
 
-        let labelFont = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        let labelFont = UIFont.systemFont(ofSize: 12, weight: .semibold)
         let normalizedLabel = languageLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayedLabel = normalizedLabel.isEmpty ? "Code" : normalizedLabel
         let labelAttributes: [NSAttributedString.Key: Any] = [
@@ -183,13 +183,13 @@ enum CodeSnippetPreviewRenderer {
             .foregroundColor: palette.headerTextColor
         ]
         let measuredLabelSize = (displayedLabel as NSString).size(withAttributes: labelAttributes)
-        let availablePillWidth = max(bounds.width - horizontalPadding * 2 - 50, 44)
-        let pillWidth = min(max(measuredLabelSize.width + 24, 58), availablePillWidth)
+        let availablePillWidth = max(bounds.width - horizontalPadding * 2 - 42, 40)
+        let pillWidth = min(max(measuredLabelSize.width + 20, 52), availablePillWidth)
         let pillRect = CGRect(
             x: bounds.minX + horizontalPadding,
-            y: bounds.minY + (headerHeight - 30) / 2,
+            y: bounds.minY + (headerHeight - 24) / 2,
             width: pillWidth,
-            height: 30
+            height: 24
         )
         let pillPath = UIBezierPath(roundedRect: pillRect, cornerRadius: pillRect.height / 2)
         palette.pillColor.setFill()
@@ -214,7 +214,7 @@ enum CodeSnippetPreviewRenderer {
             withAttributes: centeredLabelAttributes
         )
 
-        let gearSide: CGFloat = 22
+        let gearSide: CGFloat = 18
         let gearRect = CGRect(
             x: bounds.maxX - horizontalPadding - gearSide,
             y: bounds.minY + (headerHeight - gearSide) / 2,
