@@ -187,6 +187,11 @@ enum ImportExportError: LocalizedError {
 
 @MainActor
 struct ImportExportService {
+    // Three pixels per page point keeps handwritten ink and placed images sharp in
+    // both raster exports and the raster content embedded in PDF exports.
+    nonisolated private static let preferredExportRenderScale: CGFloat = 3
+    nonisolated private static let exportJPEGCompressionQuality: CGFloat = 0.95
+
     static let wordDocument = UTType(filenameExtension: "docx") ?? .data
     static let legacyWordDocument = UTType(filenameExtension: "doc") ?? .data
     static let powerpoint = UTType(filenameExtension: "ppt") ?? .data
@@ -729,7 +734,7 @@ struct ImportExportService {
                 format: format,
                 rootURL: storage.rootURL,
                 exportURL: exportURL,
-                renderScale: Self.exportRenderScale(for: snapshot)
+                renderScale: Self.exportRenderScale()
             )
         } catch {
             try? storage.fileManager.removeItem(at: exportURL)
@@ -776,7 +781,7 @@ struct ImportExportService {
                         format: format,
                         rootURL: storage.rootURL,
                         exportURL: exportURL,
-                        renderScale: Self.exportRenderScale(for: snapshot)
+                        renderScale: Self.exportRenderScale()
                     )
                     urls.append(exportURL)
                     currentExportURL = nil
@@ -814,7 +819,7 @@ struct ImportExportService {
                 format: format,
                 rootURL: storage.rootURL,
                 exportURL: exportURL,
-                renderScale: Self.exportRenderScale(for: snapshot),
+                renderScale: Self.exportRenderScale(),
                 progress: { fraction, message in
                     guard let fraction else {
                         progress?(nil, message)
@@ -882,7 +887,7 @@ struct ImportExportService {
                         format: format,
                         rootURL: storage.rootURL,
                         exportURL: exportURL,
-                        renderScale: Self.exportRenderScale(for: snapshot),
+                        renderScale: Self.exportRenderScale(),
                         progress: { fraction, message in
                             guard let fraction else {
                                 progress?(nil, message)
@@ -1928,7 +1933,9 @@ struct ImportExportService {
                     try data.write(to: stagedURL, options: [.atomic])
                     try validateImage(at: stagedURL, expectedType: .png, expectedImage: image)
                 case .jpeg:
-                    guard let data = image.jpegData(compressionQuality: 0.9) else { throw ImportExportError.exportFailed }
+                    guard let data = image.jpegData(compressionQuality: exportJPEGCompressionQuality) else {
+                        throw ImportExportError.exportFailed
+                    }
                     try Task.checkCancellation()
                     try data.write(to: stagedURL, options: [.atomic])
                     try validateImage(at: stagedURL, expectedType: .jpeg, expectedImage: image)
@@ -2004,12 +2011,11 @@ struct ImportExportService {
                                 fileName: snapshot.drawingFileName,
                                 rootURL: rootURL
                             )
-                            let renderScale: CGFloat = total > 12 ? 1.05 : exportRenderScale(for: snapshot)
                             let image = try ThumbnailService.renderPageImageForExport(
                                 snapshot: snapshot,
                                 drawing: drawing,
                                 rootURL: rootURL,
-                                scale: renderScale
+                                scale: exportRenderScale()
                             )
                             image.draw(in: pageBounds)
                         } catch {
@@ -2186,16 +2192,10 @@ struct ImportExportService {
         )
     }
 
-    nonisolated private static func exportRenderScale(for snapshot: NotePageRenderSnapshot) -> CGFloat {
-        let longSide = max(snapshot.pageSize.width, snapshot.pageSize.height)
-
-        if longSide > 1600 {
-            return 1.15
-        } else if longSide > 1200 {
-            return 1.3
-        } else {
-            return 1.5
-        }
+    nonisolated private static func exportRenderScale() -> CGFloat {
+        // ThumbnailService bounds this by a pixel and dimension budget, so each
+        // page receives the same intended quality without risking unbounded memory.
+        preferredExportRenderScale
     }
 
     nonisolated private static func imageSize(at url: URL) -> CGSize? {

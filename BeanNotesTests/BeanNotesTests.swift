@@ -4240,7 +4240,7 @@ struct BeanNotesTests {
         )
         let squareCGImage = try #require(squareImage.cgImage)
 
-        #expect(squareCGImage.width * squareCGImage.height <= 8_000_000)
+        #expect(squareCGImage.width * squareCGImage.height <= 16_000_000)
         #expect(squareCGImage.width > 2_000)
         #expect(squareCGImage.height > 2_000)
     }
@@ -8515,6 +8515,9 @@ struct BeanNotesTests {
         let pngURL = try #require(pngURLs.first)
         let pngImage = try #require(UIImage(contentsOfFile: pngURL.path))
         #expect(imageContainsDominantRedInk(pngImage))
+        let pngCGImage = try #require(pngImage.cgImage)
+        #expect(pngCGImage.width == 960)
+        #expect(pngCGImage.height == 1_260)
 
         #expect(jpegURLs.count == 2)
         #expect(jpegURLs.allSatisfy { $0.pathExtension == "jpg" })
@@ -8522,6 +8525,9 @@ struct BeanNotesTests {
         let jpegURL = try #require(jpegURLs.first)
         let jpegImage = try #require(UIImage(contentsOfFile: jpegURL.path))
         #expect(imageContainsDominantRedInk(jpegImage))
+        let jpegCGImage = try #require(jpegImage.cgImage)
+        #expect(jpegCGImage.width == 960)
+        #expect(jpegCGImage.height == 1_260)
 
         var sharingProgress: [Double] = []
         let sharedPNGURLs = try await service.exportNoteForSharing(note, format: .png) { fraction, _ in

@@ -123,7 +123,10 @@ struct ThumbnailService {
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
     nonisolated private static let minimumPageRenderScale: CGFloat = 0.25
     nonisolated private static let maximumPageRenderPixelSize: CGFloat = 6_144
-    nonisolated private static let maximumPageRenderPixelCount: CGFloat = 8_000_000
+    // Exporting at the preferred 3× scale needs more than 8 MP for the default
+    // page size. Keep the bounded renderer comfortably below an excessive memory
+    // allocation while preserving print-quality output for normal pages.
+    nonisolated private static let maximumPageRenderPixelCount: CGFloat = 16_000_000
     nonisolated private static let maximumAttachmentThumbnailPixelSize = 16_384
     nonisolated static let preferredCaptureRenderScale: CGFloat = 3
 
