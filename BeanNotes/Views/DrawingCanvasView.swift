@@ -6375,14 +6375,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
-        private final class CaptureDrawingReference: @unchecked Sendable {
-            let drawing: PKDrawing
-
-            init(_ drawing: PKDrawing) {
-                self.drawing = drawing
-            }
-        }
-
         var parent: DrawingCanvasView
         var selectedPageID: UUID?
         private(set) var pendingVisiblePageID: UUID?
@@ -6492,26 +6484,29 @@ struct DrawingCanvasView: UIViewRepresentable {
                 theme: parent.theme,
                 showsBeanArtwork: parent.showsBeanArtwork
             )
-            let drawingReference = CaptureDrawingReference(drawing)
             let rootURL = parent.drawingStorage.storage.rootURL
+            let captureFailed = parent.captureFailed
 
-            Task { @MainActor [weak self, weak overlay] in
-                let result = await Task.detached(priority: .userInitiated) {
-                    autoreleasepool { () -> Result<Data, NoteCaptureError> in
-                        guard let image = ThumbnailService.renderPageCaptureImage(
-                            snapshot: snapshot,
-                            drawing: drawingReference.drawing,
-                            rootURL: rootURL,
-                            selectionRect: selectionRect
-                        ) else {
-                            return .failure(.renderFailed)
-                        }
-                        guard let data = image.pngData(), !data.isEmpty else {
-                            return .failure(.encodingFailed)
-                        }
-                        return .success(data)
+            Task { @MainActor [weak overlay] in
+                // PencilKit drawings are UIKit-owned. Rendering them from a detached
+                // task can leave the request unfinished, which in turn leaves the
+                // capture control in its copying state. Yield first so the activity
+                // indicator is visible before the bounded capture render begins.
+                await Task.yield()
+                let result = autoreleasepool { () -> Result<Data, NoteCaptureError> in
+                    guard let image = ThumbnailService.renderPageCaptureImage(
+                        snapshot: snapshot,
+                        drawing: drawing,
+                        rootURL: rootURL,
+                        selectionRect: selectionRect
+                    ) else {
+                        return .failure(.renderFailed)
                     }
-                }.value
+                    guard let data = image.pngData(), !data.isEmpty else {
+                        return .failure(.encodingFailed)
+                    }
+                    return .success(data)
+                }
 
                 switch result {
                 case .success(let data):
@@ -6519,7 +6514,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     overlay?.showCopySucceeded()
                 case .failure(let error):
                     overlay?.showCopyFailed()
-                    self?.parent.captureFailed(error)
+                    captureFailed(error)
                 }
             }
         }

@@ -373,7 +373,8 @@ struct ThumbnailService {
     /// Renders only the requested page region while preserving page-space geometry.
     /// This avoids screen-resolution screenshots and the memory cost of rasterizing an
     /// entire page when the user only needs a small selection.
-    nonisolated static func renderPageCaptureImage(
+    @MainActor
+    static func renderPageCaptureImage(
         snapshot: NotePageRenderSnapshot,
         drawing: PKDrawing,
         rootURL: URL,

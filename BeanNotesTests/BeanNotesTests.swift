@@ -1249,7 +1249,7 @@ struct BeanNotesTests {
         #expect(minimumFrame.height == NoteCaptureSelectionGeometry.minimumHeight)
     }
 
-    @Test func noteCaptureRendererProducesHighResolutionCrop() throws {
+    @Test @MainActor func noteCaptureRendererProducesHighResolutionCrop() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesCaptureRender-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: rootURL) }
