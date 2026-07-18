@@ -2356,22 +2356,46 @@ struct BeanNotesTests {
 
         let enabledMenu = pageView.makePageContextMenu(
             for: UUID(),
-            canRemovePage: true
+            canRemovePage: true,
+            canPasteImage: true
         )
         let enabledActions = enabledMenu.children.compactMap { $0 as? UIAction }
-        try #require(enabledActions.count == 1)
-        #expect(enabledActions.map(\.title) == ["Remove This Page"])
-        #expect(enabledActions[0].attributes.contains(.destructive))
-        #expect(!enabledActions[0].attributes.contains(.disabled))
+        try #require(enabledActions.count == 4)
+        #expect(enabledActions.map(\.title) == [
+            "Add Page Below",
+            "Add Page Above",
+            "Paste Image",
+            "Remove Page"
+        ])
+        #expect(enabledActions[3].attributes.contains(.destructive))
+        #expect(!enabledActions[3].attributes.contains(.disabled))
+
+        let menuWithoutPasteImage = pageView.makePageContextMenu(
+            for: UUID(),
+            canRemovePage: true,
+            canPasteImage: false
+        )
+        let actionsWithoutPasteImage = menuWithoutPasteImage.children.compactMap { $0 as? UIAction }
+        #expect(actionsWithoutPasteImage.map(\.title) == [
+            "Add Page Below",
+            "Add Page Above",
+            "Remove Page"
+        ])
 
         let solePageMenu = pageView.makePageContextMenu(
             for: UUID(),
-            canRemovePage: false
+            canRemovePage: false,
+            canPasteImage: false
         )
         let solePageActions = solePageMenu.children.compactMap { $0 as? UIAction }
-        try #require(solePageActions.count == 1)
-        #expect(solePageActions[0].attributes.contains(.destructive))
-        #expect(solePageActions[0].attributes.contains(.disabled))
+        try #require(solePageActions.count == 3)
+        #expect(solePageActions[2].attributes.contains(.destructive))
+        #expect(solePageActions[2].attributes.contains(.disabled))
+
+        #expect(!pageView.canPerformAction(#selector(UIResponder.selectAll(_:)), withSender: nil))
+        #expect(!pageView.canPerformAction(Selector(("insertSpace:")), withSender: nil))
+        #expect(!pageView.canvasView.canPerformAction(#selector(UIResponder.selectAll(_:)), withSender: nil))
+        #expect(!pageView.canvasView.canPerformAction(Selector(("insertSpace:")), withSender: nil))
 
         pageView.applyInputMode(.anyInput)
         #expect(!pageView.consumesBlankCanvasTaps)

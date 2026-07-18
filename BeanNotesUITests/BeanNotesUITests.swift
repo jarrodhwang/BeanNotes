@@ -177,6 +177,33 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
+    func testContinuousCanvasLongPressUsesOnlyPageActions() throws {
+        app.launch()
+
+        let createNoteButton = app.buttons["Create note"]
+        XCTAssertTrue(createNoteButton.waitForExistence(timeout: 8))
+        createNoteButton.tap()
+
+        let canvas = try hittablePageCanvas()
+        visibleCenterCoordinate(on: canvas).doubleTap()
+        XCTAssertFalse(app.menuItems["Select All"].waitForExistence(timeout: 1))
+        XCTAssertFalse(app.menuItems["Insert Space"].exists)
+
+        let longPressCanvas = try hittablePageCanvas()
+        visibleCenterCoordinate(on: longPressCanvas).press(forDuration: 0.7)
+
+        let addBelow = app.menuItems["Add Page Below"]
+        XCTAssertTrue(addBelow.waitForExistence(timeout: 4))
+        XCTAssertTrue(app.menuItems["Add Page Above"].exists)
+        XCTAssertTrue(app.menuItems["Remove Page"].exists)
+        XCTAssertFalse(app.menuItems["Select All"].exists)
+        XCTAssertFalse(app.menuItems["Insert Space"].exists)
+
+        addBelow.tap()
+        XCTAssertTrue(app.staticTexts["Drawing space added"].waitForExistence(timeout: 4))
+    }
+
+    @MainActor
     func testTitleRemainsScreenSpaceWhilePageZooms() throws {
         app.launch()
 

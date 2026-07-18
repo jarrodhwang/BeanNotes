@@ -179,6 +179,8 @@ struct DrawingCanvasViewport: Equatable {
 }
 
 enum NotePageContextAction: Equatable {
+    case add(NotePagePlacement)
+    case pasteImage
     case remove
 }
 
@@ -1308,7 +1310,26 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pageSize: drawingFrame.size,
                 drawing: joinedContinuousDrawing(storage: drawingStorage),
                 inputMode: inputMode,
-                coordinator: coordinator
+                coordinator: coordinator,
+                pageIDForPageAction: { [weak self] localPoint in
+                    guard let self,
+                          let continuousFrame = self.continuousDrawingFrame else {
+                        return nil
+                    }
+
+                    let documentPoint = CGPoint(
+                        x: continuousFrame.minX + localPoint.x,
+                        y: continuousFrame.minY + localPoint.y
+                    )
+                    return self.pageID(containing: documentPoint)
+                },
+                canRemovePage: orderedPageIDs.count > 1,
+                pageActionRequested: { [weak coordinator] pageID, action in
+                    coordinator?.requestPageAction(action, for: pageID)
+                },
+                pageContextMenuWillOpen: { [weak coordinator] pageID in
+                    coordinator?.selectPageForContextMenu(pageID)
+                }
             )
             pageView.setDocumentTraversalActive(isUserScrolling)
         }
@@ -1994,6 +2015,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageFrames[id]?.intersects(rect) == true
         }
 
+        private func pageID(containing documentPoint: CGPoint) -> UUID? {
+            orderedPageIDs.first { pageFrames[$0]?.contains(documentPoint) == true }
+        }
+
         private func updateImageLoading(in rect: CGRect) {
             for (id, pageView) in pageViews {
                 pageView.setImageLoadingEnabled(pageFrame(id: id, intersects: rect))
@@ -2007,6 +2032,13 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pageView.setDocumentTraversalActive(isScrolling)
             }
             continuousPageView?.setDocumentTraversalActive(isScrolling)
+        }
+
+        func dismissNativeCanvasEditMenus() {
+            for pageView in pageViews.values {
+                pageView.dismissNativeCanvasEditMenus()
+            }
+            continuousPageView?.dismissNativeCanvasEditMenus()
         }
 
         private func updateVisiblePage() {
@@ -3209,6 +3241,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var deleteAttachment: ((Attachment) -> Void)?
         private var pageActionRequested: ((UUID, NotePageContextAction) -> Void)?
         private var pageContextMenuWillOpen: ((UUID) -> Void)?
+        private var pageIDForPageAction: ((CGPoint) -> UUID?)?
+        private var activePageActionPageID: UUID?
         private var canRemovePage = false
         private(set) lazy var pageActionMenuInteraction = UIEditMenuInteraction(delegate: self)
         private(set) var pageActionLongPressGesture: UILongPressGestureRecognizer?
@@ -3275,6 +3309,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             configureView()
         }
 
+        /// The page owns only drawing and its explicit context actions. Returning no
+        /// responder-chain commands prevents PencilKit's Select All and Insert Space
+        /// commands from leaking through its private canvas views.
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            false
+        }
+
         func configure(
             page: NotePage,
             storage: LocalStorageService,
@@ -3313,6 +3354,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.canRemovePage = canRemovePage
             self.pageActionRequested = pageActionRequested
             self.pageContextMenuWillOpen = pageContextMenuWillOpen
+            self.pageIDForPageAction = { _ in page.id }
+            activePageActionPageID = nil
             layer.shadowOpacity = seamlessAppearance ? 0 : 0.12
             backgroundView.isHidden = false
             behindImageContainerView.isHidden = false
@@ -3370,7 +3413,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageSize: CGSize,
             drawing: PKDrawing,
             inputMode: DrawingInputMode,
-            coordinator: Coordinator
+            coordinator: Coordinator,
+            pageIDForPageAction: @escaping (CGPoint) -> UUID?,
+            canRemovePage: Bool,
+            pageActionRequested: @escaping (UUID, NotePageContextAction) -> Void,
+            pageContextMenuWillOpen: @escaping (UUID) -> Void
         ) {
             let needsCanvasReset = page?.id != representativePage.id
                 || drawingPageSizeOverride != pageSize
@@ -3383,16 +3430,18 @@ struct DrawingCanvasView: UIViewRepresentable {
             accessibilityLabel = "Continuous drawing canvas"
             attachmentChanged = nil
             deleteAttachment = nil
-            canRemovePage = false
-            pageActionRequested = nil
-            pageContextMenuWillOpen = nil
+            self.canRemovePage = canRemovePage
+            self.pageActionRequested = pageActionRequested
+            self.pageContextMenuWillOpen = pageContextMenuWillOpen
+            self.pageIDForPageAction = pageIDForPageAction
+            activePageActionPageID = nil
 
             layer.shadowOpacity = 0
             backgroundView.isHidden = true
             behindImageContainerView.isHidden = true
             foregroundImageContainerView.isHidden = true
             attachmentSelectionGesture?.isEnabled = false
-            pageActionLongPressGesture?.isEnabled = false
+            pageActionLongPressGesture?.isEnabled = true
             canvasView.isUserInteractionEnabled = true
             applyInputMode(inputMode)
 
@@ -3617,16 +3666,43 @@ struct DrawingCanvasView: UIViewRepresentable {
             addInteraction(pageActionMenuInteraction)
         }
 
-        func makePageContextMenu(for pageID: UUID, canRemovePage: Bool) -> UIMenu {
+        func makePageContextMenu(
+            for pageID: UUID,
+            canRemovePage: Bool,
+            canPasteImage: Bool
+        ) -> UIMenu {
+            let addBelow = UIAction(
+                title: "Add Page Below",
+                image: UIImage(systemName: "rectangle.stack.badge.plus")
+            ) { [weak self] _ in
+                self?.pageActionRequested?(pageID, .add(.below))
+            }
+            let addAbove = UIAction(
+                title: "Add Page Above",
+                image: UIImage(systemName: "rectangle.stack.badge.plus")
+            ) { [weak self] _ in
+                self?.pageActionRequested?(pageID, .add(.above))
+            }
+            let pasteImage = UIAction(
+                title: "Paste Image",
+                image: UIImage(systemName: "photo.on.clipboard")
+            ) { [weak self] _ in
+                self?.pageActionRequested?(pageID, .pasteImage)
+            }
             let remove = UIAction(
-                title: "Remove This Page",
+                title: "Remove Page",
                 image: UIImage(systemName: "trash"),
                 attributes: canRemovePage ? [.destructive] : [.destructive, .disabled]
             ) { [weak self] _ in
                 self?.pageActionRequested?(pageID, .remove)
             }
 
-            return UIMenu(children: [remove])
+            var actions: [UIMenuElement] = [addBelow, addAbove]
+            if canPasteImage {
+                actions.append(pasteImage)
+            }
+            actions.append(remove)
+            return UIMenu(children: actions)
         }
 
         func editMenuInteraction(
@@ -3634,19 +3710,29 @@ struct DrawingCanvasView: UIViewRepresentable {
             menuFor configuration: UIEditMenuConfiguration,
             suggestedActions: [UIMenuElement]
         ) -> UIMenu? {
-            guard interaction === pageActionMenuInteraction, let pageID = page?.id else { return nil }
-            return makePageContextMenu(for: pageID, canRemovePage: canRemovePage)
+            guard interaction === pageActionMenuInteraction,
+                  let pageID = activePageActionPageID ?? page?.id else {
+                return nil
+            }
+            // Returning only BeanNotes actions intentionally replaces UIKit's suggested
+            // edit commands, including PencilKit's Select All and Insert Space items.
+            return makePageContextMenu(
+                for: pageID,
+                canRemovePage: canRemovePage,
+                canPasteImage: UIPasteboard.general.hasImages
+            )
         }
 
         @objc private func handlePageActionLongPress(_ recognizer: UILongPressGestureRecognizer) {
             guard recognizer === pageActionLongPressGesture,
                   recognizer.state == .began,
-                  let pageID = page?.id else {
+                  let pageID = pageIDForPageAction?(recognizer.location(in: self)) else {
                 return
             }
 
+            activePageActionPageID = pageID
             clearAttachmentSelection()
-            dismissCanvasEditMenus()
+            dismissNativeCanvasEditMenus()
             pageContextMenuWillOpen?(pageID)
             let configuration = UIEditMenuConfiguration(
                 identifier: pageID as NSUUID,
@@ -3654,7 +3740,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
             pageActionMenuInteraction.presentEditMenu(with: configuration)
             DispatchQueue.main.async { [weak self] in
-                self?.dismissCanvasEditMenus()
+                self?.dismissNativeCanvasEditMenus()
             }
         }
 
@@ -3956,13 +4042,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             // PencilKit owns a private edit menu on its tiled drawing view. Consuming
             // the blank tap prevents it from opening; dismissing once more on the next
             // run-loop turn closes the race on OS versions that present asynchronously.
-            dismissCanvasEditMenus()
+            dismissNativeCanvasEditMenus()
             DispatchQueue.main.async { [weak self] in
-                self?.dismissCanvasEditMenus()
+                self?.dismissNativeCanvasEditMenus()
             }
         }
 
-        private func dismissCanvasEditMenus() {
+        func dismissNativeCanvasEditMenus() {
             dismissEditMenus(in: canvasView)
         }
 
@@ -4070,7 +4156,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             if gestureRecognizer === pageActionLongPressGesture {
-                return allowsPageActionLongPress
+                return pageIDForPageAction?(touch.location(in: self)) != nil
+                    && allowsPageActionLongPress
                     && topmostEditableAttachment(at: touch.location(in: self)) == nil
             }
 
@@ -6501,8 +6588,17 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         @objc func handleFingerDoubleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended,
-                  parent.inputMode == .pencilOnly,
                   let containerView else { return }
+
+            // PencilKit can defer its private edit menu until the second touch ends.
+            // Close both the immediate and deferred presentation before performing the
+            // editor's own double-tap zoom.
+            containerView.dismissNativeCanvasEditMenus()
+            DispatchQueue.main.async { [weak containerView] in
+                containerView?.dismissNativeCanvasEditMenus()
+            }
+
+            guard parent.inputMode == .pencilOnly else { return }
             guard containerView.isZoomGestureActiveOrRecentlyEnded != true else { return }
 
             let contentPoint = recognizer.location(in: containerView.contentView)

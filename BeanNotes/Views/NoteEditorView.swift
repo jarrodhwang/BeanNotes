@@ -1189,6 +1189,10 @@ struct NoteEditorView: View {
         guard let page = note.pages.first(where: { $0.id == pageID }) else { return }
 
         switch action {
+        case .add(let placement):
+            addPage(relativeTo: page, placement: placement)
+        case .pasteImage:
+            pasteImage(from: UIPasteboard.general.itemProviders, into: page.id)
         case .remove:
             pagePendingDeletion = page
         }
@@ -1224,13 +1228,13 @@ struct NoteEditorView: View {
         pageLayoutModeRaw = legacyMode.migratedLayoutMode.rawValue
     }
 
-    private func addPage(after page: NotePage) {
+    private func addPage(relativeTo page: NotePage, placement: NotePagePlacement) {
         guard finalizePendingPageUndo() else { return }
 
         let selectionBeforeChange = selectedPageID
         guard let result = NotePageEditCommand.applyAdd(
             relativeTo: page,
-            placement: .below,
+            placement: placement,
             in: note,
             selectedPageID: selectionBeforeChange
         ) else {
@@ -1251,6 +1255,10 @@ struct NoteEditorView: View {
             for: result.change,
             message: pageLayoutMode == .scroll ? "Drawing space added" : nil
         )
+    }
+
+    private func addPage(after page: NotePage) {
+        addPage(relativeTo: page, placement: .below)
     }
 
     private func addPageFromFooter() {
@@ -1850,8 +1858,15 @@ struct NoteEditorView: View {
         importTask?.cancel()
     }
 
-    private func importImageData(_ data: Data, named name: String) async {
-        guard let page = selectedPage else { return }
+    private func importImageData(
+        _ data: Data,
+        named name: String,
+        into pageID: UUID? = nil
+    ) async {
+        guard let pageID = pageID ?? selectedPage?.id,
+              let page = note.pages.first(where: { $0.id == pageID }) else {
+            return
+        }
 
         let staging = importExportService.storage.beginImportStagingTransaction()
         var didSave = false
@@ -1905,7 +1920,10 @@ struct NoteEditorView: View {
         }
     }
 
-    private func pasteImage(from itemProviders: [NSItemProvider]) {
+    private func pasteImage(
+        from itemProviders: [NSItemProvider],
+        into pageID: UUID? = nil
+    ) {
         guard !isPastingImage else { return }
         isPastingImage = true
         errorMessage = nil
@@ -1914,7 +1932,11 @@ struct NoteEditorView: View {
             defer { isPastingImage = false }
             do {
                 let pastedImage = try await ImagePasteService().loadFirstImage(from: itemProviders)
-                await importImageData(pastedImage.data, named: pastedImage.originalFileName)
+                await importImageData(
+                    pastedImage.data,
+                    named: pastedImage.originalFileName,
+                    into: pageID
+                )
             } catch {
                 errorMessage = error.localizedDescription
             }
