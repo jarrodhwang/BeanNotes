@@ -493,7 +493,8 @@ struct LibraryView: View {
             isTrash: isTrash,
             isArchived: isArchived,
             backToArchivedFolders: { selectedArchivedFolderID = nil },
-            createNote: createNote,
+            createNote: { createNote() },
+            createNoteFromClipboardImage: createNoteFromClipboardImage,
             importFiles: presentFileImporter,
             importPhotos: { photoItems in
                 importTask?.cancel()
@@ -789,6 +790,64 @@ struct LibraryView: View {
             openNote(note)
         } catch {
             errorMessage = "BeanNotes could not create a new note. \(error.localizedDescription)"
+        }
+    }
+
+    private func createNoteFromClipboardImage() {
+        Task { @MainActor in
+            do {
+                let pastedImage = try await ImagePasteService().loadFirstImage(
+                    from: UIPasteboard.general.itemProviders
+                )
+                try await createNote(with: pastedImage)
+            } catch {
+                errorMessage = "BeanNotes could not paste the clipboard image. \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func createNote(with pastedImage: PastedImage) async throws {
+        let folder = try folderForNewContent()
+        let now = Date()
+        let note = NoteDocument(title: "Untitled Note", createdAt: now, updatedAt: now)
+        let page = NotePage(
+            pageOrder: 0,
+            background: defaultNoteBackground,
+            width: defaultPageSize.width,
+            height: defaultPageSize.height,
+            createdAt: now,
+            updatedAt: now
+        )
+        let importExportService = ImportExportService()
+        let staging = importExportService.storage.beginImportStagingTransaction()
+        var didSave = false
+
+        do {
+            modelContext.insert(note)
+            modelContext.insert(page)
+            folder.notes.append(note)
+            note.pages.append(page)
+            folder.updatedAt = now
+
+            _ = try await importExportService.importImageData(
+                pastedImage.data,
+                named: pastedImage.originalFileName,
+                into: page,
+                staging: staging
+            )
+            try modelContext.save()
+            didSave = true
+            try staging.commit()
+
+            selectedFolderID = folder.id
+            syncSharedFolderIndex(including: [folder])
+            openNote(note)
+        } catch {
+            if !didSave {
+                modelContext.rollback()
+                staging.rollback()
+            }
+            throw error
         }
     }
 
@@ -1736,6 +1795,7 @@ private struct NotesCardGridView: View {
     var isArchived: Bool
     var backToArchivedFolders: () -> Void
     var createNote: () -> Void
+    var createNoteFromClipboardImage: () -> Void
     var importFiles: (LibraryImportSource) -> Void
     var importPhotos: ([PhotosPickerItem]) -> Void
     var isImportingDocument: Bool
@@ -1752,6 +1812,7 @@ private struct NotesCardGridView: View {
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isSelecting = false
     @State private var selectedNoteIDs: Set<UUID> = []
+    @State private var clipboardContainsImage = false
 
     private var selectedNotes: [NoteDocument] {
         notes.filter { selectedNoteIDs.contains($0.id) }
@@ -1816,6 +1877,18 @@ private struct NotesCardGridView: View {
                 .ignoresSafeArea()
         }
         .tint(beanNotesTheme.accentColor)
+        .onAppear {
+            refreshClipboardState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NoteCapturePasteboard.imageChangedNotification)) { _ in
+            refreshClipboardState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+            refreshClipboardState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            refreshClipboardState()
+        }
         .overlay {
             if isImportingDocument {
                 BeanNotesProgressOverlay(
@@ -1950,25 +2023,56 @@ private struct NotesCardGridView: View {
                     .keyboardShortcut("i", modifiers: [.command])
                     .accessibilityLabel("Import file or photo")
 
-                    Button(action: createNote) {
-                        HStack(spacing: 7) {
-                            if beanNotesTheme.supportsFriendlyVisits {
-                                ThemeBadgeView(theme: beanNotesTheme, size: 24)
-                            } else {
-                                Image(systemName: "plus")
-                            }
-
-                            Text("New")
-                        }
-                        .font(.headline)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .keyboardShortcut("n", modifiers: [.command])
-                    .accessibilityLabel("Create note")
+                    newNoteControl
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var newNoteControl: some View {
+        if clipboardContainsImage {
+            Menu {
+                Button(action: createNote) {
+                    Label("New Note", systemImage: "square.and.pencil")
+                }
+
+                Button(action: createNoteFromClipboardImage) {
+                    Label("Paste Image", systemImage: "photo.on.clipboard")
+                }
+            } label: {
+                newNoteLabel
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .accessibilityLabel("Create note or paste image")
+            .accessibilityHint("Choose a blank note or paste the clipboard image into a new note")
+        } else {
+            Button(action: createNote) {
+                newNoteLabel
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut("n", modifiers: [.command])
+            .accessibilityLabel("Create note")
+        }
+    }
+
+    private var newNoteLabel: some View {
+        HStack(spacing: 7) {
+            if beanNotesTheme.supportsFriendlyVisits {
+                ThemeBadgeView(theme: beanNotesTheme, size: 24)
+            } else {
+                Image(systemName: "plus")
+            }
+
+            Text("New")
+        }
+        .font(.headline)
+    }
+
+    private func refreshClipboardState() {
+        clipboardContainsImage = NoteCapturePasteboard.containsImage
     }
 
     private var selectionActions: some View {
