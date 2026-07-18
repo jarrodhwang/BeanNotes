@@ -528,8 +528,6 @@ struct NoteEditorView: View {
                             availableSize: proxy.size,
                             zoomScale: currentZoomScale,
                             strokeZoomBehavior: strokeZoomBehavior,
-                            isPastingImage: isPastingImage,
-                            pasteImage: { pasteImage(from: $0) },
                             createCodeSnippet: beginCreatingCodeSnippet
                         )
                     }
