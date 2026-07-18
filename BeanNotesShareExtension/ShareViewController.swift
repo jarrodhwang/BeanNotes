@@ -92,12 +92,15 @@ final class ShareViewController: UIViewController {
     private let previewTypeLabel = UILabel()
     private let itemSummaryLabel = UILabel()
     private let statusLabel = UILabel()
+    private let openAppButton = UIButton(type: .system)
     private let importButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
 
     private var providers: [NSItemProvider] = []
     private var folders: [FolderSummary] = []
     private var selectedFolder: FolderSummary?
+    private var shouldOpenAppAfterSaving = true
+    private var didCompleteRequest = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -128,6 +131,10 @@ final class ShareViewController: UIViewController {
 
         let modeLabel = makeLabel("Import As")
         modeControl.selectedSegmentIndex = ImportMode.notePages.rawValue
+
+        openAppButton.contentHorizontalAlignment = .leading
+        openAppButton.addTarget(self, action: #selector(openAppButtonTapped), for: .touchUpInside)
+        updateOpenAppButton()
 
         itemSummaryLabel.font = .preferredFont(forTextStyle: .footnote)
         itemSummaryLabel.textColor = .secondaryLabel
@@ -161,6 +168,7 @@ final class ShareViewController: UIViewController {
             folderButton,
             modeLabel,
             modeControl,
+            openAppButton,
             itemSummaryLabel,
             statusLabel,
             buttonStack
@@ -196,6 +204,7 @@ final class ShareViewController: UIViewController {
             titleField.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             folderButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             modeControl.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
+            openAppButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             importButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             cancelButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
@@ -455,6 +464,24 @@ final class ShareViewController: UIViewController {
         extensionContext?.cancelRequest(withError: CocoaError(.userCancelled))
     }
 
+    @objc private func openAppButtonTapped() {
+        shouldOpenAppAfterSaving.toggle()
+        updateOpenAppButton()
+    }
+
+    private func updateOpenAppButton() {
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = "Open BeanNotes right away"
+        configuration.image = UIImage(systemName: shouldOpenAppAfterSaving ? "checkmark.square.fill" : "square")
+        configuration.imagePadding = 10
+        configuration.baseForegroundColor = .label
+        configuration.contentInsets = .zero
+        openAppButton.configuration = configuration
+        openAppButton.accessibilityLabel = "Open BeanNotes right away"
+        openAppButton.accessibilityValue = shouldOpenAppAfterSaving ? "Checked" : "Unchecked"
+        openAppButton.accessibilityTraits = shouldOpenAppAfterSaving ? [.button, .selected] : .button
+    }
+
     @objc private func importTapped() {
         titleField.resignFirstResponder()
         importButton.isEnabled = false
@@ -530,7 +557,7 @@ final class ShareViewController: UIViewController {
                     savedCount: savedFiles.count,
                     totalCount: self.providers.count,
                     failures: failures
-                ))
+                ), openAppAfterSaving: true)
             } catch {
                 self.finish(message: "BeanNotes could not save this item.")
             }
@@ -867,14 +894,36 @@ final class ShareViewController: UIViewController {
         return ext.isEmpty ? "\(baseName)-\(suffix)" : "\(baseName)-\(suffix).\(ext)"
     }
 
-    private func finish(message: String) {
+    private func finish(message: String, openAppAfterSaving: Bool = false) {
         statusLabel.text = message
         statusLabel.textColor = message.localizedCaseInsensitiveContains("failed") ? .systemOrange : .secondaryLabel
 
         let delay: TimeInterval = message.count > 80 ? 2.4 : 0.65
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.extensionContext?.completeRequest(returningItems: nil)
+            guard let self, let extensionContext else { return }
+
+            guard openAppAfterSaving,
+                  shouldOpenAppAfterSaving,
+                  let appURL = URL(string: "beannotes://shared-import") else {
+                completeRequestIfNeeded()
+                return
+            }
+
+            extensionContext.open(appURL) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.completeRequestIfNeeded()
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.completeRequestIfNeeded()
+            }
         }
+    }
+
+    private func completeRequestIfNeeded() {
+        guard !didCompleteRequest else { return }
+        didCompleteRequest = true
+        extensionContext?.completeRequest(returningItems: nil)
     }
 
     private func showRecoverableFailure(message: String) {
