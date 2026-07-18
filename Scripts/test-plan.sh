@@ -22,6 +22,7 @@ SLOW_IMPORT_TESTS=(
   "BeanNotesTests/BeanNotesTests/imageImportCreatesAnnotatableImageNote()"
   "BeanNotesTests/BeanNotesTests/csvImportCreatesPreviewNoteAndKeepsOriginalFile()"
   "BeanNotesTests/BeanNotesTests/noteExportCreatesPDFAndImageFiles()"
+  "BeanNotesTests/BeanNotesTests/backgroundlessPNGExportIsTransparentAtSelectedResolution()"
   "BeanNotesTests/BeanNotesTests/cancelingNoteExportRemovesPartialFiles()"
 )
 

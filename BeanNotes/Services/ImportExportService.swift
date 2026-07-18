@@ -44,6 +44,156 @@ enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum ExportPageBackgroundMode: String, CaseIterable, Identifiable, Sendable {
+    case original
+    case none
+    case custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .original:
+            "As Shown"
+        case .none:
+            "No Page Background"
+        case .custom:
+            "Custom"
+        }
+    }
+}
+
+enum ExportPDFQuality: String, CaseIterable, Identifiable, Sendable {
+    case compact
+    case balanced
+    case best
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .compact:
+            "Compact"
+        case .balanced:
+            "Balanced"
+        case .best:
+            "Best"
+        }
+    }
+
+    nonisolated var renderScale: CGFloat {
+        switch self {
+        case .compact:
+            1
+        case .balanced:
+            2
+        case .best:
+            3
+        }
+    }
+}
+
+enum ExportImageResolution: String, CaseIterable, Identifiable, Sendable {
+    case oneX
+    case twoX
+    case threeX
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .oneX:
+            "1\u{00D7}"
+        case .twoX:
+            "2\u{00D7}"
+        case .threeX:
+            "3\u{00D7}"
+        }
+    }
+
+    nonisolated var renderScale: CGFloat {
+        switch self {
+        case .oneX:
+            1
+        case .twoX:
+            2
+        case .threeX:
+            3
+        }
+    }
+}
+
+enum ExportJPEGQuality: String, CaseIterable, Identifiable, Sendable {
+    case compact
+    case balanced
+    case best
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .compact:
+            "70%"
+        case .balanced:
+            "85%"
+        case .best:
+            "95%"
+        }
+    }
+
+    nonisolated var compressionQuality: CGFloat {
+        switch self {
+        case .compact:
+            0.7
+        case .balanced:
+            0.85
+        case .best:
+            0.95
+        }
+    }
+}
+
+struct ExportOptions: Sendable {
+    var pageBackgroundMode: ExportPageBackgroundMode = .original
+    var customPageBackground: NoteBackground = .plain()
+    var includesThemeArtwork: Bool?
+    var pdfQuality: ExportPDFQuality = .best
+    var imageResolution: ExportImageResolution = .threeX
+    var jpegQuality: ExportJPEGQuality = .best
+
+    nonisolated static let standard = ExportOptions()
+
+    nonisolated func applying(to snapshot: NotePageRenderSnapshot) -> NotePageRenderSnapshot {
+        var snapshot = snapshot
+
+        switch pageBackgroundMode {
+        case .original:
+            break
+        case .none:
+            snapshot.rendersPageBackground = false
+            snapshot.showsBeanArtwork = false
+        case .custom:
+            snapshot.backgroundStyleRaw = customPageBackground.storageStyleRaw
+            snapshot.backgroundColorHex = customPageBackground.colorHex
+        }
+
+        if pageBackgroundMode != .none, let includesThemeArtwork {
+            snapshot.showsBeanArtwork = includesThemeArtwork
+        }
+
+        return snapshot
+    }
+
+    nonisolated func renderScale(for format: ExportFormat) -> CGFloat {
+        switch format {
+        case .pdf:
+            pdfQuality.renderScale
+        case .png, .jpeg:
+            imageResolution.renderScale
+        }
+    }
+}
+
 struct ImportedDocumentPages {
     var pages: [NotePage]
     var attachments: [Attachment]
@@ -187,11 +337,6 @@ enum ImportExportError: LocalizedError {
 
 @MainActor
 struct ImportExportService {
-    // Three pixels per page point keeps handwritten ink and placed images sharp in
-    // both raster exports and the raster content embedded in PDF exports.
-    nonisolated private static let preferredExportRenderScale: CGFloat = 3
-    nonisolated private static let exportJPEGCompressionQuality: CGFloat = 0.95
-
     static let wordDocument = UTType(filenameExtension: "docx") ?? .data
     static let legacyWordDocument = UTType(filenameExtension: "doc") ?? .data
     static let powerpoint = UTType(filenameExtension: "ppt") ?? .data
@@ -720,9 +865,13 @@ struct ImportExportService {
         )
     }
 
-    func exportPage(_ page: NotePage, format: ExportFormat) async throws -> URL {
+    func exportPage(
+        _ page: NotePage,
+        format: ExportFormat,
+        options: ExportOptions = .standard
+    ) async throws -> URL {
         try Task.checkCancellation()
-        let snapshot = NotePageRenderSnapshot(page: page)
+        let snapshot = options.applying(to: NotePageRenderSnapshot(page: page))
         let title = page.note?.title.sanitizedFileName ?? "BeanNotes"
         let fileName = "\(title)-Page-\(page.pageOrder + 1).\(format.fileExtension)"
         let exportDirectory = try storage.directoryURL(for: .exports)
@@ -734,7 +883,8 @@ struct ImportExportService {
                 format: format,
                 rootURL: storage.rootURL,
                 exportURL: exportURL,
-                renderScale: Self.exportRenderScale()
+                renderScale: options.renderScale(for: format),
+                jpegCompressionQuality: options.jpegQuality.compressionQuality
             )
         } catch {
             try? storage.fileManager.removeItem(at: exportURL)
@@ -743,10 +893,14 @@ struct ImportExportService {
         return exportURL
     }
 
-    func exportNote(_ note: NoteDocument, format: ExportFormat) async throws -> [URL] {
+    func exportNote(
+        _ note: NoteDocument,
+        format: ExportFormat,
+        options: ExportOptions = .standard
+    ) async throws -> [URL] {
         let pages = note.sortedPages
         guard !pages.isEmpty else { throw ImportExportError.exportFailed }
-        let snapshots = pages.map { NotePageRenderSnapshot(page: $0) }
+        let snapshots = pages.map { options.applying(to: NotePageRenderSnapshot(page: $0)) }
 
         switch format {
         case .pdf:
@@ -758,7 +912,8 @@ struct ImportExportService {
                     snapshots: snapshots,
                     title: title,
                     rootURL: storage.rootURL,
-                    exportURL: exportURL
+                    exportURL: exportURL,
+                    renderScale: options.pdfQuality.renderScale
                 )
             } catch {
                 try? storage.fileManager.removeItem(at: exportURL)
@@ -781,7 +936,8 @@ struct ImportExportService {
                         format: format,
                         rootURL: storage.rootURL,
                         exportURL: exportURL,
-                        renderScale: Self.exportRenderScale()
+                        renderScale: options.imageResolution.renderScale,
+                        jpegCompressionQuality: options.jpegQuality.compressionQuality
                     )
                     urls.append(exportURL)
                     currentExportURL = nil
@@ -800,6 +956,7 @@ struct ImportExportService {
     func exportPageForSharing(
         _ page: NotePage,
         format: ExportFormat,
+        options: ExportOptions = .standard,
         progress: ImportExportProgressHandler? = nil
     ) async throws -> URL {
         try Task.checkCancellation()
@@ -807,7 +964,7 @@ struct ImportExportService {
         await Task.yield()
         try Task.checkCancellation()
 
-        let snapshot = NotePageRenderSnapshot(page: page)
+        let snapshot = options.applying(to: NotePageRenderSnapshot(page: page))
         let title = page.note?.title.sanitizedFileName ?? "BeanNotes"
         let fileName = "\(title)-Page-\(page.pageOrder + 1).\(format.fileExtension)"
         let exportDirectory = try storage.directoryURL(for: .exports)
@@ -819,7 +976,8 @@ struct ImportExportService {
                 format: format,
                 rootURL: storage.rootURL,
                 exportURL: exportURL,
-                renderScale: Self.exportRenderScale(),
+                renderScale: options.renderScale(for: format),
+                jpegCompressionQuality: options.jpegQuality.compressionQuality,
                 progress: { fraction, message in
                     guard let fraction else {
                         progress?(nil, message)
@@ -840,11 +998,12 @@ struct ImportExportService {
     func exportNoteForSharing(
         _ note: NoteDocument,
         format: ExportFormat,
+        options: ExportOptions = .standard,
         progress: ImportExportProgressHandler? = nil
     ) async throws -> [URL] {
         let pages = note.sortedPages
         guard !pages.isEmpty else { throw ImportExportError.exportFailed }
-        let snapshots = pages.map { NotePageRenderSnapshot(page: $0) }
+        let snapshots = pages.map { options.applying(to: NotePageRenderSnapshot(page: $0)) }
 
         switch format {
         case .pdf:
@@ -857,6 +1016,7 @@ struct ImportExportService {
                     title: title,
                     rootURL: storage.rootURL,
                     exportURL: exportURL,
+                    renderScale: options.pdfQuality.renderScale,
                     progress: progress
                 )
             } catch {
@@ -887,7 +1047,8 @@ struct ImportExportService {
                         format: format,
                         rootURL: storage.rootURL,
                         exportURL: exportURL,
-                        renderScale: Self.exportRenderScale(),
+                        renderScale: options.imageResolution.renderScale,
+                        jpegCompressionQuality: options.jpegQuality.compressionQuality,
                         progress: { fraction, message in
                             guard let fraction else {
                                 progress?(nil, message)
@@ -1894,6 +2055,7 @@ struct ImportExportService {
         rootURL: URL,
         exportURL: URL,
         renderScale: CGFloat,
+        jpegCompressionQuality: CGFloat,
         progress: ImportExportProgressHandler? = nil
     ) async throws {
         try Task.checkCancellation()
@@ -1918,7 +2080,8 @@ struct ImportExportService {
                     snapshot: snapshot,
                     drawing: drawing,
                     rootURL: rootURL,
-                    scale: renderScale
+                    scale: renderScale,
+                    usesOpaqueBackground: format != .png
                 )
             }
             try Task.checkCancellation()
@@ -1933,7 +2096,7 @@ struct ImportExportService {
                     try data.write(to: stagedURL, options: [.atomic])
                     try validateImage(at: stagedURL, expectedType: .png, expectedImage: image)
                 case .jpeg:
-                    guard let data = image.jpegData(compressionQuality: exportJPEGCompressionQuality) else {
+                    guard let data = image.jpegData(compressionQuality: jpegCompressionQuality) else {
                         throw ImportExportError.exportFailed
                     }
                     try Task.checkCancellation()
@@ -1965,6 +2128,7 @@ struct ImportExportService {
         title: String,
         rootURL: URL,
         exportURL: URL,
+        renderScale: CGFloat,
         progress: ImportExportProgressHandler? = nil
     ) async throws {
         try Task.checkCancellation()
@@ -2015,7 +2179,7 @@ struct ImportExportService {
                                 snapshot: snapshot,
                                 drawing: drawing,
                                 rootURL: rootURL,
-                                scale: exportRenderScale()
+                                scale: renderScale
                             )
                             image.draw(in: pageBounds)
                         } catch {
@@ -2190,12 +2354,6 @@ struct ImportExportService {
             width: max(1, (width * scale).rounded()),
             height: max(1, (height * scale).rounded())
         )
-    }
-
-    nonisolated private static func exportRenderScale() -> CGFloat {
-        // ThumbnailService bounds this by a pixel and dimension budget, so each
-        // page receives the same intended quality without risking unbounded memory.
-        preferredExportRenderScale
     }
 
     nonisolated private static func imageSize(at url: URL) -> CGSize? {

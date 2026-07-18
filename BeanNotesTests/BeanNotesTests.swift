@@ -168,6 +168,26 @@ struct BeanNotesTests {
         }
     }
 
+    private func imageContainsTransparentPixels(_ image: UIImage) -> Bool {
+        guard let source = image.cgImage else { return false }
+
+        let width = min(source.width, 384)
+        let height = min(source.height, 512)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return stride(from: 3, to: pixels.count, by: 4).contains { pixels[$0] < 255 }
+    }
+
     @Test func modelGraphCreatesFolderNotePageAndAttachment() throws {
         let context = try makeInMemoryModelContext()
 
@@ -8810,6 +8830,99 @@ struct BeanNotesTests {
         let exportDirectory = try storage.directoryURL(for: .exports)
         let exportFileNames = try FileManager.default.contentsOfDirectory(atPath: exportDirectory.path)
         #expect(!exportFileNames.contains { $0.contains(".partial.") })
+    }
+
+    @Test @MainActor func advancedExportOptionsApplyAppearanceAndQuality() throws {
+        let page = NotePage(
+            pageOrder: 0,
+            background: NoteBackground(style: .grid, colorHex: "#FFF7BF"),
+            width: 320,
+            height: 420
+        )
+        let originalSnapshot = NotePageRenderSnapshot(
+            page: page,
+            theme: .bean,
+            showsBeanArtwork: true
+        )
+
+        let noBackground = ExportOptions(
+            pageBackgroundMode: .none,
+            includesThemeArtwork: true,
+            pdfQuality: .compact,
+            imageResolution: .oneX,
+            jpegQuality: .compact
+        )
+        let noBackgroundSnapshot = noBackground.applying(to: originalSnapshot)
+        #expect(!noBackgroundSnapshot.rendersPageBackground)
+        #expect(!noBackgroundSnapshot.showsBeanArtwork)
+        #expect(noBackground.renderScale(for: .pdf) == 1)
+        #expect(noBackground.renderScale(for: .png) == 1)
+        #expect(noBackground.jpegQuality.compressionQuality == 0.7)
+
+        let customBackground = NoteBackground(
+            style: .lined,
+            colorHex: "#DDEBFF",
+            spacing: 44,
+            marginWidth: 80
+        )
+        let custom = ExportOptions(
+            pageBackgroundMode: .custom,
+            customPageBackground: customBackground,
+            includesThemeArtwork: false,
+            pdfQuality: .balanced,
+            imageResolution: .twoX,
+            jpegQuality: .balanced
+        )
+        let customSnapshot = custom.applying(to: originalSnapshot)
+        #expect(customSnapshot.rendersPageBackground)
+        #expect(!customSnapshot.showsBeanArtwork)
+        #expect(customSnapshot.backgroundStyleRaw == customBackground.storageStyleRaw)
+        #expect(customSnapshot.backgroundColorHex == customBackground.colorHex)
+        #expect(custom.renderScale(for: .pdf) == 2)
+        #expect(custom.renderScale(for: .jpeg) == 2)
+    }
+
+    @Test @MainActor func backgroundlessPNGExportIsTransparentAtSelectedResolution() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAdvancedExport-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        )
+        try storage.prepareDirectories()
+
+        let page = NotePage(
+            pageOrder: 0,
+            background: NoteBackground(style: .grid, colorHex: "#FFF7BF"),
+            width: 80,
+            height: 100
+        )
+        let options = ExportOptions(
+            pageBackgroundMode: .none,
+            includesThemeArtwork: false,
+            pdfQuality: .best,
+            imageResolution: .twoX,
+            jpegQuality: .best
+        )
+
+        let exportURL = try await service.exportPage(page, format: .png, options: options)
+        let image = try #require(UIImage(contentsOfFile: exportURL.path))
+        let cgImage = try #require(image.cgImage)
+        #expect(cgImage.width == 160)
+        #expect(cgImage.height == 200)
+        #expect(imageContainsTransparentPixels(image))
+
+        let jpegExportURL = try await service.exportPage(page, format: .jpeg, options: options)
+        let jpegImage = try #require(UIImage(contentsOfFile: jpegExportURL.path))
+        let jpegCGImage = try #require(jpegImage.cgImage)
+        #expect(jpegCGImage.width == 160)
+        #expect(jpegCGImage.height == 200)
+        #expect(!imageContainsTransparentPixels(jpegImage))
     }
 
     @Test @MainActor func pageExportRejectsCorruptDrawingDataWhilePreviewStaysBestEffort() async throws {

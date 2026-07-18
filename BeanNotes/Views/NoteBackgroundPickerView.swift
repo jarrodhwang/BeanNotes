@@ -8,6 +8,7 @@ import SwiftUI
 struct NoteBackgroundPickerView: View {
     @Binding var styleRaw: String
     @Binding var colorHex: String
+    var artworkVisibilityOverride: Bool? = nil
     var onStyleChanged: (NoteBackgroundStyle) -> Void = { _ in }
 
     var body: some View {
@@ -19,7 +20,10 @@ struct NoteBackgroundPickerView: View {
             }
             .pickerStyle(.menu)
 
-            NoteBackgroundSurface(background: background)
+            NoteBackgroundSurface(
+                background: background,
+                artworkVisibilityOverride: artworkVisibilityOverride
+            )
                 .frame(height: 116)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {

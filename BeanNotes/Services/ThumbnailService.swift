@@ -66,6 +66,7 @@ struct NotePageRenderSnapshot: Sendable {
     var height: Double
     var themeRaw: String
     var showsBeanArtwork: Bool
+    var rendersPageBackground: Bool
     var imageAttachments: [NoteImageAttachmentRenderSnapshot]
 
     @MainActor
@@ -82,7 +83,8 @@ struct NotePageRenderSnapshot: Sendable {
     init(
         page: NotePage,
         theme: BeanNotesTheme,
-        showsBeanArtwork: Bool? = nil
+        showsBeanArtwork: Bool? = nil,
+        rendersPageBackground: Bool = true
     ) {
         let pageSize = page.pageSize
         self.id = page.id
@@ -94,6 +96,7 @@ struct NotePageRenderSnapshot: Sendable {
         self.height = Double(pageSize.height)
         self.themeRaw = theme.rawValue
         self.showsBeanArtwork = showsBeanArtwork ?? NoteBackground.showsArtwork(for: theme)
+        self.rendersPageBackground = rendersPageBackground
         self.imageAttachments = page.visualAttachments.map {
             NoteImageAttachmentRenderSnapshot(attachment: $0, pageSize: pageSize)
         }
@@ -350,14 +353,16 @@ struct ThumbnailService {
         snapshot: NotePageRenderSnapshot,
         drawing: PKDrawing,
         rootURL: URL,
-        scale: CGFloat
+        scale: CGFloat,
+        usesOpaqueBackground: Bool = true
     ) throws -> UIImage {
         let result = renderPageImageResult(
             snapshot: snapshot,
             drawing: drawing,
             rootURL: rootURL,
             scale: scale,
-            requiresImageAttachments: true
+            requiresImageAttachments: true,
+            usesOpaqueBackground: usesOpaqueBackground
         )
         guard result.didRenderRequiredContent else {
             throw ImportExportError.exportFailed
@@ -436,13 +441,14 @@ struct ThumbnailService {
         drawing: PKDrawing,
         rootURL: URL,
         scale: CGFloat,
-        requiresImageAttachments: Bool
+        requiresImageAttachments: Bool,
+        usesOpaqueBackground: Bool = true
     ) -> (image: UIImage, didRenderRequiredContent: Bool) {
         let size = snapshot.pageSize
         let scale = normalizedPageRenderScale(scale, pageSize: size)
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
-        format.opaque = true
+        format.opaque = snapshot.rendersPageBackground || usesOpaqueBackground
 
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         var didRenderRequiredContent = false
@@ -455,7 +461,8 @@ struct ThumbnailService {
                     rootURL: rootURL,
                     in: CGRect(origin: .zero, size: size),
                     renderScale: scale,
-                    requiresImageAttachments: requiresImageAttachments
+                    requiresImageAttachments: requiresImageAttachments,
+                    fillsMissingBackground: usesOpaqueBackground
                 )
             }
         }
@@ -538,22 +545,28 @@ struct ThumbnailService {
         rootURL: URL,
         in rect: CGRect,
         renderScale: CGFloat,
-        requiresImageAttachments: Bool = false
+        requiresImageAttachments: Bool = false,
+        fillsMissingBackground: Bool = true
     ) -> Bool {
         guard let context = UIGraphicsGetCurrentContext() else { return false }
 
-        let background = NoteBackground.fromDefaults(
-            styleRaw: snapshot.backgroundStyleRaw,
-            colorHex: snapshot.backgroundColorHex
-        )
-        NoteBackgroundRenderer.draw(
-            background: background,
-            theme: snapshot.theme,
-            showsBeanArtwork: snapshot.showsBeanArtwork,
-            pageID: snapshot.id,
-            in: rect,
-            context: context
-        )
+        if snapshot.rendersPageBackground {
+            let background = NoteBackground.fromDefaults(
+                styleRaw: snapshot.backgroundStyleRaw,
+                colorHex: snapshot.backgroundColorHex
+            )
+            NoteBackgroundRenderer.draw(
+                background: background,
+                theme: snapshot.theme,
+                showsBeanArtwork: snapshot.showsBeanArtwork,
+                pageID: snapshot.id,
+                in: rect,
+                context: context
+            )
+        } else if fillsMissingBackground {
+            context.setFillColor(UIColor.white.cgColor)
+            context.fill(rect)
+        }
 
         let didRenderRequiredBackgroundImages = drawImageAttachments(
             snapshot.imageAttachments.filter(\.rendersBehindDrawing),

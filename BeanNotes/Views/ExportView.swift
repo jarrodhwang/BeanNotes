@@ -20,6 +20,15 @@ struct ExportView: View {
     @State private var exportProgressMessage = "Preparing export..."
     @State private var exportTask: Task<Void, Never>?
     @State private var errorMessage: String?
+    @State private var isAdvancedExportsExpanded = false
+    @State private var didPrepareAdvancedExports = false
+    @State private var pageBackgroundMode = ExportPageBackgroundMode.original
+    @State private var customBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
+    @State private var customBackgroundColorHex = NoteBackground.defaultColorHex
+    @State private var themeArtworkOverride: Bool?
+    @State private var pdfQuality = ExportPDFQuality.best
+    @State private var imageResolution = ExportImageResolution.threeX
+    @State private var jpegQuality = ExportJPEGQuality.best
 
     private var pageOriginalAttachments: [Attachment] {
         page.attachments
@@ -95,6 +104,8 @@ struct ExportView: View {
                             .foregroundStyle(.red)
                     }
                 }
+
+                advancedExportsSection
             }
             .navigationTitle("Export")
             .navigationBarTitleDisplayMode(.inline)
@@ -112,6 +123,9 @@ struct ExportView: View {
             .onDisappear {
                 exportTask?.cancel()
             }
+            .onAppear {
+                prepareAdvancedExportsIfNeeded()
+            }
             .overlay {
                 if isExporting {
                     BeanNotesProgressOverlay(
@@ -127,14 +141,152 @@ struct ExportView: View {
 
     private func exportCurrentPage(_ format: ExportFormat) {
         exportItems(cleanupGeneratedFilesOnCancel: true) {
-            [try await service.exportPageForSharing(page, format: format, progress: $0)]
+            [try await service.exportPageForSharing(
+                page,
+                format: format,
+                options: exportOptions,
+                progress: $0
+            )]
         }
     }
 
     private func exportWholeNote(_ format: ExportFormat) {
         exportItems(cleanupGeneratedFilesOnCancel: true) {
-            try await service.exportNoteForSharing(note, format: format, progress: $0)
+            try await service.exportNoteForSharing(
+                note,
+                format: format,
+                options: exportOptions,
+                progress: $0
+            )
         }
+    }
+
+    private var advancedExportsSection: some View {
+        Section {
+            DisclosureGroup(isExpanded: $isAdvancedExportsExpanded) {
+                VStack(alignment: .leading, spacing: 18) {
+                    Picker("Page Background", selection: $pageBackgroundMode) {
+                        ForEach(ExportPageBackgroundMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .accessibilityIdentifier("export.pageBackground")
+
+                    if pageBackgroundMode == .custom {
+                        NoteBackgroundPickerView(
+                            styleRaw: $customBackgroundStyleRaw,
+                            colorHex: $customBackgroundColorHex,
+                            artworkVisibilityOverride: includesThemeArtwork
+                        )
+                    }
+
+                    if beanNotesTheme.supportsFriendlyVisits {
+                        Toggle(themeArtworkLabel, isOn: includesThemeArtworkBinding)
+                            .disabled(pageBackgroundMode == .none)
+                            .accessibilityIdentifier("export.themeArtwork")
+                    }
+
+                    if pageBackgroundMode == .none {
+                        Text("PNG exports keep the page background transparent. PDF and JPEG exports use white where transparency is unavailable.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    Picker("PDF Quality", selection: $pdfQuality) {
+                        ForEach(ExportPDFQuality.allCases) { quality in
+                            Text(quality.label).tag(quality)
+                        }
+                    }
+                    .accessibilityIdentifier("export.pdfQuality")
+
+                    Picker("Image Resolution", selection: $imageResolution) {
+                        ForEach(ExportImageResolution.allCases) { resolution in
+                            Text(resolution.label).tag(resolution)
+                        }
+                    }
+                    .accessibilityIdentifier("export.imageResolution")
+
+                    Picker("JPEG Quality", selection: $jpegQuality) {
+                        ForEach(ExportJPEGQuality.allCases) { quality in
+                            Text(quality.label).tag(quality)
+                        }
+                    }
+                    .accessibilityIdentifier("export.jpegQuality")
+
+                    Text("Lower PDF quality, image resolution, or JPEG quality creates smaller files. PNG ignores the JPEG quality setting.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button("Reset Advanced Options", action: resetAdvancedExports)
+                        .accessibilityIdentifier("export.resetAdvanced")
+                }
+                .padding(.top, 10)
+            } label: {
+                Label("Advanced Exports", systemImage: "slider.horizontal.3")
+                    .font(.body.weight(.semibold))
+            }
+            .accessibilityIdentifier("export.advanced")
+        }
+    }
+
+    private var customPageBackground: NoteBackground {
+        NoteBackground.fromDefaults(
+            styleRaw: customBackgroundStyleRaw,
+            colorHex: customBackgroundColorHex
+        )
+    }
+
+    private var exportOptions: ExportOptions {
+        ExportOptions(
+            pageBackgroundMode: pageBackgroundMode,
+            customPageBackground: customPageBackground,
+            includesThemeArtwork: themeArtworkOverride,
+            pdfQuality: pdfQuality,
+            imageResolution: imageResolution,
+            jpegQuality: jpegQuality
+        )
+    }
+
+    private var includesThemeArtwork: Bool {
+        pageBackgroundMode != .none
+            && (themeArtworkOverride ?? NoteBackground.showsArtwork(for: beanNotesTheme))
+    }
+
+    private var includesThemeArtworkBinding: Binding<Bool> {
+        Binding(
+            get: { includesThemeArtwork },
+            set: { themeArtworkOverride = $0 }
+        )
+    }
+
+    private var themeArtworkLabel: String {
+        switch beanNotesTheme {
+        case .standard:
+            "Include Theme Background Art"
+        case .bean:
+            "Include Bean Background Art"
+        case .blueberry:
+            "Include Blueberry Background Art"
+        }
+    }
+
+    private func prepareAdvancedExportsIfNeeded() {
+        guard !didPrepareAdvancedExports else { return }
+        didPrepareAdvancedExports = true
+        customBackgroundStyleRaw = page.backgroundStyleRaw
+        customBackgroundColorHex = page.backgroundColorHex
+    }
+
+    private func resetAdvancedExports() {
+        pageBackgroundMode = .original
+        customBackgroundStyleRaw = page.backgroundStyleRaw
+        customBackgroundColorHex = page.backgroundColorHex
+        themeArtworkOverride = nil
+        pdfQuality = .best
+        imageResolution = .threeX
+        jpegQuality = .best
     }
 
     private func shareOriginals(_ attachments: [Attachment]) {

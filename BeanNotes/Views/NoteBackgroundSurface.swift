@@ -12,9 +12,14 @@ struct NoteBackgroundSurface: View {
 
     var background: NoteBackground
     var pageID: UUID? = nil
+    var artworkVisibilityOverride: Bool? = nil
 
     private var showsThemeArtwork: Bool {
-        switch beanNotesTheme {
+        if let artworkVisibilityOverride {
+            return artworkVisibilityOverride
+        }
+
+        return switch beanNotesTheme {
         case .standard:
             false
         case .bean:
