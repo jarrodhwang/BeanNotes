@@ -123,6 +123,7 @@ struct NoteEditorView: View {
     @State private var isShowingAttachmentPicker = false
     @State private var isShowingExport = false
     @State private var isShowingPageNavigator = false
+    @State private var pageNavigatorPreviewRevision = 0
     @State private var isShowingAttachmentManager = false
     @State private var isShowingBackgroundPicker = false
     @State private var isShowingDocumentVersions = false
@@ -611,6 +612,7 @@ struct NoteEditorView: View {
                     selectedPageID: selectedPageID,
                     theme: beanNotesTheme,
                     showsThemeArtwork: showsThemeArtwork,
+                    previewRevision: pageNavigatorPreviewRevision,
                     selectPage: { selectedPageID = $0.id },
                     dismiss: {
                         withAnimation(.snappy) {
@@ -2576,6 +2578,7 @@ struct NoteEditorView: View {
     private func markDrawingSaveSucceeded() {
         isDrawingSavePending = false
         didDrawingSaveFail = false
+        pageNavigatorPreviewRevision &+= 1
         refreshAutosaveState()
     }
 

@@ -251,6 +251,12 @@ final class BeanNotesUITests: XCTestCase {
         let navigator = app.otherElements["editor.pageNavigator"]
         XCTAssertTrue(navigator.waitForExistence(timeout: 4))
 
+        let displayModeButton = app.buttons["editor.pageNavigator.displayMode"]
+        XCTAssertTrue(displayModeButton.waitForExistence(timeout: 4))
+        XCTAssertEqual(displayModeButton.value as? String, "Preview list")
+        displayModeButton.tap()
+        XCTAssertEqual(displayModeButton.value as? String, "Compact list")
+
         let secondPage = app.buttons["editor.pageNavigator.page.2"]
         XCTAssertTrue(secondPage.waitForExistence(timeout: 4))
         secondPage.tap()

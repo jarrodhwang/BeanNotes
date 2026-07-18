@@ -7,13 +7,41 @@ import SwiftData
 import SwiftUI
 import UIKit
 
+private enum PageNavigatorDisplayMode: String {
+    case compact
+    case preview
+
+    var toggled: Self {
+        self == .compact ? .preview : .compact
+    }
+
+    var toggleIconName: String {
+        self == .compact ? "rectangle.grid.1x2" : "list.bullet"
+    }
+
+    var toggleAccessibilityLabel: String {
+        self == .compact ? "Show page previews" : "Show compact page list"
+    }
+
+    var accessibilityValue: String {
+        self == .compact ? "Compact list" : "Preview list"
+    }
+}
+
 struct PageNavigatorSidebar: View {
     var pages: [NotePage]
     var selectedPageID: UUID?
     var theme: BeanNotesTheme
     var showsThemeArtwork: Bool
+    var previewRevision: Int
     var selectPage: (NotePage) -> Void
     var dismiss: () -> Void
+
+    @AppStorage("pageNavigatorDisplayMode") private var displayModeRaw = PageNavigatorDisplayMode.preview.rawValue
+
+    private var displayMode: PageNavigatorDisplayMode {
+        PageNavigatorDisplayMode(rawValue: displayModeRaw) ?? .preview
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +55,20 @@ struct PageNavigatorSidebar: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+
+                Button {
+                    displayModeRaw = displayMode.toggled.rawValue
+                } label: {
+                    Image(systemName: displayMode.toggleIconName)
+                        .font(.subheadline.bold())
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .background(.thinMaterial, in: Circle())
+                .accessibilityLabel(displayMode.toggleAccessibilityLabel)
+                .accessibilityValue(displayMode.accessibilityValue)
+                .accessibilityHint("Switch the page navigator view")
+                .accessibilityIdentifier("editor.pageNavigator.displayMode")
 
                 Button(action: dismiss) {
                     Image(systemName: "xmark")
@@ -44,9 +86,13 @@ struct PageNavigatorSidebar: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 14) {
+                    LazyVStack(spacing: displayMode == .preview ? 14 : 8) {
                         ForEach(Array(pages.enumerated()), id: \.element.id) { index, page in
-                            pageButton(page, number: index + 1)
+                            pageButton(
+                                page,
+                                number: index + 1,
+                                displayMode: displayMode
+                            )
                                 .id(page.id)
                         }
                     }
@@ -70,7 +116,21 @@ struct PageNavigatorSidebar: View {
         .accessibilityIdentifier("editor.pageNavigator")
     }
 
-    private func pageButton(_ page: NotePage, number: Int) -> some View {
+    @ViewBuilder
+    private func pageButton(
+        _ page: NotePage,
+        number: Int,
+        displayMode: PageNavigatorDisplayMode
+    ) -> some View {
+        switch displayMode {
+        case .compact:
+            compactPageButton(page, number: number)
+        case .preview:
+            previewPageButton(page, number: number)
+        }
+    }
+
+    private func previewPageButton(_ page: NotePage, number: Int) -> some View {
         let isSelected = selectedPageID == page.id
 
         return Button {
@@ -80,7 +140,8 @@ struct PageNavigatorSidebar: View {
                 PageNavigatorThumbnail(
                     page: page,
                     theme: theme,
-                    showsThemeArtwork: showsThemeArtwork
+                    showsThemeArtwork: showsThemeArtwork,
+                    previewRevision: previewRevision
                 )
                 .frame(maxWidth: .infinity)
                 .frame(height: 164)
@@ -117,6 +178,54 @@ struct PageNavigatorSidebar: View {
         .accessibilityIdentifier("editor.pageNavigator.page.\(number)")
     }
 
+    private func compactPageButton(_ page: NotePage, number: Int) -> some View {
+        let isSelected = selectedPageID == page.id
+
+        return Button {
+            selectPage(page)
+        } label: {
+            HStack(spacing: 12) {
+                Text("\(number)")
+                    .font(.subheadline.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(isSelected ? theme.accentColor : .secondary)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        isSelected ? theme.accentColor.opacity(0.16) : Color.secondary.opacity(0.1),
+                        in: Circle()
+                    )
+
+                Text("Page \(number)")
+                    .font(.headline)
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(theme.accentColor)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                isSelected ? theme.accentColor.opacity(0.14) : Color.secondary.opacity(0.07),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(
+                        isSelected ? theme.accentColor : Color.secondary.opacity(0.14),
+                        lineWidth: isSelected ? 2 : 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Page \(number)")
+        .accessibilityValue(isSelected ? "Selected" : "")
+        .accessibilityHint("Move to page \(number)")
+        .accessibilityIdentifier("editor.pageNavigator.page.\(number)")
+    }
+
     private func scrollToSelection(using proxy: ScrollViewProxy, animated: Bool) {
         guard let selectedPageID else { return }
         if animated {
@@ -135,6 +244,7 @@ private struct PageNavigatorThumbnail: View {
     var page: NotePage
     var theme: BeanNotesTheme
     var showsThemeArtwork: Bool
+    var previewRevision: Int
 
     @State private var image: UIImage?
 
@@ -167,7 +277,7 @@ private struct PageNavigatorThumbnail: View {
     }
 
     private var previewRequestID: String {
-        "\(page.id.uuidString)-\(theme.rawValue)-\(showsThemeArtwork)"
+        "\(page.id.uuidString)-\(theme.rawValue)-\(showsThemeArtwork)-\(previewRevision)"
     }
 
     @MainActor
