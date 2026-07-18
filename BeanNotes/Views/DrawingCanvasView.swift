@@ -62,71 +62,6 @@ enum DrawingAutosaveCadence {
     }
 }
 
-/// Immutable document geometry that is safe to carry onto the drawing write queue.
-struct ContinuousDrawingSaveTarget {
-    let pageID: UUID
-    let drawingFileName: String
-    let frame: CGRect
-}
-
-/// Splits the seamless document drawing without consulting UIKit or SwiftData state.
-enum ContinuousDrawingSplitter {
-    static func drawings(
-        from drawing: PKDrawing,
-        targets: [ContinuousDrawingSaveTarget]
-    ) -> [(ContinuousDrawingSaveTarget, PKDrawing)] {
-        guard !targets.isEmpty else { return [] }
-
-        let orderedTargets = targets.sorted {
-            if $0.frame.minY == $1.frame.minY {
-                return $0.frame.minX < $1.frame.minX
-            }
-            return $0.frame.minY < $1.frame.minY
-        }
-        var strokesByPageID: [UUID: [PKStroke]] = Dictionary(
-            uniqueKeysWithValues: targets.map { ($0.pageID, []) }
-        )
-
-        for stroke in drawing.strokes {
-            let bounds = stroke.renderBounds.insetBy(dx: -0.5, dy: -0.5)
-            var low = 0
-            var high = orderedTargets.count
-
-            while low < high {
-                let middle = (low + high) / 2
-                if orderedTargets[middle].frame.maxY < bounds.minY {
-                    low = middle + 1
-                } else {
-                    high = middle
-                }
-            }
-
-            var index = low
-            while index < orderedTargets.count {
-                let target = orderedTargets[index]
-                if target.frame.minY > bounds.maxY {
-                    break
-                }
-                if target.frame.intersects(bounds) {
-                    strokesByPageID[target.pageID, default: []].append(stroke)
-                }
-                index += 1
-            }
-        }
-
-        return targets.map { target in
-            let drawing = PKDrawing(strokes: strokesByPageID[target.pageID] ?? [])
-                .transformed(
-                    using: CGAffineTransform(
-                        translationX: -target.frame.minX,
-                        y: -target.frame.minY
-                    )
-                )
-            return (target, drawing)
-        }
-    }
-}
-
 struct DrawingCanvasLayoutSignature: Equatable {
     private struct PageSignature: Equatable {
         var id: UUID
@@ -607,8 +542,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var isScrollingTowardLaterPages = true
         private var isUserScrolling = false
         private var isDrawingInteractionActive = false
-        private var defersPDFRenderingForDrawing = false
-        private var pdfRenderingResumeWorkItem: DispatchWorkItem?
         private var isProgrammaticScrollAnimating = false
         private var programmaticScrollTargetID: UUID?
         private var programmaticScrollTargetOffset: CGPoint?
@@ -640,7 +573,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let scrollToTopDoubleTapInterval: CFTimeInterval = 0.5
         private let settledZoomDelay: TimeInterval = 0.12
         private let programmaticZoomSettleDuration: CFTimeInterval = 0.4
-        private let pdfRenderingResumeDelay: TimeInterval = 0.45
         private let fingerTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
 
         var isZoomGestureActiveOrRecentlyEnded: Bool {
@@ -668,10 +600,6 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         var isLiveDrawingInteractionActive: Bool {
             isDrawingInteractionActive
-        }
-
-        var isPDFRenderingDeferredForDrawing: Bool {
-            defersPDFRenderingForDrawing
         }
 
         override init(frame: CGRect) {
@@ -1469,7 +1397,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
             )
             pageView.setDocumentTraversalActive(isUserScrolling)
-            pageView.setDrawingInteractionActive(defersPDFRenderingForDrawing)
+            pageView.setDrawingInteractionActive(isDrawingInteractionActive)
             pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
         }
 
@@ -1535,28 +1463,36 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func continuousPageDrawings(from drawing: PKDrawing) -> [(NotePage, PKDrawing)]? {
-            guard let targets = continuousDrawingSaveTargets() else { return nil }
-            return ContinuousDrawingSplitter.drawings(from: drawing, targets: targets)
-                .compactMap { target, pageDrawing in
-                    guard let page = pagesByID[target.pageID] else { return nil }
-                    return (page, pageDrawing)
-                }
-        }
-
-        func continuousDrawingSaveTargets() -> [ContinuousDrawingSaveTarget]? {
             guard isContinuousDrawingEnabled,
                   let drawingFrame = continuousDrawingFrame else { return nil }
 
+            var strokesByPageID: [UUID: [PKStroke]] = Dictionary(
+                uniqueKeysWithValues: orderedPageIDs.map { ($0, []) }
+            )
+            for stroke in drawing.strokes {
+                let bounds = stroke.renderBounds.insetBy(dx: -0.5, dy: -0.5)
+                let documentBounds = bounds.offsetBy(
+                    dx: drawingFrame.minX,
+                    dy: drawingFrame.minY
+                )
+                for id in pageIDsIntersecting(documentBounds) {
+                    strokesByPageID[id, default: []].append(stroke)
+                }
+            }
+
             return orderedPageIDs.compactMap { id in
                 guard let page = pagesByID[id], let frame = pageFrames[id] else { return nil }
-                return ContinuousDrawingSaveTarget(
-                    pageID: id,
-                    drawingFileName: page.drawingFileName,
-                    frame: frame.offsetBy(
-                        dx: -drawingFrame.minX,
-                        dy: -drawingFrame.minY
+                let localSegmentFrame = frame.offsetBy(
+                    dx: -drawingFrame.minX,
+                    dy: -drawingFrame.minY
+                )
+                let pageDrawing = PKDrawing(strokes: strokesByPageID[id] ?? []).transformed(
+                    using: CGAffineTransform(
+                        translationX: -localSegmentFrame.minX,
+                        y: -localSegmentFrame.minY
                     )
                 )
+                return (page, pageDrawing)
             }
         }
 
@@ -2009,9 +1945,9 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             pageView.frame = frame
             // Apply interaction state before attachments are configured so a page
-            // materialized mid-scroll or mid-stroke cannot enqueue vector PDF tiles.
+            // materialized mid-scroll or mid-stroke stays consistent with the editor.
             pageView.setDocumentTraversalActive(isUserScrolling)
-            pageView.setDrawingInteractionActive(defersPDFRenderingForDrawing)
+            pageView.setDrawingInteractionActive(isDrawingInteractionActive)
             if updatesImageLoadingState {
                 pageView.setImageLoadingEnabled(shouldLoadImages)
             } else if didCreatePageView {
@@ -2119,8 +2055,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             isProgrammaticScrollAnimating = false
             cancelProgrammaticPageSelection()
             setUserScrolling(false)
-            isDrawingInteractionActive = false
-            finishPDFRenderingDeferral()
+            setDrawingInteractionActive(false)
 
             for pageView in pageViews.values {
                 pageView.cancelPendingNativeViewportUpdate()
@@ -2285,48 +2220,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func setDrawingInteractionActive(_ active: Bool) {
+            guard isDrawingInteractionActive != active else { return }
             isDrawingInteractionActive = active
-
-            if active {
-                pdfRenderingResumeWorkItem?.cancel()
-                pdfRenderingResumeWorkItem = nil
-                guard !defersPDFRenderingForDrawing else { return }
-                defersPDFRenderingForDrawing = true
-                publishPDFDrawingDeferral(true)
-                return
-            }
-
-            // Handwriting produces a rapid begin/end pair for every stroke. Keep the
-            // raster fallback in place across short gaps so vector PDF tiles do not
-            // repeatedly resume and contend with PencilKit's live renderer.
-            guard defersPDFRenderingForDrawing,
-                  pdfRenderingResumeWorkItem == nil else { return }
-            let workItem = DispatchWorkItem { [weak self] in
-                guard let self, !self.isDrawingInteractionActive else { return }
-                self.pdfRenderingResumeWorkItem = nil
-                self.defersPDFRenderingForDrawing = false
-                self.publishPDFDrawingDeferral(false)
-            }
-            pdfRenderingResumeWorkItem = workItem
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + pdfRenderingResumeDelay,
-                execute: workItem
-            )
-        }
-
-        private func finishPDFRenderingDeferral() {
-            pdfRenderingResumeWorkItem?.cancel()
-            pdfRenderingResumeWorkItem = nil
-            guard defersPDFRenderingForDrawing else { return }
-            defersPDFRenderingForDrawing = false
-            publishPDFDrawingDeferral(false)
-        }
-
-        private func publishPDFDrawingDeferral(_ deferred: Bool) {
             for pageView in pageViews.values {
-                pageView.setDrawingInteractionActive(deferred)
+                pageView.setDrawingInteractionActive(active)
             }
-            continuousPageView?.setDrawingInteractionActive(deferred)
+            continuousPageView?.setDrawingInteractionActive(active)
         }
 
         func dismissNativeCanvasEditMenus() {
@@ -5660,8 +5559,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             backgroundColor = .clear
             isUserInteractionEnabled = false
             tiledLayer.tileSize = CGSize(width: 512, height: 512)
-            tiledLayer.levelsOfDetail = 3
-            tiledLayer.levelsOfDetailBias = 3
+            // Cover the editor's 12%–600% zoom range with native vector tiles rather
+            // than upscaling a lower-detail tile at either end of the range.
+            tiledLayer.levelsOfDetail = 4
+            tiledLayer.levelsOfDetailBias = 4
             tiledLayer.drawsAsynchronously = true
             tiledLayer.contentsScale = UIScreen.main.scale
             contentScaleFactor = UIScreen.main.scale
@@ -6413,33 +6314,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
-            let usesRasterDuringInteraction = isDocumentTraversalActive
-                || isDrawingInteractionActive
-            if usesRasterDuringInteraction {
-                if imageView.image != nil {
-                    pdfPageView?.setRenderingSuspended(true)
-                    pdfPageView?.isHidden = true
-                    return
-                }
-
-                if let pdfPageView {
-                    pdfPageView.setRenderingSuspended(true)
-                    pdfPageView.configure(url: vectorPDFURL, pageIndex: vectorPDFPageIndex)
-                    // Preserve already-rendered tiles until the raster fallback arrives.
-                    pdfPageView.isHidden = false
-                    return
-                }
-
-                // A cold page normally gets its lightweight JPEG first. If decoding has
-                // failed or been cancelled, fall back to vector rendering rather than
-                // leaving the PDF blank for the rest of the interaction.
-                guard imageLoadRequestID == nil else { return }
-                let view = ensurePDFPageView()
-                view.configure(url: vectorPDFURL, pageIndex: vectorPDFPageIndex)
-                view.isHidden = false
-                return
-            }
-
             let view = ensurePDFPageView()
             view.configure(url: vectorPDFURL, pageIndex: vectorPDFPageIndex)
             view.setRenderingSuspended(false)
@@ -6572,14 +6446,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             var rootURL: URL
             var drawingFileName: String
             var token: UUID?
-        }
-
-        private enum DrawingSaveError: LocalizedError {
-            case unavailableContinuousLayout
-
-            var errorDescription: String? {
-                "BeanNotes could not prepare the continuous drawing for autosave."
-            }
         }
 
         func requestAddPage() {
@@ -7244,9 +7110,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pendingSaveTokens[pageID] = token
             }
 
-            // Debounce the document as a unit and retain only a weak canvas reference.
-            // Once handwriting settles, the immutable drawing snapshot is split and
-            // serialized on the utility queue instead of blocking the next pen stroke.
+            // Split PencilKit content on the main thread, then serialize each immutable
+            // page drawing on the write queue. PencilKit's model objects are UIKit-owned;
+            // touching their strokes off the main thread can leave an empty page snapshot.
             let save = DispatchWorkItem { [weak self, weak canvasView] in
                 guard let self else { return }
                 let activePageIDs = Set(pageIDs.filter {
@@ -7256,40 +7122,33 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self.pendingSaves[pageID] = nil
                     self.pendingSaveTokens[pageID] = nil
                 }
-                guard !activePageIDs.isEmpty, let canvasView else { return }
+                guard !activePageIDs.isEmpty,
+                      let canvasView,
+                      let pageDrawings = self.containerView?.continuousPageDrawings(
+                        from: canvasView.drawing
+                      ) else { return }
 
                 let rootURL = self.parent.drawingStorage.storage.rootURL
-                let drawing = canvasView.drawing
-                let targets = (self.containerView?.continuousDrawingSaveTargets() ?? [])
-                    .filter { activePageIDs.contains($0.pageID) }
-                guard Set(targets.map(\.pageID)) == activePageIDs else {
-                    self.notifySaveFailed(DrawingSaveError.unavailableContinuousLayout)
-                    return
-                }
-
-                for pageID in activePageIDs {
+                for (page, drawing) in pageDrawings where activePageIDs.contains(page.id) {
+                    let pageID = page.id
+                    let drawingFileName = page.drawingFileName
                     self.beginInFlightSave(pageID: pageID, token: token)
-                }
-                Self.writeContinuousDrawing(
-                    drawing,
-                    targets: targets,
-                    rootURL: rootURL
-                ) { [weak self] results in
-                    guard let self else { return }
-                    for pageID in activePageIDs {
-                        switch results[pageID] {
-                        case .success?:
-                            self.reportDrawingSaveSuccess(pageID: pageID, token: token)
-                        case .failure(let error)?:
-                            self.reportDrawingSaveFailure(error, pageID: pageID, token: token)
-                        case nil:
-                            self.reportDrawingSaveFailure(
-                                DrawingSaveError.unavailableContinuousLayout,
-                                pageID: pageID,
-                                token: token
-                            )
+                    DrawingStorageService.cache(
+                        drawing,
+                        fileName: drawingFileName,
+                        rootURL: rootURL
+                    )
+                    Self.writeDrawing(
+                        drawing,
+                        rootURL: rootURL,
+                        drawingFileName: drawingFileName,
+                        onSuccess: { [weak self] in
+                            self?.reportDrawingSaveSuccess(pageID: pageID, token: token)
+                        },
+                        onFailure: { [weak self] error in
+                            self?.reportDrawingSaveFailure(error, pageID: pageID, token: token)
                         }
-                    }
+                    )
                 }
             }
 
@@ -7380,36 +7239,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             } catch {
                 markDirty(page.id)
                 reportDrawingSaveFailure(error, pageID: page.id)
-            }
-        }
-
-        private static func writeContinuousDrawing(
-            _ drawing: PKDrawing,
-            targets: [ContinuousDrawingSaveTarget],
-            rootURL: URL,
-            completion: @escaping ([UUID: Result<Void, Error>]) -> Void
-        ) {
-            drawingWriteQueue.async {
-                let results = autoreleasepool { () -> [UUID: Result<Void, Error>] in
-                    var results: [UUID: Result<Void, Error>] = [:]
-                    let pageDrawings = ContinuousDrawingSplitter.drawings(
-                        from: drawing,
-                        targets: targets
-                    )
-                    for (target, pageDrawing) in pageDrawings {
-                        results[target.pageID] = Result {
-                            try writeDrawingFile(
-                                pageDrawing,
-                                rootURL: rootURL,
-                                drawingFileName: target.drawingFileName
-                            )
-                        }
-                    }
-                    return results
-                }
-                DispatchQueue.main.async {
-                    completion(results)
-                }
             }
         }
 
