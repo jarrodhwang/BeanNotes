@@ -225,6 +225,7 @@ struct SharedNoteSummary: Codable, Identifiable, Equatable {
 private struct SharedFolderIndex: Codable {
     var folders: [SharedFolderSummary]
     var notes: [SharedNoteSummary]?
+    var theme: String?
 }
 
 private enum SharedImportMode: String, Codable {
@@ -1142,7 +1143,8 @@ struct ImportExportService {
                         return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
                     }
                     return lhs.folderName.localizedCaseInsensitiveCompare(rhs.folderName) == .orderedAscending
-                }
+                },
+            theme: UserDefaults.standard.string(forKey: BeanNotesTheme.storageKey)
         )
         let data = try JSONEncoder().encode(index)
         try storage.fileManager.createDirectory(at: indexURL.deletingLastPathComponent(), withIntermediateDirectories: true)

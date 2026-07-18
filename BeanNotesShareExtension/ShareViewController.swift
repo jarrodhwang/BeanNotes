@@ -23,6 +23,7 @@ final class ShareViewController: UIViewController {
     private struct FolderIndex: Codable {
         var folders: [FolderSummary]
         var notes: [NoteSummary]?
+        var theme: String?
     }
 
     private struct ImportRequest: Codable {
@@ -98,6 +99,8 @@ final class ShareViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let cardView = UIView()
+    private let headerIconContainer = UIView()
+    private let previewCardView = UIView()
     private let headerSubtitleLabel = UILabel()
     private let importAsControl = UISegmentedControl(items: ["New Note", "New Version"])
     private let titleLabel = UILabel()
@@ -123,6 +126,7 @@ final class ShareViewController: UIViewController {
     private var selectedFolder: FolderSummary?
     private var notes: [NoteSummary] = []
     private var selectedNote: NoteSummary?
+    private var sharedTheme = "default"
     private var shouldOpenAppAfterSaving = true
     private var didCompleteRequest = false
 
@@ -133,10 +137,12 @@ final class ShareViewController: UIViewController {
         folders = resolvedFolders(from: index)
         selectedFolder = folders.first
         notes = resolvedNotes(from: index)
-        selectedNote = notes.first
+        sharedTheme = index?.theme ?? "default"
+        selectedNote = availableNotes.first
 
         preferredContentSize = CGSize(width: 560, height: 700)
         configureView()
+        applyThemeAppearance()
         updateFolderMenu()
         updateNoteMenu()
         updateImportConfiguration()
@@ -273,17 +279,15 @@ final class ShareViewController: UIViewController {
     }
 
     private func makeHeader() -> UIView {
-        let iconContainer = UIView()
-        iconContainer.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.13)
-        iconContainer.layer.cornerRadius = 14
-        iconContainer.layer.cornerCurve = .continuous
-        iconContainer.translatesAutoresizingMaskIntoConstraints = false
+        headerIconContainer.layer.cornerRadius = 14
+        headerIconContainer.layer.cornerCurve = .continuous
+        headerIconContainer.translatesAutoresizingMaskIntoConstraints = false
 
         let icon = UIImageView(image: UIImage(systemName: "tray.and.arrow.down.fill"))
         icon.tintColor = .systemBlue
         icon.contentMode = .scaleAspectFit
         icon.translatesAutoresizingMaskIntoConstraints = false
-        iconContainer.addSubview(icon)
+        headerIconContainer.addSubview(icon)
 
         let title = UILabel()
         title.text = "Add to BeanNotes"
@@ -300,16 +304,16 @@ final class ShareViewController: UIViewController {
         textStack.axis = .vertical
         textStack.spacing = 2
 
-        let stack = UIStackView(arrangedSubviews: [iconContainer, textStack])
+        let stack = UIStackView(arrangedSubviews: [headerIconContainer, textStack])
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = 12
 
         NSLayoutConstraint.activate([
-            iconContainer.widthAnchor.constraint(equalToConstant: 52),
-            iconContainer.heightAnchor.constraint(equalTo: iconContainer.widthAnchor),
-            icon.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor),
+            headerIconContainer.widthAnchor.constraint(equalToConstant: 52),
+            headerIconContainer.heightAnchor.constraint(equalTo: headerIconContainer.widthAnchor),
+            icon.centerXAnchor.constraint(equalTo: headerIconContainer.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: headerIconContainer.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 26),
             icon.heightAnchor.constraint(equalTo: icon.widthAnchor)
         ])
@@ -318,10 +322,8 @@ final class ShareViewController: UIViewController {
     }
 
     private func makePreviewCard() -> UIView {
-        let container = UIView()
-        container.backgroundColor = .tertiarySystemGroupedBackground
-        container.layer.cornerRadius = 18
-        container.layer.cornerCurve = .continuous
+        previewCardView.layer.cornerRadius = 18
+        previewCardView.layer.cornerCurve = .continuous
 
         previewImageView.image = previewPlaceholderImage()
         previewImageView.tintColor = .secondaryLabel
@@ -360,18 +362,18 @@ final class ShareViewController: UIViewController {
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        container.addSubview(stack)
+        previewCardView.addSubview(stack)
 
         NSLayoutConstraint.activate([
             previewImageView.widthAnchor.constraint(equalToConstant: 92),
             previewImageView.heightAnchor.constraint(equalToConstant: 116),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
+            stack.leadingAnchor.constraint(equalTo: previewCardView.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: previewCardView.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: previewCardView.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: previewCardView.bottomAnchor, constant: -12)
         ])
 
-        return container
+        return previewCardView
     }
 
     private func makeLabel(_ text: String) -> UILabel {
@@ -385,6 +387,40 @@ final class ShareViewController: UIViewController {
         label.font = .preferredFont(forTextStyle: .subheadline)
         label.textColor = .secondaryLabel
         label.adjustsFontForContentSizeCategory = true
+    }
+
+    private func applyThemeAppearance() {
+        let appearance: (background: UIColor, card: UIColor, preview: UIColor, accent: UIColor)
+
+        switch sharedTheme {
+        case "bean":
+            appearance = (
+                UIColor.beanNotesColor(hex: "#FFF8EA"),
+                UIColor.beanNotesColor(hex: "#FFFCF6"),
+                UIColor.beanNotesColor(hex: "#EEDDC7"),
+                UIColor.beanNotesColor(hex: "#A64B2A")
+            )
+        case "blueberry":
+            appearance = (
+                UIColor.beanNotesColor(hex: "#EFF6FF"),
+                UIColor.beanNotesColor(hex: "#F8FBFF"),
+                UIColor.beanNotesColor(hex: "#DCEBFF"),
+                UIColor.beanNotesColor(hex: "#2563EB")
+            )
+        default:
+            appearance = (.secondarySystemGroupedBackground, .systemBackground, .tertiarySystemGroupedBackground, .systemBlue)
+        }
+
+        view.backgroundColor = appearance.background
+        cardView.backgroundColor = appearance.card
+        previewCardView.backgroundColor = appearance.preview
+        previewImageView.backgroundColor = appearance.card
+        headerIconContainer.backgroundColor = appearance.accent.withAlphaComponent(0.13)
+        view.tintColor = appearance.accent
+        importAsControl.selectedSegmentTintColor = appearance.accent
+        modeControl.selectedSegmentTintColor = appearance.accent
+        importButton.configuration?.baseBackgroundColor = appearance.accent
+        importButton.configuration?.baseForegroundColor = .white
     }
 
     private func sharedItemProviders() -> [NSItemProvider] {
@@ -550,6 +586,11 @@ final class ShareViewController: UIViewController {
             }
     }
 
+    private var availableNotes: [NoteSummary] {
+        guard let folderID = selectedFolder?.id else { return [] }
+        return notes.filter { $0.folderID == folderID }
+    }
+
     private func updateFolderMenu() {
         let actions = folders.map { folder in
             UIAction(
@@ -557,8 +598,13 @@ final class ShareViewController: UIViewController {
                 image: folderSwatchImage(colorHex: folder.colorHex),
                 state: folder == selectedFolder ? .on : .off
             ) { [weak self] _ in
-                self?.selectedFolder = folder
-                self?.updateFolderMenu()
+                guard let self else { return }
+                self.selectedFolder = folder
+                self.selectedNote = self.availableNotes.first
+                self.updateFolderMenu()
+                self.updateNoteMenu()
+                self.updateSharedItemSummary()
+                self.updateImportButtonState()
             }
         }
 
@@ -567,7 +613,9 @@ final class ShareViewController: UIViewController {
         configuration.image = folderSwatchImage(colorHex: selectedFolder?.colorHex ?? "#F59E0B")
         configuration.imagePadding = 8
         configuration.titleAlignment = .leading
-        configuration.baseForegroundColor = .label
+        let folderColor = UIColor.beanNotesColor(hex: selectedFolder?.colorHex ?? "#F59E0B")
+        configuration.baseForegroundColor = folderColor
+        configuration.baseBackgroundColor = folderColor.withAlphaComponent(0.16)
 
         folderButton.configuration = configuration
         folderButton.menu = UIMenu(title: "Choose Folder", children: actions)
@@ -575,9 +623,9 @@ final class ShareViewController: UIViewController {
     }
 
     private func updateNoteMenu() {
-        let actions = notes.map { note in
+        let actions = availableNotes.map { note in
             UIAction(
-                title: noteMenuTitle(for: note),
+                title: displayTitle(for: note),
                 image: UIImage(systemName: "doc.text"),
                 state: note == selectedNote ? .on : .off
             ) { [weak self] _ in
@@ -589,30 +637,26 @@ final class ShareViewController: UIViewController {
         }
 
         var configuration = UIButton.Configuration.bordered()
-        configuration.title = selectedNote.map(noteMenuTitle(for:)) ?? "No eligible notes found"
+        configuration.title = selectedNote.map(displayTitle(for:)) ?? "No eligible notes found"
         configuration.image = UIImage(systemName: selectedNote == nil ? "exclamationmark.triangle" : "doc.text")
         configuration.imagePadding = 8
         configuration.titleAlignment = .leading
-        configuration.baseForegroundColor = selectedNote == nil ? .secondaryLabel : .label
+        let folderColor = UIColor.beanNotesColor(hex: selectedFolder?.colorHex ?? "#F59E0B")
+        configuration.baseForegroundColor = selectedNote == nil ? .secondaryLabel : folderColor
+        configuration.baseBackgroundColor = selectedNote == nil ? .clear : folderColor.withAlphaComponent(0.12)
 
         noteButton.configuration = configuration
         noteButton.menu = UIMenu(title: "Choose Existing Note", children: actions)
-        noteButton.isEnabled = !notes.isEmpty
-        noteButton.accessibilityValue = selectedNote.map(noteMenuTitle(for:)) ?? "No eligible notes found"
-        noteButton.accessibilityHint = notes.isEmpty
-            ? "Open BeanNotes and import a PDF or image note first."
-            : "Chooses the note whose background will receive this version."
+        noteButton.isEnabled = !availableNotes.isEmpty
+        noteButton.accessibilityValue = selectedNote.map(displayTitle(for:)) ?? "No eligible notes found"
+        noteButton.accessibilityHint = availableNotes.isEmpty
+            ? "This project folder has no PDF or image notes that can receive a new version."
+            : "Chooses the note in this project folder whose background will receive this version."
     }
 
     private func displayTitle(for note: NoteSummary) -> String {
         let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return title.isEmpty ? "Untitled Note" : title
-    }
-
-    private func noteMenuTitle(for note: NoteSummary) -> String {
-        let folderName = note.folderName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !folderName.isEmpty else { return displayTitle(for: note) }
-        return "\(displayTitle(for: note)) — \(folderName)"
     }
 
     private var selectedImportDestination: ImportDestination {
@@ -631,18 +675,19 @@ final class ShareViewController: UIViewController {
     private func updateImportConfiguration() {
         let isNewVersion = isImportingNewVersion
 
-        folderLabel.isHidden = isNewVersion
-        folderButton.isHidden = isNewVersion
+        folderLabel.isHidden = false
+        folderButton.isHidden = false
         newNoteModeLabel.isHidden = isNewVersion
         modeControl.isHidden = isNewVersion
         noteLabel.isHidden = !isNewVersion
         noteButton.isHidden = !isNewVersion
 
+        folderLabel.text = isNewVersion ? "Project Folder" : "Folder"
         titleLabel.text = isNewVersion ? "Version Name" : "Title"
         titleField.placeholder = isNewVersion ? "Version Name" : "Shared Import"
         titleField.accessibilityLabel = isNewVersion ? "Version name" : "Note title"
         headerSubtitleLabel.text = isNewVersion
-            ? "Choose an existing note and add a replacement background."
+            ? "Choose a project folder, then a note to receive this version."
             : "Pick a folder and import style."
         importButton.configuration?.title = isNewVersion ? "Add Version" : "Add"
         importButton.accessibilityLabel = isNewVersion ? "Add new version" : "Add to BeanNotes"

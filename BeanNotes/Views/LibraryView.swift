@@ -325,6 +325,7 @@ struct LibraryView: View {
             hideBeanVisit(animated: false)
             focusSessionStartedAt = Date()
             visitScheduleToken += 1
+            syncSharedFolderIndex()
         }
         .onChange(of: visitsEnabled) { _, isEnabled in
             if !isEnabled {
