@@ -2294,6 +2294,9 @@ struct BeanNotesTests {
         #expect(!DrawingCanvasView.PageCanvasView().canvasView.scrollsToTop)
         #expect(!container.scrollViewShouldScrollToTop(container.scrollView))
         #expect(container.scrollViewShouldScrollToTop(container.scrollView))
+        #expect(container.isDocumentTraversalActive)
+        container.scrollViewDidScrollToTop(container.scrollView)
+        #expect(!container.isDocumentTraversalActive)
 
         #expect(!container.shouldAllowScrollToTop(at: 10))
         #expect(container.shouldAllowScrollToTop(at: 10.4))
@@ -3200,6 +3203,11 @@ struct BeanNotesTests {
 
         #expect(container.currentSelectedPageID == pages[1].id)
         #expect(container.scrollView.contentOffset.y > 0)
+        #expect(!container.isDocumentTraversalActive)
+
+        container.scrollToPage(id: pages[0].id, animated: true)
+        container.scrollToPage(id: pages[0].id, animated: false)
+        #expect(!container.isDocumentTraversalActive)
     }
 
     @Test @MainActor func lightweightCanvasRefreshReassertsDrawingInteraction() throws {
@@ -4778,6 +4786,7 @@ struct BeanNotesTests {
         let canvasView = try #require(container.activeCanvasView)
         canvasView.drawing = drawing
         coordinator.canvasViewDidBeginUsingTool(canvasView)
+        #expect(container.isLiveDrawingInteractionActive)
         coordinator.canvasViewDrawingDidChange(canvasView)
         coordinator.prepareForExport(requestID: 77)
 
@@ -4790,6 +4799,7 @@ struct BeanNotesTests {
             coordinator.canvasViewDidEndUsingTool(canvasView)
         }
 
+        #expect(!container.isLiveDrawingInteractionActive)
         #expect(completedRequestID == 77)
         let completedResult = try #require(completionResult)
         try completedResult.get()
@@ -5295,7 +5305,11 @@ struct BeanNotesTests {
     @Test @MainActor func documentTraversalStaysActiveThroughDecelerationAndZoom() {
         let container = DrawingCanvasView.CanvasContainerView()
 
+        #expect(!container.scrollView.alwaysBounceHorizontal)
+        #expect(container.scrollView.alwaysBounceVertical)
+        #expect(container.scrollView.isDirectionalLockEnabled)
         #expect(!container.isDocumentTraversalActive)
+        #expect(!container.isLiveDrawingInteractionActive)
 
         container.scrollViewWillBeginDragging(container.scrollView)
         #expect(container.isDocumentTraversalActive)
@@ -5315,6 +5329,11 @@ struct BeanNotesTests {
         container.scrollViewWillBeginDragging(container.scrollView)
         container.cancelPendingRenderingWork()
         #expect(!container.isDocumentTraversalActive)
+
+        container.setDrawingInteractionActive(true)
+        #expect(container.isLiveDrawingInteractionActive)
+        container.setDrawingInteractionActive(false)
+        #expect(!container.isLiveDrawingInteractionActive)
     }
 
     private struct PageCanvasFixture {
@@ -6413,7 +6432,11 @@ struct BeanNotesTests {
         #expect(endCount == 0)
         #expect(changeCount == 1)
 
-        fixture.pageView.handleEraserInteraction(.moved(CGPoint(x: 100, y: 180)))
+        fixture.pageView.handleEraserInteraction(.movedBatch([
+            CGPoint(x: 100, y: 120),
+            CGPoint(x: 100, y: 150),
+            CGPoint(x: 100, y: 180)
+        ]))
 
         #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
         #expect(
@@ -6421,12 +6444,89 @@ struct BeanNotesTests {
                 == retainedStroke.renderBounds
         )
         #expect(endCount == 0)
-        #expect(changeCount == 2)
+        #expect(changeCount == 1)
 
-        fixture.pageView.handleEraserInteraction(.ended(CGPoint(x: 100, y: 180)))
+        fixture.pageView.handleEraserInteraction(.endedBatch([
+            CGPoint(x: 100, y: 180)
+        ]))
 
         #expect(endCount == 1)
-        #expect(changeCount == 2)
+        #expect(changeCount == 1)
+    }
+
+    @Test @MainActor func objectEraserEndedBatchPreservesReturningLoopAndUndo() throws {
+        let fixture = try makePageCanvasFixture(name: "LoopingObjectEraser")
+        defer { fixture.cleanup() }
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let hostViewController = UIViewController()
+        window.rootViewController = hostViewController
+        window.makeKeyAndVisible()
+        hostViewController.view.addSubview(fixture.pageView)
+        fixture.pageView.frame = hostViewController.view.bounds
+        fixture.pageView.layoutIfNeeded()
+        defer { window.isHidden = true }
+
+        let boundaryStroke = makeTestStroke(
+            from: CGPoint(x: 90, y: 129),
+            to: CGPoint(x: 110, y: 129),
+            width: 2
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [boundaryStroke])
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 40,
+            usesCustomObjectEraser: true
+        )
+        let undoManager = try #require(fixture.pageView.canvasView.undoManager)
+        var endCount = 0
+        fixture.pageView.objectEraserDidEnd = { endCount += 1 }
+
+        fixture.pageView.handleEraserInteraction(.began(CGPoint(x: 100, y: 100)))
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+
+        fixture.pageView.handleEraserInteraction(.movedBatch([
+            CGPoint(x: 100, y: 105)
+        ]))
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+
+        fixture.pageView.handleEraserInteraction(.endedBatch([
+            CGPoint(x: 100, y: 109),
+            CGPoint(x: 100, y: 100)
+        ]))
+
+        #expect(fixture.pageView.canvasView.drawing.strokes.isEmpty)
+        #expect(endCount == 1)
+
+        undoManager.undo()
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+    }
+
+    @Test @MainActor func objectEraserBuffersSlowSinglePointEvents() throws {
+        let fixture = try makePageCanvasFixture(name: "BufferedObjectEraser")
+        defer { fixture.cleanup() }
+
+        fixture.pageView.setEraserPreviewEnabled(
+            true,
+            diameter: 40,
+            usesCustomObjectEraser: true
+        )
+        fixture.pageView.handleEraserInteraction(.began(CGPoint(x: 100, y: 100)))
+        #expect(fixture.pageView.objectEraserLiveEvaluationCount == 1)
+
+        for x in 101...109 {
+            fixture.pageView.handleEraserInteraction(
+                .moved(CGPoint(x: CGFloat(x), y: 100))
+            )
+        }
+        #expect(fixture.pageView.objectEraserLiveEvaluationCount == 1)
+
+        fixture.pageView.handleEraserInteraction(.moved(CGPoint(x: 110, y: 100)))
+        #expect(fixture.pageView.objectEraserLiveEvaluationCount == 2)
+
+        fixture.pageView.handleEraserInteraction(.endedBatch([
+            CGPoint(x: 110, y: 100)
+        ]))
     }
 
     @Test @MainActor func cancelledLiveObjectEraseRestoresTheOriginalDrawing() throws {
@@ -7214,8 +7314,16 @@ struct BeanNotesTests {
         try renderer.writePDF(to: pdfURL) { context in
             context.beginPage()
             "Page 1".draw(at: CGPoint(x: 72, y: 72), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
-            context.beginPage()
+            context.beginPage(
+                withBounds: CGRect(x: 0, y: 0, width: 792, height: 612),
+                pageInfo: [:]
+            )
             "Page 2".draw(at: CGPoint(x: 72, y: 72), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+            context.beginPage(
+                withBounds: CGRect(x: 0, y: 0, width: 200, height: 1_000),
+                pageInfo: [:]
+            )
+            "Receipt".draw(at: CGPoint(x: 24, y: 36), withAttributes: [.font: UIFont.systemFont(ofSize: 18)])
         }
 
         let folder = NotebookFolder(name: "Class")
@@ -7225,15 +7333,23 @@ struct BeanNotesTests {
         try context.save()
 
         #expect(imported.note.title == "Syllabus")
-        #expect(imported.pages.count == 2)
+        #expect(imported.pages.count == 3)
         #expect(imported.pages.allSatisfy { $0.lockedImageAttachments.count == 1 })
         #expect(imported.attachments.contains { $0.kind == .pdf && !$0.isLocked })
         #expect(imported.pages.allSatisfy { $0.lockedImageAttachments.allSatisfy(\.rendersBehindDrawing) })
-        #expect(imported.pages.compactMap { $0.lockedImageAttachments.first?.vectorSourcePageIndex }.sorted() == [0, 1])
+        #expect(imported.pages.compactMap { $0.lockedImageAttachments.first?.vectorSourcePageIndex }.sorted() == [0, 1, 2])
+        #expect(imported.pages.allSatisfy { $0.width == 1_024 })
+        #expect(imported.pages[0].height > imported.pages[1].height)
+        #expect(imported.pages[2].height > imported.pages[0].height)
+        #expect(imported.pages[2].height == NotePage.maximumPageDimension)
 
         let firstPage = try #require(imported.pages.first)
         let lockedImage = try #require(firstPage.lockedImageAttachments.first)
-        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: lockedImage.storedFileName).path))
+        let rasterURL = storage.url(forRelativePath: lockedImage.storedFileName)
+        #expect(FileManager.default.fileExists(atPath: rasterURL.path))
+        let rasterImage = try #require(UIImage(contentsOfFile: rasterURL.path))
+        #expect(max(rasterImage.size.width, rasterImage.size.height) <= 1_280)
+        #expect(rasterImage.size.width > 900)
         let vectorSource = try #require(lockedImage.vectorSourceStoredFileName)
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: vectorSource).path))
 
@@ -7244,6 +7360,25 @@ struct BeanNotesTests {
         tiledPage.updateRenderScale(12)
         #expect(tiledPage.layer.contentsScale == stableContentsScale)
         #expect(DrawingCanvasView.ImmediatePDFTiledLayer.fadeDuration() == 0)
+        let idleTiledPage = DrawingCanvasView.PDFPageTiledView(frame: .zero)
+        idleTiledPage.configure(url: storage.url(forRelativePath: vectorSource), pageIndex: 0)
+        let initialInvalidationCount = idleTiledPage.displayInvalidationCount
+        idleTiledPage.setRenderingSuspended(true)
+        idleTiledPage.setRenderingSuspended(false)
+        #expect(idleTiledPage.displayInvalidationCount == initialInvalidationCount)
+
+        idleTiledPage.setRenderingSuspended(true)
+        idleTiledPage.configure(url: storage.url(forRelativePath: vectorSource), pageIndex: 1)
+        #expect(idleTiledPage.displayInvalidationCount == initialInvalidationCount)
+        idleTiledPage.setRenderingSuspended(false)
+        #expect(idleTiledPage.displayInvalidationCount == initialInvalidationCount + 1)
+
+        let configuredInvalidationCount = idleTiledPage.displayInvalidationCount
+        for _ in 0..<25 {
+            idleTiledPage.setRenderingSuspended(true)
+            idleTiledPage.setRenderingSuspended(false)
+        }
+        #expect(idleTiledPage.displayInvalidationCount == configuredInvalidationCount)
 
         let imageContainer = DrawingCanvasView.AttachmentImageContainerView()
         defer {
@@ -7262,9 +7397,38 @@ struct BeanNotesTests {
 
         imageContainer.setDocumentTraversalActive(true)
         #expect(!imageContainer.isVectorPDFVisible)
+        #expect(imageContainer.isVectorPDFRenderingSuspended)
 
         imageContainer.setDocumentTraversalActive(false)
         #expect(imageContainer.isVectorPDFVisible)
+        #expect(!imageContainer.isVectorPDFRenderingSuspended)
+
+        imageContainer.setDrawingInteractionActive(true)
+        #expect(!imageContainer.isVectorPDFVisible)
+        #expect(imageContainer.isVectorPDFRenderingSuspended)
+
+        imageContainer.setDocumentTraversalActive(true)
+        imageContainer.setDrawingInteractionActive(false)
+        #expect(!imageContainer.isVectorPDFVisible)
+        #expect(imageContainer.isVectorPDFRenderingSuspended)
+
+        imageContainer.setDocumentTraversalActive(false)
+        #expect(imageContainer.isVectorPDFVisible)
+        #expect(!imageContainer.isVectorPDFRenderingSuspended)
+
+        let deferredVectorContainer = DrawingCanvasView.AttachmentImageContainerView()
+        deferredVectorContainer.setDocumentTraversalActive(true)
+        deferredVectorContainer.configure(
+            attachment: lockedImage,
+            storage: storage,
+            pageSize: firstPage.pageSize,
+            changed: {}
+        )
+        #expect(!deferredVectorContainer.hasVectorPDFView)
+        deferredVectorContainer.setDocumentTraversalActive(false)
+        #expect(deferredVectorContainer.hasVectorPDFView)
+        #expect(deferredVectorContainer.isVectorPDFVisible)
+        deferredVectorContainer.releaseImage(evictCachedVariants: true)
 
         imageContainer.setImageLoadingEnabled(false)
         #expect(!imageContainer.hasVectorPDFView)

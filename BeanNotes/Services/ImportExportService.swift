@@ -1304,10 +1304,15 @@ struct ImportExportService {
                 }
 
                 guard let pdfPage = document.page(at: index + 1) else { continue }
-                let pageSize = normalizedPDFPageSize(for: displayedPDFPageSize(for: pdfPage))
+                let displayedSize = displayedPDFPageSize(for: pdfPage)
+                let pageSize = normalizedPDFPageSize(for: displayedSize)
                 let storedImage = try autoreleasepool { () throws -> StoredFile in
                     try Task.checkCancellation()
-                    guard let imageData = renderPDFPageJPEGData(pdfPage, size: pageSize, compressionQuality: 0.82) else {
+                    guard let imageData = renderPDFPageJPEGData(
+                        pdfPage,
+                        displayedSize: displayedSize,
+                        compressionQuality: 0.82
+                    ) else {
                         throw ImportExportError.exportFailed
                     }
                     try Task.checkCancellation()
@@ -1724,14 +1729,35 @@ struct ImportExportService {
     }
 
     nonisolated private static func normalizedPDFPageSize(for sourceSize: CGSize) -> CGSize {
-        let width = max(sourceSize.width, 1)
-        let height = max(sourceSize.height, 1)
-        let longSide = max(width, height)
-        let scale = 1280 / longSide
-
+        let safeSize = safePDFPageSize(sourceSize)
+        let commonWidth = CGFloat(NotePage.defaultPageWidth)
+        // Logical document geometry stays independent from the bounded JPEG fallback,
+        // so one receipt-shaped page cannot make every normal page narrow and blurry.
+        // Match the model limit here instead of relying on NotePage and Attachment to
+        // silently clamp different geometry when the imported objects are created.
+        let maximumLogicalHeight = CGFloat(NotePage.maximumPageDimension)
         return CGSize(
-            width: (width * scale).rounded(),
-            height: (height * scale).rounded()
+            width: commonWidth,
+            height: min(
+                maximumLogicalHeight,
+                max(1, (commonWidth * safeSize.height / safeSize.width).rounded())
+            )
+        )
+    }
+
+    nonisolated private static func safePDFPageSize(_ sourceSize: CGSize) -> CGSize {
+        CGSize(
+            width: sourceSize.width.isFinite ? max(sourceSize.width, 1) : 1,
+            height: sourceSize.height.isFinite ? max(sourceSize.height, 1) : 1
+        )
+    }
+
+    nonisolated private static func boundedPDFRasterSize(for sourceSize: CGSize) -> CGSize {
+        let safeSize = safePDFPageSize(sourceSize)
+        let scale = 1_280 / max(safeSize.width, safeSize.height)
+        return CGSize(
+            width: min(1_280, max(1, (safeSize.width * scale).rounded())),
+            height: min(1_280, max(1, (safeSize.height * scale).rounded()))
         )
     }
 
@@ -1847,11 +1873,12 @@ struct ImportExportService {
 
     nonisolated private static func renderPDFPageJPEGData(
         _ page: CGPDFPage,
-        size: CGSize,
+        displayedSize: CGSize,
         compressionQuality: CGFloat
     ) -> Data? {
-        let pixelWidth = max(1, Int(size.width.rounded(.up)))
-        let pixelHeight = max(1, Int(size.height.rounded(.up)))
+        let rasterSize = boundedPDFRasterSize(for: displayedSize)
+        let pixelWidth = Int(rasterSize.width.rounded(.up))
+        let pixelHeight = Int(rasterSize.height.rounded(.up))
         let renderSize = CGSize(width: CGFloat(pixelWidth), height: CGFloat(pixelHeight))
         let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 
