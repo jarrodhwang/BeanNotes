@@ -1056,6 +1056,75 @@ struct BeanNotesTests {
         }
     }
 
+    @Test func noteCaptureSelectionMovesAndResizesWithinPageBounds() {
+        let pageBounds = CGRect(x: 40, y: 60, width: 500, height: 700)
+        let initialFrame = NoteCaptureSelectionGeometry.initialFrame(in: pageBounds)
+
+        #expect(pageBounds.contains(initialFrame))
+        #expect(initialFrame.width >= NoteCaptureSelectionGeometry.minimumWidth)
+        #expect(initialFrame.height >= NoteCaptureSelectionGeometry.minimumHeight)
+
+        let movedFrame = NoteCaptureSelectionGeometry.movedFrame(
+            from: initialFrame,
+            translation: CGPoint(x: -2_000, y: 2_000),
+            in: pageBounds
+        )
+        #expect(movedFrame.minX == pageBounds.minX)
+        #expect(movedFrame.maxY == pageBounds.maxY)
+
+        let expandedFrame = NoteCaptureSelectionGeometry.resizedFrame(
+            from: movedFrame,
+            translation: CGPoint(x: 2_000, y: -2_000),
+            handle: .topRight,
+            in: pageBounds
+        )
+        #expect(expandedFrame.maxX == pageBounds.maxX)
+        #expect(expandedFrame.minY == pageBounds.minY)
+        #expect(pageBounds.contains(expandedFrame))
+
+        let minimumFrame = NoteCaptureSelectionGeometry.resizedFrame(
+            from: initialFrame,
+            translation: CGPoint(x: -2_000, y: -2_000),
+            handle: .bottomRight,
+            in: pageBounds
+        )
+        #expect(minimumFrame.width == NoteCaptureSelectionGeometry.minimumWidth)
+        #expect(minimumFrame.height == NoteCaptureSelectionGeometry.minimumHeight)
+    }
+
+    @Test func noteCaptureRendererProducesHighResolutionCrop() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCaptureRender-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        let page = NotePage(
+            pageOrder: 0,
+            background: .plain(colorHex: "#FFF7E8"),
+            width: 400,
+            height: 500
+        )
+        let snapshot = NotePageRenderSnapshot(
+            page: page,
+            theme: .standard,
+            showsBeanArtwork: false
+        )
+        let captureRect = CGRect(x: 35, y: 45, width: 120, height: 80)
+        let image = try #require(ThumbnailService.renderPageCaptureImage(
+            snapshot: snapshot,
+            drawing: makeTestDrawing(color: .black, xOffset: 30),
+            rootURL: rootURL,
+            selectionRect: captureRect,
+            scale: 3
+        ))
+        let cgImage = try #require(image.cgImage)
+
+        #expect(image.size == captureRect.size)
+        #expect(cgImage.width == 360)
+        #expect(cgImage.height == 240)
+        #expect(image.pngData()?.isEmpty == false)
+    }
+
     @Test func localStorageCreatesAppRelativePaths() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesTests-\(UUID().uuidString)", isDirectory: true)
@@ -1893,6 +1962,63 @@ struct BeanNotesTests {
         #expect(pageView.canvasView.isUserInteractionEnabled)
         #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
         #expect(pageView.canvasView.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.anyInput.rawValue)
+    }
+
+    @Test func captureModeSuspendsAndRestoresDrawingInteraction() {
+        let pageView = DrawingCanvasView.PageCanvasView()
+        pageView.applyInputMode(.anyInput)
+
+        pageView.setCaptureInteractionEnabled(true)
+        #expect(!pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        #expect(!pageView.allowsPageActionLongPress)
+
+        pageView.setCaptureInteractionEnabled(false)
+        #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        #expect(pageView.allowsPageActionLongPress)
+    }
+
+    @Test func selectingCaptureToolShowsAndRemovesPageSelectionOverlay() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCaptureOverlay-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "capture-overlay.drawing", width: 612, height: 792)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+
+        defer {
+            container.cancelPendingRenderingWork()
+            container.releaseAllMaterializedPages()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.layoutIfNeeded()
+
+        parent.toolState.select(.capture)
+        coordinator.applyCustomToolIfNeeded()
+        let overlay = try #require(container.captureSelectionOverlay)
+        #expect(overlay.accessibilityIdentifier == "noteCaptureSelection")
+        #expect(!container.activeCanvasView!.drawingGestureRecognizer.isEnabled)
+
+        parent.toolState.select(.pen)
+        coordinator.applyCustomToolIfNeeded()
+        #expect(container.captureSelectionOverlay == nil)
+        #expect(container.activeCanvasView!.drawingGestureRecognizer.isEnabled)
     }
 
     @Test @MainActor func pageCanvasLayoutPreservesStableCanvasOffsetUntilPageSizeChanges() throws {

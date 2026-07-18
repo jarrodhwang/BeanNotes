@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import UIKit
 import UniformTypeIdentifiers
 
 struct PastedImage: Sendable {
@@ -21,6 +22,20 @@ enum ImagePasteError: LocalizedError {
             "The clipboard does not contain an image."
         case .imageDataUnavailable:
             "BeanNotes could not read the image from the clipboard."
+        }
+    }
+}
+
+enum NoteCaptureError: LocalizedError {
+    case renderFailed
+    case encodingFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .renderFailed:
+            "BeanNotes could not render the selected note area."
+        case .encodingFailed:
+            "BeanNotes could not create a high-quality clipboard image."
         }
     }
 }
@@ -56,5 +71,20 @@ struct ImagePasteService {
         }
 
         return PastedImage(data: data, originalFileName: originalFileName)
+    }
+}
+
+@MainActor
+enum NoteCapturePasteboard {
+    static let imageChangedNotification = Notification.Name("BeanNotesCapturePasteboardImageChanged")
+
+    static var containsImage: Bool {
+        UIPasteboard.general.hasImages
+    }
+
+    static func copyPNGData(_ data: Data) {
+        guard !data.isEmpty else { return }
+        UIPasteboard.general.setData(data, forPasteboardType: UTType.png.identifier)
+        NotificationCenter.default.post(name: imageChangedNotification, object: nil)
     }
 }

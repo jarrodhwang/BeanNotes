@@ -11,6 +11,8 @@ struct PenPaletteView: View {
     var availableSize: CGSize = UIScreen.main.bounds.size
     var zoomScale: CGFloat = 1
     var strokeZoomBehavior: DrawingStrokeZoomBehavior = .pageWidth
+    var isPastingImage = false
+    var pasteImage: ([NSItemProvider]) -> Void = { _ in }
 
     @AppStorage(PenPaletteLayoutMetrics.isCollapsedStorageKey) private var isCollapsed = false
     @AppStorage(PenPaletteLayoutMetrics.committedOffsetStorageKey) private var committedOffsetRaw = ""
@@ -27,6 +29,7 @@ struct PenPaletteView: View {
     @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
     @State private var hasLoadedCommittedOffset = false
+    @State private var clipboardContainsImage = false
 
     var body: some View {
         paletteBody
@@ -65,6 +68,7 @@ struct PenPaletteView: View {
                 selectionFeedback.prepare()
                 syncSelectedPaletteIndex()
                 clampCommittedOffset()
+                refreshClipboardState()
             }
             .onPreferenceChange(PenPaletteSizePreferenceKey.self) { size in
                 measuredPaletteSize = size
@@ -91,6 +95,15 @@ struct PenPaletteView: View {
                 isShowingCustomEraserWidth = false
                 isShowingRubEraserAngle = false
                 isShowingEraserModes = false
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NoteCapturePasteboard.imageChangedNotification)) { _ in
+                refreshClipboardState()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+                refreshClipboardState()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                refreshClipboardState()
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Pen palette")
@@ -177,6 +190,24 @@ struct PenPaletteView: View {
         HStack(spacing: 0) {
             ForEach(DrawingTool.allCases) { tool in
                 toolButton(tool)
+            }
+
+            if clipboardContainsImage {
+                PasteButton(supportedContentTypes: ImagePasteService.supportedContentTypes) { itemProviders in
+                    performSelectionFeedback()
+                    pasteImage(itemProviders)
+                }
+                .labelStyle(.iconOnly)
+                .frame(width: 38, height: 38)
+                .background(Color.green.opacity(0.14), in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(Color.green.opacity(0.72), lineWidth: 1.5)
+                }
+                .palettePrimaryHitTarget()
+                .disabled(isPastingImage)
+                .accessibilityLabel("Paste image")
+                .accessibilityHint("Pastes the clipboard image onto the selected page")
             }
         }
     }
@@ -1020,6 +1051,10 @@ struct PenPaletteView: View {
     private func performSelectionFeedback() {
         selectionFeedback.selectionChanged()
         selectionFeedback.prepare()
+    }
+
+    private func refreshClipboardState() {
+        clipboardContainsImage = NoteCapturePasteboard.containsImage
     }
 }
 

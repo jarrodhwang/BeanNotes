@@ -240,6 +240,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var attachmentChanged: () -> Void
     var deleteAttachment: (Attachment) -> Void
     var drawingChanged: (UUID) -> Void
+    var captureFailed: (Error) -> Void = { _ in }
     var saveStarted: () -> Void = {}
     var saveSucceeded: () -> Void = {}
     var saveFailed: (Error) -> Void = { _ in }
@@ -484,6 +485,9 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private var pageViews: [UUID: PageCanvasView] = [:]
         private var continuousPageView: PageCanvasView?
+        private(set) var captureSelectionOverlay: NoteCaptureSelectionOverlayView?
+        private var captureSelectionPageID: UUID?
+        private var isCaptureToolEnabled = false
         private var seamlessAttachmentSelectionGesture: UITapGestureRecognizer?
         private var pagesByID: [UUID: NotePage] = [:]
         private var orderedPageIDs: [UUID] = []
@@ -623,15 +627,36 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func synchronizeSelectedPageID(_ selectedPageID: UUID?) {
             self.selectedPageID = selectedPageID ?? orderedPageIDs.first
+            if isCaptureToolEnabled {
+                updateCaptureSelectionOverlay()
+            }
         }
 
         func reassertInteractionState() {
             if let continuousPageView {
                 continuousPageView.applyInputMode(inputMode)
+                continuousPageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
                 return
             }
             let activePageID = selectedPageID ?? orderedPageIDs.first
-            activePageID.flatMap { pageViews[$0] }?.applyInputMode(inputMode)
+            if let activePageView = activePageID.flatMap({ pageViews[$0] }) {
+                activePageView.applyInputMode(inputMode)
+                activePageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
+            }
+        }
+
+        func setCaptureToolEnabled(_ enabled: Bool) {
+            let changed = isCaptureToolEnabled != enabled
+            isCaptureToolEnabled = enabled
+            applyCaptureInteractionState()
+
+            if enabled {
+                updateCaptureSelectionOverlay(resetSelection: changed)
+            } else {
+                captureSelectionOverlay?.removeFromSuperview()
+                captureSelectionOverlay = nil
+                captureSelectionPageID = nil
+            }
         }
 
         func isContinuousCanvas(_ canvasView: PKCanvasView) -> Bool {
@@ -733,6 +758,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             materializePagesNearViewport(refreshesExistingPages: true)
             configureContinuousPageViewIfNeeded(reloadsDrawing: shouldRelayout)
             arrangeDocumentLayers()
+            if isCaptureToolEnabled {
+                updateCaptureSelectionOverlay()
+            }
             updateNativeDrawingViewports(force: shouldRelayout)
 
             if inputModeChanged {
@@ -1282,6 +1310,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             documentSize = CGSize(width: maxWidth, height: y)
             updateDocumentGeometry(to: documentSize)
             centerDocument()
+            if isCaptureToolEnabled {
+                updateCaptureSelectionOverlay()
+            }
         }
 
         private var continuousDrawingFrame: CGRect? {
@@ -1310,6 +1341,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             if let continuousPageView, !reloadsDrawing {
                 continuousPageView.frame = drawingFrame
                 continuousPageView.applyInputMode(inputMode)
+                continuousPageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
                 return
             }
 
@@ -1345,6 +1377,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
             pageView.setDocumentTraversalActive(isUserScrolling)
             pageView.setDrawingInteractionActive(isDrawingInteractionActive)
+            pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
         }
 
         private func joinedContinuousDrawing(storage: DrawingStorageService) -> PKDrawing {
@@ -1443,17 +1476,96 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func arrangeDocumentLayers() {
-            guard let continuousPageView else { return }
-            contentView.bringSubviewToFront(continuousPageView)
-            for id in orderedPageIDs {
-                guard let pageView = pageViews[id], let frame = pageFrames[id] else { continue }
-                pageView.presentForegroundImages(in: contentView, documentFrame: frame)
-                pageView.presentAttachmentEditingControls(in: contentView, documentFrame: frame)
+            if let continuousPageView {
+                contentView.bringSubviewToFront(continuousPageView)
+                for id in orderedPageIDs {
+                    guard let pageView = pageViews[id], let frame = pageFrames[id] else { continue }
+                    pageView.presentForegroundImages(in: contentView, documentFrame: frame)
+                    pageView.presentAttachmentEditingControls(in: contentView, documentFrame: frame)
+                }
             }
             if let topContentView {
                 contentView.bringSubviewToFront(topContentView)
             }
+            if let captureSelectionOverlay {
+                contentView.bringSubviewToFront(captureSelectionOverlay)
+            }
             contentView.bringSubviewToFront(addPageFooterButton)
+        }
+
+        private func applyCaptureInteractionState() {
+            continuousPageView?.setCaptureInteractionEnabled(isCaptureToolEnabled)
+            for pageView in pageViews.values {
+                pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
+            }
+            seamlessAttachmentSelectionGesture?.isEnabled = pageFlowMode == .seamless && !isCaptureToolEnabled
+        }
+
+        private func updateCaptureSelectionOverlay(resetSelection: Bool = false) {
+            guard isCaptureToolEnabled,
+                  let pageID = selectedPageID ?? currentSelectedPageID ?? orderedPageIDs.first,
+                  let pageFrame = pageFrames[pageID],
+                  pagesByID[pageID] != nil else {
+                captureSelectionOverlay?.isHidden = true
+                return
+            }
+
+            let overlay = captureSelectionOverlay ?? {
+                let overlay = NoteCaptureSelectionOverlayView()
+                captureSelectionOverlay = overlay
+                contentView.addSubview(overlay)
+                return overlay
+            }()
+            let changesPage = captureSelectionPageID != pageID
+            let selectionFrame: CGRect
+            if resetSelection || changesPage || overlay.frame.isEmpty {
+                selectionFrame = NoteCaptureSelectionGeometry.initialFrame(in: pageFrame)
+            } else {
+                selectionFrame = NoteCaptureSelectionGeometry.movedFrame(
+                    from: overlay.frame,
+                    translation: .zero,
+                    in: pageFrame
+                )
+            }
+
+            captureSelectionPageID = pageID
+            overlay.configure(
+                selectionFrame: selectionFrame,
+                within: pageFrame
+            ) { [weak self] selectionFrame in
+                self?.requestCapture(selectionFrame, from: pageID)
+            }
+            arrangeDocumentLayers()
+        }
+
+        private func requestCapture(_ documentRect: CGRect, from pageID: UUID) {
+            guard let page = pagesByID[pageID],
+                  let pageFrame = pageFrames[pageID],
+                  let coordinator,
+                  let overlay = captureSelectionOverlay else {
+                return
+            }
+
+            let selectionRect = documentRect.offsetBy(dx: -pageFrame.minX, dy: -pageFrame.minY)
+            let drawing: PKDrawing
+            if let continuousPageView,
+               let pageDrawing = continuousPageDrawings(from: continuousPageView.canvasView.drawing)?
+                .first(where: { $0.0.id == pageID })?.1 {
+                drawing = pageDrawing
+            } else if let pageView = pageViews[pageID], pageView.canvasView.delegate != nil {
+                drawing = pageView.canvasView.drawing
+            } else if let drawingStorage {
+                drawing = drawingStorage.loadDrawing(for: page)
+            } else {
+                drawing = PKDrawing()
+            }
+
+            coordinator.captureSelection(
+                page: page,
+                drawing: drawing,
+                selectionRect: selectionRect,
+                overlay: overlay
+            )
         }
 
         private func releaseContinuousPageView(flushDrawingBeforeRelease: Bool) {
@@ -1845,6 +1957,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                         coordinator?.selectPageForContextMenu(pageID)
                     }
                 )
+                pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
             }
 
             return didCreatePageView
@@ -3336,6 +3449,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var isDocumentTraversalActive = false
         private var isDrawingInteractionActive = false
         private var appliedInputMode: DrawingInputMode?
+        private var isCaptureInteractionEnabled = false
+        private var allowsAttachmentSelection = true
         private var isUsingDrawingTool = false
         private var eraserPreviewDiameter: CGFloat?
         private var usesCustomObjectEraser = false
@@ -3379,11 +3494,13 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         var consumesBlankCanvasTaps: Bool {
-            appliedInputMode == .pencilOnly && !(canvasView.tool is PKLassoTool)
+            !isCaptureInteractionEnabled
+                && appliedInputMode == .pencilOnly
+                && !(canvasView.tool is PKLassoTool)
         }
 
         var allowsPageActionLongPress: Bool {
-            !(canvasView.tool is PKLassoTool)
+            !isCaptureInteractionEnabled && !(canvasView.tool is PKLassoTool)
         }
 
         override init(frame: CGRect) {
@@ -3427,6 +3544,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             let pageSizeChanged = laidOutPageBounds.size != page.pageSize
             drawingPageSizeOverride = nil
             isDrawingSurfaceEnabled = drawingEnabled
+            allowsAttachmentSelection = true
             if isNewPage {
                 clearAttachmentSelection()
                 hasConfiguredImageAttachments = false
@@ -3513,6 +3631,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             page = representativePage
             drawingPageSizeOverride = pageSize
             isDrawingSurfaceEnabled = true
+            allowsAttachmentSelection = false
             accessibilityIdentifier = "notePageCanvas"
             accessibilityLabel = "Continuous drawing canvas"
             attachmentChanged = nil
@@ -3561,9 +3680,22 @@ struct DrawingCanvasView: UIViewRepresentable {
             // a recycled page cannot remain permanently non-interactive. Custom
             // erasing owns this recognizer's input while it performs boundary-matched hits.
             canvasView.isUserInteractionEnabled = true
-            canvasView.drawingGestureRecognizer.isEnabled = !usesCustomEraserInput
+            canvasView.drawingGestureRecognizer.isEnabled = !usesCustomEraserInput && !isCaptureInteractionEnabled
             guard canvasView.drawingPolicy != inputMode.drawingPolicy else { return }
             canvasView.drawingPolicy = inputMode.drawingPolicy
+        }
+
+        func setCaptureInteractionEnabled(_ enabled: Bool) {
+            guard isCaptureInteractionEnabled != enabled else { return }
+            isCaptureInteractionEnabled = enabled
+            if enabled {
+                clearAttachmentSelection()
+                dismissNativeCanvasEditMenus()
+            }
+            attachmentSelectionGesture?.isEnabled = allowsAttachmentSelection && !enabled
+            pageActionLongPressGesture?.isEnabled = !enabled
+            eraserScopeGesture.isEnabled = !enabled
+            canvasView.drawingGestureRecognizer.isEnabled = !enabled && !usesCustomEraserInput
         }
 
         func setImageLoadingEnabled(_ enabled: Bool) {
@@ -5654,6 +5786,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        private final class CaptureDrawingReference: @unchecked Sendable {
+            let drawing: PKDrawing
+
+            init(_ drawing: PKDrawing) {
+                self.drawing = drawing
+            }
+        }
+
         var parent: DrawingCanvasView
         var selectedPageID: UUID?
         private(set) var pendingVisiblePageID: UUID?
@@ -5740,6 +5880,50 @@ struct DrawingCanvasView: UIViewRepresentable {
             let pageActionRequested = parent.pageActionRequested
             dispatchToSwiftUI {
                 pageActionRequested(pageID, action)
+            }
+        }
+
+        func captureSelection(
+            page: NotePage,
+            drawing: PKDrawing,
+            selectionRect: CGRect,
+            overlay: NoteCaptureSelectionOverlayView
+        ) {
+            overlay.setCopying(true)
+            let snapshot = NotePageRenderSnapshot(
+                page: page,
+                theme: parent.theme,
+                showsBeanArtwork: parent.showsBeanArtwork
+            )
+            let drawingReference = CaptureDrawingReference(drawing)
+            let rootURL = parent.drawingStorage.storage.rootURL
+
+            Task { @MainActor [weak self, weak overlay] in
+                let result = await Task.detached(priority: .userInitiated) {
+                    autoreleasepool { () -> Result<Data, NoteCaptureError> in
+                        guard let image = ThumbnailService.renderPageCaptureImage(
+                            snapshot: snapshot,
+                            drawing: drawingReference.drawing,
+                            rootURL: rootURL,
+                            selectionRect: selectionRect
+                        ) else {
+                            return .failure(.renderFailed)
+                        }
+                        guard let data = image.pngData(), !data.isEmpty else {
+                            return .failure(.encodingFailed)
+                        }
+                        return .success(data)
+                    }
+                }.value
+
+                switch result {
+                case .success(let data):
+                    NoteCapturePasteboard.copyPNGData(data)
+                    overlay?.showCopySucceeded()
+                case .failure(let error):
+                    overlay?.showCopyFailed()
+                    self?.parent.captureFailed(error)
+                }
             }
         }
 
@@ -6081,6 +6265,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func configureToolPicker(mode: PenPaletteMode) {
+            let usesCaptureTool = mode == .custom && parent.toolState.selectedTool == .capture
+            containerView?.setCaptureToolEnabled(usesCaptureTool)
+            if usesCaptureTool {
+                hideToolPicker()
+                return
+            }
             guard let activeCanvasView else { return }
 
             if mode == .applePencil {
@@ -6131,7 +6321,13 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func applyCustomToolIfNeeded() {
-            guard parent.paletteMode == .custom else { return }
+            guard parent.paletteMode == .custom else {
+                containerView?.setCaptureToolEnabled(false)
+                return
+            }
+            let usesCaptureTool = parent.toolState.selectedTool == .capture
+            containerView?.setCaptureToolEnabled(usesCaptureTool)
+            guard !usesCaptureTool else { return }
             // Replacing PKCanvasView.tool while UIKit is zooming interrupts its live ink
             // renderer. The settled zoom publish reapplies the calibrated tool once.
             guard containerView?.isZoomTransitionActive != true else { return }

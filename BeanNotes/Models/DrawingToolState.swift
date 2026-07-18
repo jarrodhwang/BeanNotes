@@ -13,6 +13,7 @@ enum DrawingTool: String, CaseIterable, Identifiable {
     case highlighter
     case eraser
     case lasso
+    case capture
 
     var id: String { rawValue }
 
@@ -28,6 +29,8 @@ enum DrawingTool: String, CaseIterable, Identifiable {
             "Eraser"
         case .lasso:
             "Lasso"
+        case .capture:
+            "Capture"
         }
     }
 
@@ -43,6 +46,8 @@ enum DrawingTool: String, CaseIterable, Identifiable {
             "eraser"
         case .lasso:
             "lasso"
+        case .capture:
+            "viewfinder.rectangular"
         }
     }
 }
@@ -787,7 +792,7 @@ final class DrawingToolState: ObservableObject {
         switch selectedTool {
         case .pen, .pencil, .highlighter:
             return selectedTool
-        case .eraser, .lasso:
+        case .eraser, .lasso, .capture:
             return previousTool.usesInkColor ? previousTool : .pen
         }
     }
@@ -955,7 +960,7 @@ final class DrawingToolState: ObservableObject {
             .pencil
         case .highlighter:
             .marker
-        case .eraser, .lasso:
+        case .eraser, .lasso, .capture:
             nil
         }
     }
@@ -985,6 +990,8 @@ final class DrawingToolState: ObservableObject {
             return "eraser:\(eraserMode.rawValue):\(widthSignatureValue(eraserWidth))"
         case .lasso:
             return "lasso"
+        case .capture:
+            return "capture"
         }
     }
 
@@ -993,11 +1000,11 @@ final class DrawingToolState: ObservableObject {
             temporaryEraserActive = false
         }
 
-        if tool != .eraser, tool != selectedTool {
+        if tool != .eraser, tool != selectedTool, selectedTool != .capture {
             previousTool = selectedTool == .eraser ? previousTool : selectedTool
         }
 
-        if tool == .eraser, selectedTool != .eraser {
+        if tool == .eraser, selectedTool != .eraser, selectedTool != .capture {
             previousTool = selectedTool
         }
 
@@ -1061,7 +1068,7 @@ final class DrawingToolState: ObservableObject {
             penWidth = Self.widthCalibration(for: .pen, mode: widthMode).clamped(width, step: step)
         case .highlighter:
             highlighterWidth = Self.widthCalibration(for: .highlighter, mode: widthMode).clamped(width, step: step)
-        case .eraser, .lasso:
+        case .eraser, .lasso, .capture:
             select(.pen)
             penWidth = Self.widthCalibration(for: .pen, mode: widthMode).clamped(width, step: step)
         }
@@ -1216,6 +1223,10 @@ final class DrawingToolState: ObservableObject {
             }
         case .lasso:
             PKLassoTool()
+        case .capture:
+            // Capture owns canvas interaction while selected. Keep a harmless native
+            // tool available so PencilKit never receives an invalid tool assignment.
+            PKLassoTool()
         }
     }
 
@@ -1227,7 +1238,8 @@ final class DrawingToolState: ObservableObject {
     }
 
     private func cycleTool() {
-        let tools = DrawingTool.allCases
+        // Capture is a document action rather than a Pencil double-tap drawing tool.
+        let tools = DrawingTool.allCases.filter { $0 != .capture }
         guard let index = tools.firstIndex(of: selectedTool) else {
             select(.pen)
             return
@@ -1317,7 +1329,7 @@ final class DrawingToolState: ObservableObject {
                 step: 2,
                 presets: eraserSizePresets
             )
-        case .pen, .lasso:
+        case .pen, .lasso, .capture:
             return DrawingStrokeWidthCalibration(
                 minimumWidth: 0.5,
                 maximumWidth: 24,
@@ -1359,7 +1371,7 @@ final class DrawingToolState: ObservableObject {
             )
         case .eraser:
             widthCalibration(for: .eraser)
-        case .pen, .lasso:
+        case .pen, .lasso, .capture:
             DrawingStrokeWidthCalibration(
                 minimumWidth: 0.25,
                 maximumWidth: 12,
@@ -1373,7 +1385,7 @@ final class DrawingToolState: ObservableObject {
         switch tool {
         case .highlighter:
             0.5
-        case .pen, .pencil, .lasso:
+        case .pen, .pencil, .lasso, .capture:
             0.1
         case .eraser:
             widthCalibration(for: .eraser).step
@@ -1424,7 +1436,7 @@ final class DrawingToolState: ObservableObject {
             3...widthCalibration(for: .highlighter).maximumWidth
         case .eraser:
             widthCalibration(for: .eraser).range
-        case .pen, .lasso:
+        case .pen, .lasso, .capture:
             0.25...widthCalibration(for: .pen).maximumWidth
         }
     }
@@ -1440,6 +1452,8 @@ final class DrawingToolState: ObservableObject {
         case .eraser:
             16
         case .lasso:
+            defaultStrokeWidth(for: .pen)
+        case .capture:
             defaultStrokeWidth(for: .pen)
         }
     }
@@ -1461,7 +1475,7 @@ final class DrawingToolState: ObservableObject {
             colors = pencilPaletteColorHexes
         case .highlighter:
             colors = highlighterPaletteColorHexes
-        case .eraser, .lasso:
+        case .eraser, .lasso, .capture:
             colors = penPaletteColorHexes
         }
 
@@ -1477,7 +1491,7 @@ final class DrawingToolState: ObservableObject {
             pencilPaletteColorHexes = colorHexes
         case .highlighter:
             highlighterPaletteColorHexes = colorHexes
-        case .eraser, .lasso:
+        case .eraser, .lasso, .capture:
             penPaletteColorHexes = colorHexes
         }
     }
@@ -1490,7 +1504,7 @@ final class DrawingToolState: ObservableObject {
             penColor = color
         case .highlighter:
             highlighterColor = color
-        case .eraser, .lasso:
+        case .eraser, .lasso, .capture:
             penColor = color
         }
     }
@@ -1556,7 +1570,7 @@ final class DrawingToolState: ObservableObject {
             ["#1C1C1E", "#636366", "#0A84FF", "#FF3B30", "#34C759", "#A2845E", "#AF52DE", "#FFFFFF"]
         case .highlighter:
             ["#FFE45E", "#FF9F0A", "#FF2D55", "#64D2FF", "#30D158", "#BF5AF2", "#0A84FF", "#FFFFFF"]
-        case .eraser, .lasso:
+        case .eraser, .lasso, .capture:
             defaultPaletteColorHexes(for: .pen)
         }
     }
@@ -1600,7 +1614,7 @@ private extension DrawingTool {
         switch self {
         case .pen, .pencil, .highlighter:
             true
-        case .eraser, .lasso:
+        case .eraser, .lasso, .capture:
             false
         }
     }

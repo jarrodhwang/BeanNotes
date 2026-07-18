@@ -408,6 +408,9 @@ struct NoteEditorView: View {
                     },
                     deleteAttachment: { attachmentPendingDeletion = $0 },
                     drawingChanged: handleDrawingChanged(pageID:),
+                    captureFailed: { error in
+                        errorMessage = error.localizedDescription
+                    },
                     saveStarted: markDrawingSaveStarted,
                     saveSucceeded: markDrawingSaveSucceeded,
                     saveFailed: { error in
@@ -447,7 +450,9 @@ struct NoteEditorView: View {
                             toolState: toolState,
                             availableSize: proxy.size,
                             zoomScale: currentZoomScale,
-                            strokeZoomBehavior: strokeZoomBehavior
+                            strokeZoomBehavior: strokeZoomBehavior,
+                            isPastingImage: isPastingImage,
+                            pasteImage: { pasteImage(from: $0) }
                         )
                     }
                     .zIndex(2)

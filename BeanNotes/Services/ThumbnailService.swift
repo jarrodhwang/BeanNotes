@@ -125,6 +125,7 @@ struct ThumbnailService {
     nonisolated private static let maximumPageRenderPixelSize: CGFloat = 6_144
     nonisolated private static let maximumPageRenderPixelCount: CGFloat = 8_000_000
     nonisolated private static let maximumAttachmentThumbnailPixelSize = 16_384
+    nonisolated static let preferredCaptureRenderScale: CGFloat = 3
 
     var storage = LocalStorageService()
     var drawingStorage = DrawingStorageService()
@@ -359,6 +360,72 @@ struct ThumbnailService {
             throw ImportExportError.exportFailed
         }
         return result.image
+    }
+
+    /// Renders only the requested page region while preserving page-space geometry.
+    /// This avoids screen-resolution screenshots and the memory cost of rasterizing an
+    /// entire page when the user only needs a small selection.
+    nonisolated static func renderPageCaptureImage(
+        snapshot: NotePageRenderSnapshot,
+        drawing: PKDrawing,
+        rootURL: URL,
+        selectionRect: CGRect,
+        scale: CGFloat = preferredCaptureRenderScale
+    ) -> UIImage? {
+        let pageBounds = CGRect(origin: .zero, size: snapshot.pageSize)
+        let captureRect = selectionRect.standardized.intersection(pageBounds)
+        guard !captureRect.isNull,
+              !captureRect.isEmpty,
+              captureRect.width.isFinite,
+              captureRect.height.isFinite else {
+            return nil
+        }
+
+        let renderScale = normalizedPageRenderScale(scale, pageSize: captureRect.size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = renderScale
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: captureRect.size, format: format)
+        var image: UIImage?
+
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            image = renderer.image { context in
+                context.cgContext.translateBy(x: -captureRect.minX, y: -captureRect.minY)
+
+                let background = NoteBackground.fromDefaults(
+                    styleRaw: snapshot.backgroundStyleRaw,
+                    colorHex: snapshot.backgroundColorHex
+                )
+                NoteBackgroundRenderer.draw(
+                    background: background,
+                    theme: snapshot.theme,
+                    showsBeanArtwork: snapshot.showsBeanArtwork,
+                    pageID: snapshot.id,
+                    in: pageBounds,
+                    context: context.cgContext
+                )
+
+                _ = drawImageAttachments(
+                    snapshot.imageAttachments.filter {
+                        $0.rendersBehindDrawing && $0.frame.intersects(captureRect)
+                    },
+                    rootURL: rootURL,
+                    renderScale: renderScale,
+                    requiresImageAttachments: false
+                )
+                drawing.image(from: captureRect, scale: renderScale).draw(in: captureRect)
+                _ = drawImageAttachments(
+                    snapshot.imageAttachments.filter {
+                        !$0.rendersBehindDrawing && $0.frame.intersects(captureRect)
+                    },
+                    rootURL: rootURL,
+                    renderScale: renderScale,
+                    requiresImageAttachments: false
+                )
+            }
+        }
+
+        return image
     }
 
     nonisolated private static func renderPageImageResult(
