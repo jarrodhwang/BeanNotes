@@ -3745,19 +3745,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         let backgroundView = PageBackgroundUIView()
         let behindImageContainerView = UIView(frame: .zero)
         let drawingViewportView = UIView(frame: .zero)
-        let canvasView = MenulessCanvasView(frame: .zero)
+        // PencilKit must retain its responder actions so UIKit can build a valid
+        // edit-menu configuration after an ink or palette interaction.
+        let canvasView = PKCanvasView(frame: .zero)
         let highlighterStrokePreviewView = HighlighterStrokePreviewView(frame: .zero)
         let foregroundImageContainerView = UIView(frame: .zero)
         let eraserScopeView = EraserScopeView(frame: .zero)
-
-        /// PencilKit exposes editing commands such as Select All and Insert Space
-        /// from its responder chain. This canvas is drawing-only, so suppress those
-        /// commands instead of allowing an empty or irrelevant edit menu to appear.
-        final class MenulessCanvasView: PKCanvasView {
-            override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-                false
-            }
-        }
 
         private var imageViews: [UUID: AttachmentImageContainerView] = [:]
         private let eraserScopeGesture = EraserScopeGestureRecognizer()
@@ -3864,13 +3857,6 @@ struct DrawingCanvasView: UIViewRepresentable {
         required init?(coder: NSCoder) {
             super.init(coder: coder)
             configureView()
-        }
-
-        /// The page owns only drawing and its explicit context actions. Returning no
-        /// responder-chain commands prevents PencilKit's Select All and Insert Space
-        /// commands from leaking through its private canvas views.
-        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-            false
         }
 
         func configure(
