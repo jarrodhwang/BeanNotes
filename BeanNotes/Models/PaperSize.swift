@@ -92,6 +92,11 @@ enum PaperSize: String, CaseIterable, Identifiable {
         }
     }
 
+    func fits(minimumSize: CGSize) -> Bool {
+        dimensions.width >= minimumSize.width
+            && dimensions.height >= minimumSize.height
+    }
+
     static func matching(_ dimensions: CGSize, tolerance: CGFloat = 0.5) -> PaperSize? {
         allCases.first { paperSize in
             abs(paperSize.dimensions.width - dimensions.width) <= tolerance
@@ -119,10 +124,19 @@ enum CustomPaperSize {
         )
     }
 
-    static func isValid(width: Double, height: Double) -> Bool {
+    static func isValid(
+        width: Double,
+        height: Double,
+        minimumSize: CGSize = CGSize(
+            width: NotePage.minimumPageDimension,
+            height: NotePage.minimumPageDimension
+        )
+    ) -> Bool {
         width.isFinite
             && height.isFinite
             && (NotePage.minimumPageDimension...NotePage.maximumPageDimension).contains(width)
             && (NotePage.minimumPageDimension...NotePage.maximumPageDimension).contains(height)
+            && width >= minimumSize.width
+            && height >= minimumSize.height
     }
 }

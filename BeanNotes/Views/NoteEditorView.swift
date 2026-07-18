@@ -306,6 +306,7 @@ struct NoteEditorView: View {
                         get: { page.pageSize },
                         set: { updatePageSize(page, to: $0) }
                     ),
+                    minimumPageSize: page.minimumPDFContentSize,
                     applyToAllPages: {
                         applyPageAppearanceToAllPages(from: page)
                     }
@@ -1948,8 +1949,9 @@ struct NoteEditorView: View {
 
         for page in note.pages {
             page.background = background
-            page.width = pageSize.width
-            page.height = pageSize.height
+            let fittedPageSize = page.pageSizeFittingPDFContent(pageSize)
+            page.width = fittedPageSize.width
+            page.height = fittedPageSize.height
         }
 
         note.touch()
@@ -2068,10 +2070,7 @@ struct NoteEditorView: View {
     private func updatePageSize(_ page: NotePage, to pageSize: CGSize) {
         let previousWidth = page.width
         let previousHeight = page.height
-        let normalizedSize = CustomPaperSize.dimensions(
-            width: pageSize.width,
-            height: pageSize.height
-        )
+        let normalizedSize = page.pageSizeFittingPDFContent(pageSize)
 
         page.width = normalizedSize.width
         page.height = normalizedSize.height
@@ -2250,6 +2249,7 @@ private struct PageBackgroundEditorSheet: View {
     @Binding var styleRaw: String
     @Binding var colorHex: String
     @Binding var pageSize: CGSize
+    let minimumPageSize: CGSize?
     var applyToAllPages: () -> Void
 
     @State private var customWidth: Double
@@ -2260,17 +2260,29 @@ private struct PageBackgroundEditorSheet: View {
         styleRaw: Binding<String>,
         colorHex: Binding<String>,
         pageSize: Binding<CGSize>,
+        minimumPageSize: CGSize?,
         applyToAllPages: @escaping () -> Void
     ) {
         _styleRaw = styleRaw
         _colorHex = colorHex
         _pageSize = pageSize
+        self.minimumPageSize = minimumPageSize
         self.applyToAllPages = applyToAllPages
-        _customWidth = State(initialValue: pageSize.wrappedValue.width)
-        _customHeight = State(initialValue: pageSize.wrappedValue.height)
+        let initialCustomSize = CGSize(
+            width: max(pageSize.wrappedValue.width, minimumPageSize?.width ?? 0),
+            height: max(pageSize.wrappedValue.height, minimumPageSize?.height ?? 0)
+        )
+        _customWidth = State(initialValue: initialCustomSize.width)
+        _customHeight = State(initialValue: initialCustomSize.height)
+        let resolvedMinimumPageSize = minimumPageSize ?? CGSize(
+            width: NotePage.minimumPageDimension,
+            height: NotePage.minimumPageDimension
+        )
+        let matchingPaperSize = PaperSize.matching(pageSize.wrappedValue)
         _selectedPaperSizeRaw = State(
-            initialValue: PaperSize.matching(pageSize.wrappedValue)?.rawValue
-                ?? CustomPaperSize.selectionRawValue
+            initialValue: matchingPaperSize?.fits(minimumSize: resolvedMinimumPageSize) == true
+                ? matchingPaperSize?.rawValue ?? CustomPaperSize.selectionRawValue
+                : CustomPaperSize.selectionRawValue
         )
     }
 
@@ -2293,8 +2305,9 @@ private struct PageBackgroundEditorSheet: View {
                 Section("Paper Size") {
                     Picker("Paper Size", selection: paperSizeSelection) {
                         ForEach(PaperSize.allCases) { size in
-                            Text("\(size.label) (\(size.dimensionsLabel))")
+                            Text(paperSizeLabel(size))
                                 .tag(size.rawValue)
+                                .disabled(!size.fits(minimumSize: resolvedMinimumPageSize))
                         }
 
                         Text(customPaperSizeLabel).tag(CustomPaperSize.selectionRawValue)
@@ -2318,15 +2331,21 @@ private struct PageBackgroundEditorSheet: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .disabled(!CustomPaperSize.isValid(width: customWidth, height: customHeight))
+                        .disabled(!isCustomSizeValid)
                         .accessibilityIdentifier("pageAppearance.applyCustomPaperSize")
                         .accessibilityHint("Applies the entered width and height to this page.")
 
-                        if !CustomPaperSize.isValid(width: customWidth, height: customHeight) {
-                            Text("Width and height must each be between 1 and 4096 points.")
+                        if !isCustomSizeValid {
+                            Text(customSizeValidationMessage)
                                 .font(.caption)
                                 .foregroundStyle(.red)
                         }
+                    }
+
+                    if let minimumPageSize {
+                        Text("This PDF requires at least \(dimensionsLabel(minimumPageSize)). Smaller paper sizes are unavailable.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     Text("Existing ink and attachments keep their size when the page dimensions change.")
@@ -2365,21 +2384,62 @@ private struct PageBackgroundEditorSheet: View {
     }
 
     private var customPaperSizeLabel: String {
-        "Custom (\(Int(pageSize.width.rounded())) × \(Int(pageSize.height.rounded())) pt)"
+        "Custom (\(dimensionsLabel(CGSize(width: customWidth, height: customHeight))))"
+    }
+
+    private var resolvedMinimumPageSize: CGSize {
+        minimumPageSize ?? CGSize(
+            width: NotePage.minimumPageDimension,
+            height: NotePage.minimumPageDimension
+        )
+    }
+
+    private var isCustomSizeValid: Bool {
+        CustomPaperSize.isValid(
+            width: customWidth,
+            height: customHeight,
+            minimumSize: resolvedMinimumPageSize
+        )
+    }
+
+    private var customSizeValidationMessage: String {
+        let isWithinGeneralRange = customWidth.isFinite
+            && customHeight.isFinite
+            && (NotePage.minimumPageDimension...NotePage.maximumPageDimension).contains(customWidth)
+            && (NotePage.minimumPageDimension...NotePage.maximumPageDimension).contains(customHeight)
+        guard isWithinGeneralRange else {
+            return "Width and height must each be between 1 and 4096 points."
+        }
+
+        if let minimumPageSize,
+           customWidth < minimumPageSize.width || customHeight < minimumPageSize.height {
+            return "Width and height must be at least \(dimensionsLabel(minimumPageSize)) to fit this PDF."
+        }
+
+        return "Width and height must each be between 1 and 4096 points."
     }
 
     private var paperSizeSelection: Binding<String> {
         Binding(
             get: { selectedPaperSizeRaw },
             set: { selection in
+                guard let paperSize = PaperSize(rawValue: selection) else {
+                    selectedPaperSizeRaw = CustomPaperSize.selectionRawValue
+                    if let minimumPageSize {
+                        customWidth = minimumPageSize.width
+                        customHeight = minimumPageSize.height
+                    }
+                    return
+                }
+                guard paperSize.fits(minimumSize: resolvedMinimumPageSize) else { return }
                 selectedPaperSizeRaw = selection
-                guard let paperSize = PaperSize(rawValue: selection) else { return }
                 applyPaperSize(paperSize)
             }
         )
     }
 
     private func selectPaperSize(_ paperSize: PaperSize) {
+        guard paperSize.fits(minimumSize: resolvedMinimumPageSize) else { return }
         selectedPaperSizeRaw = paperSize.rawValue
         applyPaperSize(paperSize)
     }
@@ -2388,6 +2448,17 @@ private struct PageBackgroundEditorSheet: View {
         customWidth = paperSize.dimensions.width
         customHeight = paperSize.dimensions.height
         pageSize = paperSize.dimensions
+    }
+
+    private func paperSizeLabel(_ paperSize: PaperSize) -> String {
+        let baseLabel = "\(paperSize.label) (\(paperSize.dimensionsLabel))"
+        return paperSize.fits(minimumSize: resolvedMinimumPageSize)
+            ? baseLabel
+            : "\(baseLabel) — too small"
+    }
+
+    private func dimensionsLabel(_ size: CGSize) -> String {
+        "\(Int(size.width.rounded())) × \(Int(size.height.rounded())) pt"
     }
 }
 

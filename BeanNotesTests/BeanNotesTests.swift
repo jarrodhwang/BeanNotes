@@ -873,6 +873,10 @@ struct BeanNotesTests {
         #expect(!CustomPaperSize.isValid(width: 0, height: 900))
         #expect(!CustomPaperSize.isValid(width: 640, height: .infinity))
         #expect(!CustomPaperSize.isValid(width: 640, height: NotePage.maximumPageDimension + 1))
+        let pdfMinimumSize = CGSize(width: 612, height: 792)
+        #expect(CustomPaperSize.isValid(width: 612, height: 792, minimumSize: pdfMinimumSize))
+        #expect(!CustomPaperSize.isValid(width: 611, height: 792, minimumSize: pdfMinimumSize))
+        #expect(!CustomPaperSize.isValid(width: 612, height: 791, minimumSize: pdfMinimumSize))
 
         #expect(CustomPaperSize.dimensions(width: 640, height: 900) == CGSize(width: 640, height: 900))
         #expect(CustomPaperSize.dimensions(width: 0, height: .nan) == CustomPaperSize.defaultDimensions)
@@ -880,6 +884,49 @@ struct BeanNotesTests {
             width: NotePage.maximumPageDimension,
             height: NotePage.maximumPageDimension
         ))
+    }
+
+    @Test func pdfPageContentSetsTheMinimumPaperSize() {
+        let page = NotePage(pageOrder: 0, width: 1_200, height: 1_600)
+        let regularImage = Attachment(
+            kind: .image,
+            displayName: "Photo",
+            originalFileName: "photo.jpg",
+            storedFileName: "Imports/photo.jpg",
+            contentTypeIdentifier: UTType.jpeg.identifier,
+            fileExtension: "jpg",
+            width: 2_000,
+            height: 2_000,
+            isLocked: true
+        )
+        let pdfPageImage = Attachment(
+            kind: .image,
+            displayName: "PDF Page",
+            originalFileName: "document-page-1.jpg",
+            storedFileName: "Imports/document-page-1.jpg",
+            contentTypeIdentifier: UTType.jpeg.identifier,
+            fileExtension: "jpg",
+            width: 1_024,
+            height: 1_325,
+            isLocked: true,
+            vectorSourceStoredFileName: "Imports/document.pdf",
+            vectorSourcePageIndex: 0
+        )
+        page.attachments.append(regularImage)
+        page.attachments.append(pdfPageImage)
+
+        let minimumSize = page.minimumPDFContentSize
+        #expect(minimumSize == CGSize(width: 1_024, height: 1_325))
+        #expect(
+            page.pageSizeFittingPDFContent(CGSize(width: 612, height: 792))
+                == CGSize(width: 1_024, height: 1_325)
+        )
+        #expect(
+            page.pageSizeFittingPDFContent(CGSize(width: 1_440, height: 1_800))
+                == CGSize(width: 1_440, height: 1_800)
+        )
+        #expect(minimumSize.map { !PaperSize.fhdPlus.fits(minimumSize: $0) } == true)
+        #expect(minimumSize.map { PaperSize.qhd.fits(minimumSize: $0) } == true)
     }
 
     @Test func followingPageInheritsPaperAndBackground() {
@@ -7475,6 +7522,7 @@ struct BeanNotesTests {
         #expect(imported.pages.allSatisfy { $0.lockedImageAttachments.allSatisfy(\.rendersBehindDrawing) })
         #expect(imported.pages.compactMap { $0.lockedImageAttachments.first?.vectorSourcePageIndex }.sorted() == [0, 1, 2])
         #expect(imported.pages.allSatisfy { $0.width == 1_024 })
+        #expect(imported.pages.allSatisfy { $0.minimumPDFContentSize == $0.pageSize })
         #expect(imported.pages[0].height > imported.pages[1].height)
         #expect(imported.pages[2].height > imported.pages[0].height)
         #expect(imported.pages[2].height == NotePage.maximumPageDimension)

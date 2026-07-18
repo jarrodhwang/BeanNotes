@@ -3,6 +3,7 @@
 //  BeanNotes
 //
 
+import CoreGraphics
 import Foundation
 import SwiftData
 
@@ -98,6 +99,34 @@ final class NotePage {
         imageAttachments.filter(\.isLocked)
     }
 
+    /// The smallest canvas that can display every PDF-backed page image at its stored size.
+    var minimumPDFContentSize: CGSize? {
+        let vectorPDFPageImages = imageAttachments.filter { attachment in
+            attachment.vectorSourceStoredFileName?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty == false
+        }
+        let legacyPDFPageCandidates = imageAttachments.filter { attachment in
+            attachment.rendersBehindDrawing
+                && attachment.originalFileName.lowercased().contains("-page-")
+                && !vectorPDFPageImages.contains(where: { $0.id == attachment.id })
+        }
+        let containsOriginalPDF = !legacyPDFPageCandidates.isEmpty
+            && note?.pages.lazy.flatMap(\.attachments).contains(where: { $0.kind == .pdf }) == true
+        let pdfPageImages = containsOriginalPDF
+            ? vectorPDFPageImages + legacyPDFPageCandidates
+            : vectorPDFPageImages
+
+        guard !pdfPageImages.isEmpty else { return nil }
+
+        return CGSize(
+            width: pdfPageImages.map { $0.normalizedFrame(for: nil).width }.max()
+                ?? Self.minimumPageDimension,
+            height: pdfPageImages.map { $0.normalizedFrame(for: nil).height }.max()
+                ?? Self.minimumPageDimension
+        )
+    }
+
     var movableImageAttachments: [Attachment] {
         imageAttachments.filter { !$0.isLocked }
     }
@@ -119,6 +148,19 @@ final class NotePage {
             background: background,
             width: normalizedWidth,
             height: normalizedHeight
+        )
+    }
+
+    func pageSizeFittingPDFContent(_ proposedSize: CGSize) -> CGSize {
+        let normalizedSize = CustomPaperSize.dimensions(
+            width: proposedSize.width,
+            height: proposedSize.height
+        )
+        guard let minimumPDFContentSize else { return normalizedSize }
+
+        return CGSize(
+            width: max(normalizedSize.width, minimumPDFContentSize.width),
+            height: max(normalizedSize.height, minimumPDFContentSize.height)
         )
     }
 
