@@ -531,7 +531,8 @@ struct ImportExportService {
     }
 
     /// Imports an immutable PDF/image version, then maps its backgrounds onto
-    /// existing note pages without replacing page or drawing identities.
+    /// existing note pages without replacing their identities, drawings, paper
+    /// sizes, or paper styles.
     func importDocumentVersion(
         from sourceURL: URL,
         into note: NoteDocument,
@@ -726,12 +727,22 @@ struct ImportExportService {
             return existingPages[index]
         }
 
-        let page = NotePage(
-            pageOrder: (note.pages.map(\.pageOrder).max() ?? -1) + 1,
-            background: .plain(),
-            width: Double(preferredSize.width),
-            height: Double(preferredSize.height)
-        )
+        // A replacement can contain more pages than the original document.
+        // Those pages still need a canvas, but they must inherit the existing
+        // note's paper configuration instead of letting the imported PDF
+        // silently change it. There is no drawing to copy for a new page.
+        let page: NotePage
+        if let templatePage = existingPages.last {
+            page = templatePage.makeFollowingPage()
+            page.pageOrder = (note.pages.map(\.pageOrder).max() ?? -1) + 1
+        } else {
+            page = NotePage(
+                pageOrder: (note.pages.map(\.pageOrder).max() ?? -1) + 1,
+                background: .plain(),
+                width: Double(preferredSize.width),
+                height: Double(preferredSize.height)
+            )
+        }
         note.pages.append(page)
         return page
     }

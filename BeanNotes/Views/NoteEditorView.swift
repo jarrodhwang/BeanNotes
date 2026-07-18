@@ -3092,6 +3092,10 @@ private struct DocumentVersionManagerSheet: View {
                     }
                 }
 
+                Text("Version \(version.displayOrder)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+
                 Text(version.originalFileName)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

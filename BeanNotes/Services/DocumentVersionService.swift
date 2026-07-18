@@ -8,6 +8,10 @@ import Foundation
 
 struct NoteDocumentVersion: Identifiable, Equatable {
     var id: UUID
+    /// The chronological position of this version, starting with 1 for the
+    /// originally imported document. This is derived from immutable version
+    /// metadata so old notes do not need a schema migration.
+    var displayOrder: Int
     var name: String
     var originalFileName: String
     var kind: AttachmentKind
@@ -29,7 +33,7 @@ struct DocumentVersionService {
             attachment.documentVersionID!
         }
 
-        return grouped.compactMap { id, attachments in
+        let resolvedVersions: [NoteDocumentVersion] = grouped.compactMap { id, attachments in
             guard let representative = representativeAttachment(in: attachments) else { return nil }
             let backgroundPages = Set(
                 attachments.compactMap { attachment -> UUID? in
@@ -57,6 +61,7 @@ struct DocumentVersionService {
 
             return NoteDocumentVersion(
                 id: id,
+                displayOrder: 0,
                 name: resolvedName,
                 originalFileName: originalPDF?.originalFileName
                     ?? vectorSourceName
@@ -75,6 +80,15 @@ struct DocumentVersionService {
                 return lhs.id.uuidString > rhs.id.uuidString
             }
             return lhs.createdAt > rhs.createdAt
+        }
+
+        // The list is shown newest first, while its number describes the
+        // import sequence: the original document is Version 1 and each later
+        // replacement increments that number.
+        return resolvedVersions.enumerated().map { offset, version in
+            var version = version
+            version.displayOrder = resolvedVersions.count - offset
+            return version
         }
     }
 

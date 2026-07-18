@@ -7931,6 +7931,7 @@ struct BeanNotesTests {
         ])
         #expect(service.versions(in: note).filter(\.isCurrent).map(\.id) == [revision.id])
         #expect(service.versions(in: note).filter(\.isLatest).map(\.id) == [revision.id])
+        #expect(service.versions(in: note).map(\.displayOrder) == [2, 1])
 
         let indexedAt = Date(timeIntervalSince1970: 300)
         for page in note.pages {
@@ -8321,6 +8322,11 @@ struct BeanNotesTests {
                 at: CGPoint(x: 72, y: 72),
                 withAttributes: [.font: UIFont.systemFont(ofSize: 24)]
             )
+            rendererContext.beginPage()
+            "Revision 3".draw(
+                at: CGPoint(x: 72, y: 72),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24)]
+            )
         }
 
         let folder = NotebookFolder(name: "Version Imports")
@@ -8364,6 +8370,19 @@ struct BeanNotesTests {
         imported.note.sortedPages[0].attachments.append(ordinaryImage)
         let originalPageIDs = imported.note.sortedPages.map(\.id)
         let originalDrawingFileNames = imported.note.sortedPages.map(\.drawingFileName)
+        let paperConfigurations = [
+            NoteBackground(style: .cornell, colorHex: "#FFF7BF", spacing: 42, marginWidth: 244),
+            NoteBackground(style: .grid, colorHex: "#EAF4FF", spacing: 36)
+        ]
+        let paperSizes = [
+            CGSize(width: 840, height: 1_180),
+            CGSize(width: 1_020, height: 740)
+        ]
+        for (index, page) in imported.note.sortedPages.enumerated() {
+            page.background = paperConfigurations[index]
+            page.width = Double(paperSizes[index].width)
+            page.height = Double(paperSizes[index].height)
+        }
         var drawingDataByFileName: [String: Data] = [:]
         for (index, page) in imported.note.sortedPages.enumerated() {
             try drawingStorage.save(
@@ -8383,7 +8402,7 @@ struct BeanNotesTests {
         )
         let revisionAttachments = versionService.attachments(for: revision.id, in: imported.note)
 
-        #expect(revisionStaging.stagedFileNames().count == 3)
+        #expect(revisionStaging.stagedFileNames().count == 4)
         #expect(!FileManager.default.fileExists(atPath: revisionStaging.finalDirectoryURL.path))
         #expect(revisionAttachments.allSatisfy {
             !FileManager.default.fileExists(atPath: storage.url(forRelativePath: $0.storedFileName).path)
@@ -8392,16 +8411,34 @@ struct BeanNotesTests {
         try context.save()
         try revisionStaging.commit()
 
-        #expect(imported.note.sortedPages.map(\.id) == originalPageIDs)
-        #expect(imported.note.sortedPages.map(\.drawingFileName) == originalDrawingFileNames)
-        #expect(imported.note.sortedPages.count == 2)
-        for page in imported.note.sortedPages {
+        #expect(
+            imported.note.sortedPages.prefix(originalPageIDs.count).map(\.id)
+                == originalPageIDs
+        )
+        #expect(
+            imported.note.sortedPages.prefix(originalDrawingFileNames.count).map(\.drawingFileName)
+                == originalDrawingFileNames
+        )
+        #expect(imported.note.sortedPages.count == 3)
+        for (index, page) in imported.note.sortedPages.prefix(paperConfigurations.count).enumerated() {
+            #expect(page.pageSize == paperSizes[index])
+            #expect(page.backgroundStyleRaw == paperConfigurations[index].storageStyleRaw)
+            #expect(page.backgroundColorHex == paperConfigurations[index].colorHex)
+        }
+        let addedPage = try #require(imported.note.sortedPages.last)
+        #expect(addedPage.id != originalPageIDs.last)
+        #expect(addedPage.drawingFileName != originalDrawingFileNames.last)
+        #expect(addedPage.pageSize == paperSizes[1])
+        #expect(addedPage.backgroundStyleRaw == paperConfigurations[1].storageStyleRaw)
+        #expect(addedPage.backgroundColorHex == paperConfigurations[1].colorHex)
+        for page in imported.note.sortedPages.prefix(originalDrawingFileNames.count) {
             let expectedDrawingData = try #require(drawingDataByFileName[page.drawingFileName])
             #expect(try Data(contentsOf: drawingStorage.drawingURL(for: page)) == expectedDrawingData)
         }
 
         let versions = versionService.versions(in: imported.note)
         #expect(versions.count == 2)
+        #expect(versions.map(\.displayOrder) == [2, 1])
         #expect(versions.filter(\.isCurrent).map(\.id) == [revision.id])
         #expect(versions.filter(\.isLatest).map(\.id) == [revision.id])
         #expect(revision.name == "Final Review")
