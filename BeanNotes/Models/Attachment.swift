@@ -62,10 +62,11 @@ enum AttachmentResizeHandle: CaseIterable, Hashable {
 }
 
 enum AttachmentEditingGeometry {
-    static let minimumWidth: CGFloat = 120
-    static let minimumHeight: CGFloat = 90
+    /// Keeping the minimum on the image's longer edge lets unusually wide or tall
+    /// images shrink naturally without requiring an impractically large opposite edge.
+    static let minimumResizeLongEdge: CGFloat = 44
 
-    private static let maximumInitialWidth: CGFloat = 420
+    private static let maximumInitialLongEdge: CGFloat = 420
     private static let minimumInitialLongEdge: CGFloat = 120
     private static let placementMargin: CGFloat = 24
     private static let placementStep: CGFloat = 24
@@ -85,7 +86,7 @@ enum AttachmentEditingGeometry {
 
         let fittingScale = min(
             1,
-            maximumInitialWidth / sourceSize.width,
+            maximumInitialLongEdge / max(sourceSize.width, sourceSize.height),
             availableSize.width / sourceSize.width,
             availableSize.height / sourceSize.height
         )
@@ -226,9 +227,10 @@ enum AttachmentEditingGeometry {
             )
         }
 
-        let requestedMinimumScale = max(
-            minimumWidth / max(startFrame.width, 1),
-            minimumHeight / max(startFrame.height, 1)
+        let requestedMinimumScale = minimumResizeLongEdge / max(
+            startFrame.width,
+            startFrame.height,
+            1
         )
         // Never make an existing undersized image jump larger when a resize begins.
         let minimumScale = min(requestedMinimumScale, 1, maximumScale)

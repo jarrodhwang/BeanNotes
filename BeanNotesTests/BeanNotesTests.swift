@@ -1045,6 +1045,16 @@ struct BeanNotesTests {
         #expect(secondFrame.size == firstFrame.size)
     }
 
+    @Test func attachmentEditingInitialFrameLimitsTheLongEdgeForTallImages() {
+        let frame = AttachmentEditingGeometry.initialImageFrame(
+            sourceSize: CGSize(width: 600, height: 1_200),
+            pageSize: CGSize(width: 612, height: 792),
+            occupiedFrames: []
+        )
+
+        #expect(frame == CGRect(x: 80, y: 100, width: 210, height: 420))
+    }
+
     @Test func attachmentEditingMoveClampsToPageBounds() {
         let pageSize = CGSize(width: 612, height: 792)
         let startFrame = CGRect(x: 100, y: 200, width: 200, height: 100)
@@ -1102,10 +1112,35 @@ struct BeanNotesTests {
             handle: .bottomRight
         )
 
-        #expect(minimumBottomRightFrame == CGRect(x: 100, y: 100, width: 180, height: 90))
+        #expect(minimumBottomRightFrame == CGRect(x: 100, y: 100, width: 44, height: 22))
         #expect(maximumBottomRightFrame == CGRect(x: 100, y: 100, width: 400, height: 200))
         #expect(maximumBottomRightFrame.maxX <= pageSize.width)
         #expect(maximumBottomRightFrame.maxY <= pageSize.height)
+    }
+
+    @Test func attachmentEditingResizeUsesLongEdgeMinimumForExtremeAspectRatios() {
+        let pageSize = CGSize(width: 612, height: 792)
+        let startFrame = CGRect(x: 100, y: 100, width: 24, height: 240)
+
+        let minimumFrame = AttachmentEditingGeometry.resizedFrame(
+            from: startFrame,
+            translation: CGPoint(x: -1_000, y: -1_000),
+            pageSize: pageSize,
+            handle: .bottomRight
+        )
+        let maximumFrame = AttachmentEditingGeometry.resizedFrame(
+            from: startFrame,
+            translation: CGPoint(x: 1_000, y: 1_000),
+            pageSize: pageSize,
+            handle: .bottomRight
+        )
+
+        #expect(abs(minimumFrame.width - 4.4) < 0.001)
+        #expect(minimumFrame.height == 44)
+        #expect(abs(maximumFrame.width - 69.2) < 0.001)
+        #expect(maximumFrame.height == 692)
+        #expect(maximumFrame.maxX <= pageSize.width)
+        #expect(maximumFrame.maxY <= pageSize.height)
     }
 
     @Test func attachmentImageRenderingAspectFitsAndCenters() {
