@@ -2110,6 +2110,64 @@ struct BeanNotesTests {
         #expect(DrawingCanvasView.CanvasContainerView.preparedNativeDrawingScale(for: .infinity) == 1)
     }
 
+    @Test func drawingAutosaveCadenceBatchesHandwritingWithABoundedDelay() {
+        #expect(DrawingAutosaveCadence.delay(elapsedSinceFirstChange: 0) == 2)
+        #expect(DrawingAutosaveCadence.delay(elapsedSinceFirstChange: -4) == 2)
+        #expect(DrawingAutosaveCadence.delay(elapsedSinceFirstChange: 11) == 1)
+        #expect(DrawingAutosaveCadence.delay(elapsedSinceFirstChange: 20) == 0.3)
+        #expect(DrawingAutosaveCadence.delay(elapsedSinceFirstChange: .nan) == 2)
+    }
+
+    @Test func continuousDrawingSplitterAssignsStrokesWithoutPageModelAccess() throws {
+        let firstPageID = UUID()
+        let secondPageID = UUID()
+        let thirdPageID = UUID()
+        let targets = [
+            ContinuousDrawingSaveTarget(
+                pageID: firstPageID,
+                drawingFileName: "first.drawing",
+                frame: CGRect(x: 0, y: 0, width: 200, height: 100)
+            ),
+            ContinuousDrawingSaveTarget(
+                pageID: secondPageID,
+                drawingFileName: "second.drawing",
+                frame: CGRect(x: 0, y: 100, width: 200, height: 100)
+            ),
+            ContinuousDrawingSaveTarget(
+                pageID: thirdPageID,
+                drawingFileName: "third.drawing",
+                frame: CGRect(x: 0, y: 200, width: 200, height: 100)
+            )
+        ]
+        let firstPageStroke = makeTestDrawing(color: .systemBlue, xOffset: 0)
+        let secondPageStroke = firstPageStroke.transformed(
+            using: CGAffineTransform(translationX: 0, y: 100)
+        )
+        let boundaryStroke = firstPageStroke.transformed(
+            using: CGAffineTransform(translationX: 0, y: 45)
+        )
+        let continuousDrawing = PKDrawing(
+            strokes: firstPageStroke.strokes
+                + secondPageStroke.strokes
+                + boundaryStroke.strokes
+        )
+
+        let results = ContinuousDrawingSplitter.drawings(
+            from: continuousDrawing,
+            targets: targets
+        )
+        let drawingsByPageID = Dictionary(uniqueKeysWithValues: results.map { ($0.0.pageID, $0.1) })
+        let firstDrawing = try #require(drawingsByPageID[firstPageID])
+        let secondDrawing = try #require(drawingsByPageID[secondPageID])
+        let thirdDrawing = try #require(drawingsByPageID[thirdPageID])
+
+        #expect(firstDrawing.strokes.count == 2)
+        #expect(secondDrawing.strokes.count == 2)
+        #expect(thirdDrawing.strokes.isEmpty)
+        #expect(abs(firstDrawing.strokes[0].renderBounds.midY - firstPageStroke.bounds.midY) < 0.5)
+        #expect(abs(secondDrawing.strokes[0].renderBounds.midY - firstPageStroke.bounds.midY) < 0.5)
+    }
+
     @Test func pageCanvasAppliesSelectedDrawingInputMode() {
         let pageView = DrawingCanvasView.PageCanvasView()
 
@@ -5829,7 +5887,7 @@ struct BeanNotesTests {
         DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
     }
 
-    @Test @MainActor func documentTraversalStaysActiveThroughDecelerationAndZoom() {
+    @Test @MainActor func documentTraversalStaysActiveThroughDecelerationAndZoom() async throws {
         let container = DrawingCanvasView.CanvasContainerView()
 
         #expect(!container.scrollView.alwaysBounceHorizontal)
@@ -5859,8 +5917,20 @@ struct BeanNotesTests {
 
         container.setDrawingInteractionActive(true)
         #expect(container.isLiveDrawingInteractionActive)
+        #expect(container.isPDFRenderingDeferredForDrawing)
         container.setDrawingInteractionActive(false)
         #expect(!container.isLiveDrawingInteractionActive)
+        #expect(container.isPDFRenderingDeferredForDrawing)
+
+        container.setDrawingInteractionActive(true)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        #expect(container.isLiveDrawingInteractionActive)
+        #expect(container.isPDFRenderingDeferredForDrawing)
+
+        container.setDrawingInteractionActive(false)
+        try await Task.sleep(nanoseconds: 550_000_000)
+        #expect(!container.isLiveDrawingInteractionActive)
+        #expect(!container.isPDFRenderingDeferredForDrawing)
     }
 
     private struct PageCanvasFixture {
