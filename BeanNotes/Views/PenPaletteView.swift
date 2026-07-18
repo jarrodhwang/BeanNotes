@@ -703,6 +703,22 @@ struct PenPaletteView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tool.label)
+        .accessibilityHint(toolAccessibilityHint(tool))
+    }
+
+    private func toolAccessibilityHint(_ tool: DrawingTool) -> String {
+        switch tool {
+        case .highlighter:
+            "Draw to highlight. Pause after dragging to lock a straight highlight. Highlights stay behind handwriting."
+        case .pen, .pencil:
+            "Selects this drawing tool"
+        case .eraser:
+            "Selects the eraser and its modes"
+        case .lasso:
+            "Selects strokes for moving or editing"
+        case .capture:
+            "Selects an area to copy"
+        }
     }
 
     private func eraserModeButton(_ mode: DrawingEraserMode) -> some View {

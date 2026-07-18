@@ -629,6 +629,10 @@ struct DrawingRenderResolutionStatus: Equatable {
 
 @MainActor
 final class DrawingToolState: ObservableObject {
+    /// A marker should remain legible over typed PDF content while letting the
+    /// underlying text and handwriting stay easy to read.
+    static let highlighterOpacity: CGFloat = 0.28
+
     private enum DefaultsKey {
         static let selectedTool = "drawingToolState.selectedTool"
         static let previousTool = "drawingToolState.previousTool"
@@ -1197,7 +1201,7 @@ final class DrawingToolState: ObservableObject {
         case .highlighter:
             PKInkingTool(
                 activeInkType ?? .marker,
-                color: UIColor(highlighterColor).withAlphaComponent(0.5),
+                color: UIColor(highlighterColor).withAlphaComponent(Self.highlighterOpacity),
                 width: effectiveStrokeWidth(
                     for: .highlighter,
                     zoomScale: zoomScale,
