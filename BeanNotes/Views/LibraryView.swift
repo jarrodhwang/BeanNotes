@@ -68,6 +68,9 @@ struct LibraryView: View {
     @State private var awayStartedAt: Date?
     @State private var visitScheduleToken = 0
     @State private var thumbnailRefreshVersions: [UUID: Int] = [:]
+    @State private var thumbnailRefreshTask: Task<Void, Never>?
+    @State private var thumbnailRefreshRequestID: UUID?
+    @State private var didScheduleWorkspaceThumbnailRefresh = false
     @State private var exportSharePayload: ExportSharePayload?
     @State private var isExportingNotes = false
     @State private var exportProgress: Double?
@@ -343,7 +346,10 @@ struct LibraryView: View {
                 backToLibrary: closeWorkspace
             )
             .onDisappear {
-                refreshOpenNoteThumbnails()
+                if !didScheduleWorkspaceThumbnailRefresh {
+                    refreshOpenNoteThumbnails()
+                }
+                didScheduleWorkspaceThumbnailRefresh = false
             }
         }
         .sheet(isPresented: $isShowingFolderEditor) {
@@ -1240,13 +1246,16 @@ struct LibraryView: View {
     }
 
     private func closeWorkspace() {
+        didScheduleWorkspaceThumbnailRefresh = true
+        refreshOpenNoteThumbnails(prioritizing: selectedOpenNoteID)
         selectedOpenNoteID = nil
     }
 
     private func closeNoteTab(_ noteID: UUID) {
         guard let index = openNoteTabs.firstIndex(where: { $0.id == noteID }) else { return }
 
-        openNoteTabs.remove(at: index)
+        let closedNote = openNoteTabs.remove(at: index)
+        refreshThumbnails(for: [closedNote])
 
         if selectedOpenNoteID == noteID {
             if openNoteTabs.isEmpty {
@@ -1260,6 +1269,7 @@ struct LibraryView: View {
 
     private func refreshThumbnail(for note: NoteDocument) async {
         guard let page = note.sortedPages.first else { return }
+        guard !Task.isCancelled else { return }
 
         do {
             _ = try await ThumbnailService().generateThumbnailInBackground(
@@ -1276,20 +1286,57 @@ struct LibraryView: View {
             errorMessage = error.localizedDescription
         }
 
+        guard !Task.isCancelled else { return }
+    }
+
+    private func refreshSearchIndex(for note: NoteDocument) async {
+        guard !Task.isCancelled else { return }
+
         do {
             try await NoteSearchIndexService().indexIfNeeded(note: note, modelContext: modelContext)
+            guard !Task.isCancelled else { return }
             try modelContext.save()
         } catch {
+            guard !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
         }
     }
 
-    private func refreshOpenNoteThumbnails() {
-        let notes = openNoteTabs
+    private func refreshOpenNoteThumbnails(prioritizing noteID: UUID? = nil) {
+        var notes = openNoteTabs
+        if let noteID,
+           let index = notes.firstIndex(where: { $0.id == noteID }) {
+            notes.insert(notes.remove(at: index), at: 0)
+        }
+        refreshThumbnails(for: notes)
+    }
 
-        Task { @MainActor in
+    private func refreshThumbnails(for notes: [NoteDocument]) {
+        guard !notes.isEmpty else { return }
+
+        thumbnailRefreshTask?.cancel()
+        let requestID = UUID()
+        thumbnailRefreshRequestID = requestID
+
+        thumbnailRefreshTask = Task { @MainActor in
+            defer {
+                if thumbnailRefreshRequestID == requestID {
+                    thumbnailRefreshTask = nil
+                    thumbnailRefreshRequestID = nil
+                }
+            }
+
             for note in notes {
+                guard !Task.isCancelled else { return }
                 await refreshThumbnail(for: note)
+                guard !Task.isCancelled else { return }
+                await Task.yield()
+            }
+
+            for note in notes {
+                guard !Task.isCancelled else { return }
+                await refreshSearchIndex(for: note)
+                guard !Task.isCancelled else { return }
                 await Task.yield()
             }
         }
