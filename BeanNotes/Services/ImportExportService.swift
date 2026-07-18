@@ -803,17 +803,10 @@ struct ImportExportService {
         try Task.checkCancellation()
 
         let snapshot = NotePageRenderSnapshot(page: page)
-        progress?(0.25, "Rendering page...")
-        await Task.yield()
-        try Task.checkCancellation()
-
         let title = page.note?.title.sanitizedFileName ?? "BeanNotes"
         let fileName = "\(title)-Page-\(page.pageOrder + 1).\(format.fileExtension)"
         let exportDirectory = try storage.directoryURL(for: .exports)
         let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName(fileName))
-
-        progress?(0.78, "Writing \(format.label)...")
-        await Task.yield()
 
         do {
             try await Self.exportPageSnapshot(
@@ -821,7 +814,14 @@ struct ImportExportService {
                 format: format,
                 rootURL: storage.rootURL,
                 exportURL: exportURL,
-                renderScale: Self.exportRenderScale(for: snapshot)
+                renderScale: Self.exportRenderScale(for: snapshot),
+                progress: { fraction, message in
+                    guard let fraction else {
+                        progress?(nil, message)
+                        return
+                    }
+                    progress?(0.1 + fraction * 0.85, message)
+                }
             )
         } catch {
             try? storage.fileManager.removeItem(at: exportURL)
@@ -882,7 +882,18 @@ struct ImportExportService {
                         format: format,
                         rootURL: storage.rootURL,
                         exportURL: exportURL,
-                        renderScale: Self.exportRenderScale(for: snapshot)
+                        renderScale: Self.exportRenderScale(for: snapshot),
+                        progress: { fraction, message in
+                            guard let fraction else {
+                                progress?(nil, message)
+                                return
+                            }
+                            let overallFraction = (Double(index) + fraction) / Double(total)
+                            progress?(
+                                overallFraction,
+                                "\(message) Page \(index + 1) of \(total)."
+                            )
+                        }
                     )
                     urls.append(exportURL)
                     currentExportURL = nil
@@ -1877,28 +1888,39 @@ struct ImportExportService {
         format: ExportFormat,
         rootURL: URL,
         exportURL: URL,
-        renderScale: CGFloat
+        renderScale: CGFloat,
+        progress: ImportExportProgressHandler? = nil
     ) async throws {
         try Task.checkCancellation()
-        let worker = Task.detached(priority: .userInitiated) { () throws -> Void in
-            try autoreleasepool {
-                let stagedURL = stagedExportURL(for: exportURL)
-                defer { try? FileManager.default.removeItem(at: stagedURL) }
+        let worker = Task.detached(priority: .userInitiated) { () async throws -> Void in
+            let stagedURL = stagedExportURL(for: exportURL)
+            defer { try? FileManager.default.removeItem(at: stagedURL) }
 
-                try Task.checkCancellation()
-                let drawing = try ThumbnailService.loadDrawingForExport(
+            try Task.checkCancellation()
+            await progress?(0.12, "Loading page data...")
+            await Task.yield()
+            let drawing = try autoreleasepool {
+                try ThumbnailService.loadDrawingForExport(
                     fileName: snapshot.drawingFileName,
                     rootURL: rootURL
                 )
-                try Task.checkCancellation()
-                let image = try ThumbnailService.renderPageImageForExport(
+            }
+            try Task.checkCancellation()
+            await progress?(0.38, "Rendering page...")
+            await Task.yield()
+            let image = try autoreleasepool {
+                try ThumbnailService.renderPageImageForExport(
                     snapshot: snapshot,
                     drawing: drawing,
                     rootURL: rootURL,
                     scale: renderScale
                 )
-                try Task.checkCancellation()
+            }
+            try Task.checkCancellation()
+            await progress?(0.78, "Writing \(format.label)...")
+            await Task.yield()
 
+            try autoreleasepool {
                 switch format {
                 case .png:
                     guard let data = image.pngData() else { throw ImportExportError.exportFailed }
@@ -1914,10 +1936,14 @@ struct ImportExportService {
                     try writePDFImage(image, pageSize: snapshot.pageSize, exportURL: stagedURL)
                     try validatePDF(at: stagedURL, expectedPageSizes: [snapshot.pageSize])
                 }
-                try Task.checkCancellation()
-                try commitStagedExport(at: stagedURL, to: exportURL)
-                try Task.checkCancellation()
             }
+            try Task.checkCancellation()
+            await progress?(0.94, "Finalizing export...")
+            await Task.yield()
+            try autoreleasepool {
+                try commitStagedExport(at: stagedURL, to: exportURL)
+            }
+            try Task.checkCancellation()
         }
 
         try await withTaskCancellationHandler {
@@ -1955,13 +1981,20 @@ struct ImportExportService {
 
             let total = max(snapshots.count, 1)
             await MainActor.run {
-                progress?(0, "Exporting \(total == 1 ? "page" : "pages")...")
+                progress?(0.04, "Preparing \(total == 1 ? "page" : "pages")...")
             }
+            await Task.yield()
 
             var renderError: Error?
             try renderer.writePDF(to: stagedURL) { context in
-                for snapshot in snapshots {
+                for (index, snapshot) in snapshots.enumerated() {
                     if Task.isCancelled || renderError != nil { return }
+
+                    let pageNumber = index + 1
+                    let preparingFraction = (Double(index) + 0.1) / Double(total)
+                    Task { @MainActor in
+                        progress?(preparingFraction, "Rendering page \(pageNumber) of \(total)...")
+                    }
 
                     autoreleasepool {
                         let pageBounds = CGRect(origin: .zero, size: snapshot.pageSize)
@@ -1983,12 +2016,22 @@ struct ImportExportService {
                             renderError = error
                         }
                     }
+
+                    let renderedFraction = (Double(index) + 0.85) / Double(total)
+                    Task { @MainActor in
+                        progress?(renderedFraction, "Rendered page \(pageNumber) of \(total).")
+                    }
                 }
             }
             if let renderError {
                 throw renderError
             }
             try Task.checkCancellation()
+            let finalizingFraction = (Double(total) - 0.01) / Double(total)
+            await MainActor.run {
+                progress?(finalizingFraction, "Finalizing PDF...")
+            }
+            await Task.yield()
             try validatePDF(
                 at: stagedURL,
                 expectedPageSizes: snapshots.map(\.pageSize)

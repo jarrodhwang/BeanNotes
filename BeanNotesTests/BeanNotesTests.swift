@@ -8523,6 +8523,17 @@ struct BeanNotesTests {
         let jpegImage = try #require(UIImage(contentsOfFile: jpegURL.path))
         #expect(imageContainsDominantRedInk(jpegImage))
 
+        var sharingProgress: [Double] = []
+        let sharedPNGURLs = try await service.exportNoteForSharing(note, format: .png) { fraction, _ in
+            if let fraction {
+                sharingProgress.append(fraction)
+            }
+        }
+        #expect(sharedPNGURLs.count == 2)
+        #expect(sharingProgress.contains { $0 > 0 && $0 < 0.5 })
+        #expect(sharingProgress.contains { $0 > 0.5 && $0 < 1 })
+        #expect(sharingProgress.last == 1)
+
         let exportDirectory = try storage.directoryURL(for: .exports)
         let exportFileNames = try FileManager.default.contentsOfDirectory(atPath: exportDirectory.path)
         #expect(!exportFileNames.contains { $0.contains(".partial.") })
