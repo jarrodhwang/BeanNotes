@@ -121,7 +121,7 @@ enum CodeSnippetPreviewRenderer {
 
         context.saveGState()
         surfacePath.addClip()
-        drawGlassSurface(in: bounds, palette: palette, context: context)
+        drawSurface(in: bounds, palette: palette, context: context)
         drawHeader(
             languageLabel: draft.language.label,
             in: bounds,
@@ -151,66 +151,13 @@ enum CodeSnippetPreviewRenderer {
         innerHighlight.stroke()
     }
 
-    private static func drawGlassSurface(
+    private static func drawSurface(
         in bounds: CGRect,
         palette: Palette,
         context: CGContext
     ) {
         context.setFillColor(palette.baseColor.cgColor)
         context.fill(bounds)
-
-        if let verticalGradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [palette.gradientTop.cgColor, palette.gradientBottom.cgColor] as CFArray,
-            locations: [0, 1]
-        ) {
-            context.drawLinearGradient(
-                verticalGradient,
-                start: CGPoint(x: bounds.midX, y: bounds.minY),
-                end: CGPoint(x: bounds.midX, y: bounds.maxY),
-                options: []
-            )
-        }
-
-        if let tintGradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [
-                palette.tintGlow.cgColor,
-                palette.tintGlow.withAlphaComponent(0).cgColor
-            ] as CFArray,
-            locations: [0, 1]
-        ) {
-            context.drawRadialGradient(
-                tintGradient,
-                startCenter: CGPoint(x: bounds.minX + bounds.width * 0.16, y: bounds.minY),
-                startRadius: 0,
-                endCenter: CGPoint(x: bounds.minX + bounds.width * 0.16, y: bounds.minY),
-                endRadius: max(bounds.width, bounds.height) * 0.78,
-                options: [.drawsAfterEndLocation]
-            )
-        }
-
-        let glossRect = CGRect(
-            x: bounds.minX,
-            y: bounds.minY,
-            width: bounds.width,
-            height: min(headerHeight * 1.5, bounds.height * 0.42)
-        )
-        if let glossGradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [
-                palette.glossColor.cgColor,
-                palette.glossColor.withAlphaComponent(0).cgColor
-            ] as CFArray,
-            locations: [0, 1]
-        ) {
-            context.drawLinearGradient(
-                glossGradient,
-                start: CGPoint(x: glossRect.midX, y: glossRect.minY),
-                end: CGPoint(x: glossRect.midX, y: glossRect.maxY),
-                options: [.drawsAfterEndLocation]
-            )
-        }
     }
 
     private static func drawHeader(
@@ -348,10 +295,6 @@ enum CodeSnippetPreviewRenderer {
 private extension CodeSnippetPreviewRenderer {
     struct Palette {
         let baseColor: UIColor
-        let gradientTop: UIColor
-        let gradientBottom: UIColor
-        let tintGlow: UIColor
-        let glossColor: UIColor
         let borderColor: UIColor
         let innerHighlightColor: UIColor
         let separatorColor: UIColor
@@ -363,11 +306,7 @@ private extension CodeSnippetPreviewRenderer {
 
         init(isDark: Bool) {
             if isDark {
-                baseColor = UIColor(red: 0.055, green: 0.065, blue: 0.09, alpha: 0.93)
-                gradientTop = UIColor(red: 0.15, green: 0.17, blue: 0.24, alpha: 0.82)
-                gradientBottom = UIColor(red: 0.045, green: 0.05, blue: 0.075, alpha: 0.9)
-                tintGlow = UIColor(red: 0.22, green: 0.42, blue: 0.95, alpha: 0.2)
-                glossColor = UIColor.white.withAlphaComponent(0.1)
+                baseColor = UIColor(red: 0.14, green: 0.15, blue: 0.17, alpha: 1)
                 borderColor = UIColor.white.withAlphaComponent(0.2)
                 innerHighlightColor = UIColor.white.withAlphaComponent(0.08)
                 separatorColor = UIColor.white.withAlphaComponent(0.12)
@@ -377,16 +316,12 @@ private extension CodeSnippetPreviewRenderer {
                 gearColor = UIColor.white.withAlphaComponent(0.72)
                 codeTextColor = UIColor(red: 0.89, green: 0.91, blue: 0.96, alpha: 1)
             } else {
-                baseColor = UIColor.white.withAlphaComponent(0.9)
-                gradientTop = UIColor(red: 0.99, green: 1, blue: 1, alpha: 0.9)
-                gradientBottom = UIColor(red: 0.89, green: 0.93, blue: 0.99, alpha: 0.82)
-                tintGlow = UIColor(red: 0.15, green: 0.5, blue: 1, alpha: 0.18)
-                glossColor = UIColor.white.withAlphaComponent(0.48)
-                borderColor = UIColor(red: 0.25, green: 0.4, blue: 0.68, alpha: 0.24)
-                innerHighlightColor = UIColor.white.withAlphaComponent(0.68)
-                separatorColor = UIColor(red: 0.18, green: 0.3, blue: 0.52, alpha: 0.14)
-                pillColor = UIColor.white.withAlphaComponent(0.62)
-                pillBorderColor = UIColor(red: 0.18, green: 0.38, blue: 0.72, alpha: 0.2)
+                baseColor = .white
+                borderColor = UIColor.black.withAlphaComponent(0.18)
+                innerHighlightColor = UIColor.black.withAlphaComponent(0.04)
+                separatorColor = UIColor.black.withAlphaComponent(0.12)
+                pillColor = UIColor.black.withAlphaComponent(0.05)
+                pillBorderColor = UIColor.black.withAlphaComponent(0.14)
                 headerTextColor = UIColor(red: 0.09, green: 0.13, blue: 0.22, alpha: 0.94)
                 gearColor = UIColor(red: 0.18, green: 0.24, blue: 0.34, alpha: 0.68)
                 codeTextColor = UIColor(red: 0.08, green: 0.11, blue: 0.17, alpha: 1)

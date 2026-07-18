@@ -188,6 +188,27 @@ struct BeanNotesTests {
         return stride(from: 3, to: pixels.count, by: 4).contains { pixels[$0] < 255 }
     }
 
+    private func rgbaPixel(in image: UIImage, at point: CGPoint) -> [UInt8]? {
+        guard let source = image.cgImage else { return nil }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(
+            data: &pixel,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.translateBy(x: -point.x, y: -point.y)
+        context.draw(
+            source,
+            in: CGRect(x: 0, y: 0, width: source.width, height: source.height)
+        )
+        return pixel
+    }
+
     @Test func modelGraphCreatesFolderNotePageAndAttachment() throws {
         let context = try makeInMemoryModelContext()
 
@@ -3182,6 +3203,9 @@ struct BeanNotesTests {
         #expect(CodeSnippetLanguage.cSharp.label == "C#")
         #expect(CodeSnippetLanguage.visualBasic.label == "Visual Basic")
         #expect(Set(CodeSnippetFontChoice.allCases.map(\.rawValue)) == ["systemMono", "menlo", "courier"])
+        #expect(CodeSnippetBackgroundStyle.automatic.label == "App Appearance")
+        #expect(CodeSnippetBackgroundStyle.light.label == "White")
+        #expect(CodeSnippetBackgroundStyle.dark.label == "Dark Gray")
     }
 
     @Test func codeSnippetPreferencesDefaultAndRepairInvalidValues() throws {
@@ -3358,6 +3382,45 @@ struct BeanNotesTests {
         #expect(!data.isEmpty)
         #expect(image.cgImage?.width == Int(CodeSnippetPreviewRenderer.defaultLogicalSize.width * 2))
         #expect(image.cgImage?.height == Int(CodeSnippetPreviewRenderer.defaultLogicalSize.height * 2))
+    }
+
+    @Test func codeSnippetPreviewUsesSolidAppearanceBackgrounds() throws {
+        func image(
+            style: CodeSnippetBackgroundStyle,
+            interfaceStyle: UIUserInterfaceStyle
+        ) throws -> UIImage {
+            let draft = CodeSnippetDraft(
+                code: "",
+                language: .python,
+                font: .systemMono,
+                fontSize: 16,
+                backgroundStyle: style,
+                preferredInputMode: .text
+            )
+            let data = try #require(
+                CodeSnippetPreviewRenderer.pngData(
+                    for: draft,
+                    automaticInterfaceStyle: interfaceStyle
+                )
+            )
+            return try #require(UIImage(data: data))
+        }
+
+        let lightImage = try image(style: .automatic, interfaceStyle: .light)
+        let darkImage = try image(style: .automatic, interfaceStyle: .dark)
+        let firstPoint = CGPoint(x: 400, y: 300)
+        let secondPoint = CGPoint(x: 800, y: 500)
+        let firstLightPixel = try #require(rgbaPixel(in: lightImage, at: firstPoint))
+        let secondLightPixel = try #require(rgbaPixel(in: lightImage, at: secondPoint))
+        let firstDarkPixel = try #require(rgbaPixel(in: darkImage, at: firstPoint))
+        let secondDarkPixel = try #require(rgbaPixel(in: darkImage, at: secondPoint))
+
+        #expect(firstLightPixel == secondLightPixel)
+        #expect(firstLightPixel[0...2].allSatisfy { $0 >= 250 })
+        #expect(firstDarkPixel == secondDarkPixel)
+        #expect(firstDarkPixel[0] >= 30 && firstDarkPixel[0] <= 42)
+        #expect(firstDarkPixel[1] >= 34 && firstDarkPixel[1] <= 45)
+        #expect(firstDarkPixel[2] >= 38 && firstDarkPixel[2] <= 48)
     }
 
     @Test @MainActor func codeSnippetEditingOverlayExposesConfigurationControl() throws {

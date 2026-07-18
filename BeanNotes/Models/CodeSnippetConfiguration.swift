@@ -124,9 +124,9 @@ enum CodeSnippetBackgroundStyle: String, CaseIterable, Codable, Identifiable, Se
 
     var label: String {
         switch self {
-        case .automatic: "Liquid Glass · App Appearance"
-        case .light: "Liquid Glass · Light"
-        case .dark: "Liquid Glass · Dark"
+        case .automatic: "App Appearance"
+        case .light: "White"
+        case .dark: "Dark Gray"
         }
     }
 }

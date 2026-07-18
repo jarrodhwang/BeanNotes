@@ -260,6 +260,8 @@ struct DrawingCanvasView: UIViewRepresentable {
     var attachmentChanged: () -> Void
     var deleteAttachment: (Attachment) -> Void
     var editCodeSnippet: (Attachment) -> Void = { _ in }
+    var saveCodeSnippet: (CodeSnippetDraft, Attachment) -> Bool = { _, _ in false }
+    var isDarkAppearance = false
     var drawingChanged: (UUID) -> Void
     var captureFailed: (Error) -> Void = { _ in }
     var saveStarted: () -> Void = {}
@@ -1971,6 +1973,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                     editCodeSnippet: { [weak coordinator] attachment in
                         coordinator?.requestCodeSnippetEditing(attachment)
                     },
+                    saveCodeSnippet: { [weak coordinator] draft, attachment in
+                        coordinator?.saveCodeSnippet(draft, attachment: attachment) ?? false
+                    },
+                    isDarkAppearance: coordinator.parent.isDarkAppearance,
                     canRemovePage: orderedPageIDs.count > 1,
                     drawingEnabled: pageFlowMode != .seamless,
                     seamlessAppearance: pageFlowMode == .seamless,
@@ -3759,12 +3765,15 @@ struct DrawingCanvasView: UIViewRepresentable {
         private(set) var attachmentSelectionGesture: UITapGestureRecognizer?
         private var attachmentEditingOverlay: AttachmentEditingOverlayView?
         private var attachmentEditingHostView: AttachmentEditingHostView?
+        private var codeSnippetEditingController: UIHostingController<CodeSnippetInlineEditor>?
         private(set) var page: NotePage?
         private(set) var selectedAttachmentID: UUID?
         private var configurationSignature: String?
         private var attachmentChanged: (() -> Void)?
         private var deleteAttachment: ((Attachment) -> Void)?
         private var editCodeSnippet: ((Attachment) -> Void)?
+        private var saveCodeSnippet: ((CodeSnippetDraft, Attachment) -> Bool)?
+        private var isDarkAppearance = false
         private var pageActionRequested: ((UUID, NotePageContextAction) -> Void)?
         private var pageContextMenuWillOpen: ((UUID) -> Void)?
         private var pageIDForPageAction: ((CGPoint) -> UUID?)?
@@ -3875,6 +3884,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             attachmentChanged: @escaping () -> Void,
             deleteAttachment: @escaping (Attachment) -> Void,
             editCodeSnippet: @escaping (Attachment) -> Void = { _ in },
+            saveCodeSnippet: ((CodeSnippetDraft, Attachment) -> Bool)? = nil,
+            isDarkAppearance: Bool = false,
             canRemovePage: Bool = false,
             drawingEnabled: Bool = true,
             seamlessAppearance: Bool = false,
@@ -3902,6 +3913,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.attachmentChanged = attachmentChanged
             self.deleteAttachment = deleteAttachment
             self.editCodeSnippet = editCodeSnippet
+            self.saveCodeSnippet = saveCodeSnippet
+            self.isDarkAppearance = isDarkAppearance
             self.canRemovePage = canRemovePage
             self.pageActionRequested = pageActionRequested
             self.pageContextMenuWillOpen = pageContextMenuWillOpen
@@ -3983,6 +3996,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             attachmentChanged = nil
             deleteAttachment = nil
             editCodeSnippet = nil
+            saveCodeSnippet = nil
             self.canRemovePage = canRemovePage
             self.pageActionRequested = pageActionRequested
             self.pageContextMenuWillOpen = pageContextMenuWillOpen
@@ -4098,6 +4112,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     displayedFrame(for: selectedAttachment),
                     pageSize: page.pageSize
                 )
+                codeSnippetEditingController?.view.frame = displayedFrame(for: selectedAttachment)
             }
         }
 
@@ -4589,6 +4604,18 @@ struct DrawingCanvasView: UIViewRepresentable {
                           !existingIDs.contains($0.id) && !$0.isLocked
                       }) {
                 beginEditingAttachment(addedAttachment)
+                if addedAttachment.isCodeSnippet,
+                   (addedAttachment.codeSnippetText ?? "").isEmpty,
+                   saveCodeSnippet != nil {
+                    DispatchQueue.main.async { [weak self, weak addedAttachment] in
+                        guard let self,
+                              let addedAttachment,
+                              self.selectedAttachmentID == addedAttachment.id else {
+                            return
+                        }
+                        self.beginInlineCodeSnippetEditing(addedAttachment)
+                    }
+                }
             }
 
             hasConfiguredImageAttachments = true
@@ -4704,13 +4731,68 @@ struct DrawingCanvasView: UIViewRepresentable {
                           self.selectedAttachmentID == attachmentID else {
                         return
                     }
-                    self.editCodeSnippet?(attachment)
+                    if self.saveCodeSnippet != nil {
+                        self.beginInlineCodeSnippetEditing(attachment)
+                    } else {
+                        self.editCodeSnippet?(attachment)
+                    }
                 } : nil,
                 dismiss: { [weak self] in
                     self?.clearAttachmentSelection()
                 }
             )
             overlay.superview?.bringSubviewToFront(overlay)
+        }
+
+        private func beginInlineCodeSnippetEditing(_ attachment: Attachment) {
+            guard attachment.isCodeSnippet,
+                  let saveCodeSnippet else {
+                editCodeSnippet?(attachment)
+                return
+            }
+
+            finishInlineCodeSnippetEditing(attachmentID: attachment.id)
+            selectedAttachmentID = attachment.id
+            attachmentEditingOverlay?.removeFromSuperview()
+            attachmentEditingOverlay = nil
+
+            let draft = CodeSnippetDraft(
+                editing: attachment,
+                defaults: CodeSnippetPreferences.defaultDraft()
+            )
+            let attachmentID = attachment.id
+            let controller = UIHostingController(
+                rootView: CodeSnippetInlineEditor(
+                    draft: draft,
+                    isDarkAppearance: isDarkAppearance,
+                    onSave: { [weak self, weak attachment] updatedDraft in
+                        guard let self,
+                              let attachment,
+                              attachment.id == attachmentID,
+                              saveCodeSnippet(updatedDraft, attachment) else {
+                            return false
+                        }
+                        self.finishInlineCodeSnippetEditing(attachmentID: attachmentID)
+                        return true
+                    },
+                    onCancel: { [weak self] in
+                        self?.finishInlineCodeSnippetEditing(attachmentID: attachmentID)
+                    }
+                )
+            )
+            controller.view.backgroundColor = .clear
+            controller.view.frame = displayedFrame(for: attachment)
+            controller.view.accessibilityIdentifier = "codeSnippet.inlineEditor"
+            imageViews[attachmentID]?.isHidden = true
+            addSubview(controller.view)
+            codeSnippetEditingController = controller
+        }
+
+        private func finishInlineCodeSnippetEditing(attachmentID: UUID) {
+            codeSnippetEditingController?.view.removeFromSuperview()
+            codeSnippetEditingController = nil
+            imageViews[attachmentID]?.isHidden = false
+            selectedAttachmentID = nil
         }
 
         private func displayedFrame(for attachment: Attachment) -> CGRect {
@@ -4722,6 +4804,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func clearAttachmentSelection() {
+            if let selectedAttachmentID {
+                finishInlineCodeSnippetEditing(attachmentID: selectedAttachmentID)
+            }
             selectedAttachmentID = nil
             attachmentEditingOverlay?.removeFromSuperview()
             attachmentEditingOverlay = nil
@@ -4754,6 +4839,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             if let attachmentEditingOverlay,
                touch.view?.isDescendant(of: attachmentEditingOverlay) == true {
+                return false
+            }
+
+            if let editorView = codeSnippetEditingController?.view,
+               touch.view?.isDescendant(of: editorView) == true {
                 return false
             }
 
@@ -5675,7 +5765,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 : "Removes the image after confirmation"
             editButton.isHidden = editRequested == nil
             editButton.accessibilityLabel = "Edit code snippet"
-            editButton.accessibilityHint = "Opens the code, language, font, and background editor"
+            editButton.accessibilityHint = "Edits code and language directly inside the code box"
         }
 
         func updateFrame(_ frame: CGRect, pageSize: CGSize) {
@@ -5807,7 +5897,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             configureHandle(
                 editButton,
-                systemImage: "gearshape.fill",
+                systemImage: "pencil",
                 backgroundColor: UIColor.systemIndigo.withAlphaComponent(0.94)
             )
             editButton.addTarget(self, action: #selector(requestEditing), for: .touchUpInside)
@@ -6463,6 +6553,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             dispatchToSwiftUI {
                 editCodeSnippet(attachment)
             }
+        }
+
+        func saveCodeSnippet(
+            _ draft: CodeSnippetDraft,
+            attachment: Attachment
+        ) -> Bool {
+            guard attachment.isCodeSnippet else { return false }
+            return parent.saveCodeSnippet(draft, attachment)
         }
 
         func requestPageAction(_ action: NotePageContextAction, for pageID: UUID) {

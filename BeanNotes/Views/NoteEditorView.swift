@@ -476,6 +476,13 @@ struct NoteEditorView: View {
                     },
                     deleteAttachment: { attachmentPendingDeletion = $0 },
                     editCodeSnippet: beginEditingCodeSnippet(_:),
+                    saveCodeSnippet: { draft, attachment in
+                        saveCodeSnippet(
+                            draft,
+                            target: .existing(attachmentID: attachment.id)
+                        )
+                    },
+                    isDarkAppearance: colorScheme == .dark,
                     drawingChanged: handleDrawingChanged(pageID:),
                     captureFailed: { error in
                         errorMessage = error.localizedDescription
@@ -1409,9 +1416,9 @@ struct NoteEditorView: View {
 
     private func beginCreatingCodeSnippet() {
         guard let page = selectedPage else { return }
-        codeSnippetEditingSession = CodeSnippetEditingSession(
-            target: .new(pageID: page.id),
-            draft: CodeSnippetPreferences.defaultDraft()
+        _ = saveCodeSnippet(
+            CodeSnippetPreferences.defaultDraft(),
+            target: .new(pageID: page.id)
         )
     }
 
@@ -1428,8 +1435,6 @@ struct NoteEditorView: View {
         _ draft: CodeSnippetDraft,
         target: CodeSnippetEditingSession.Target
     ) -> Bool {
-        let trimmedCode = draft.code.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedCode.isEmpty else { return false }
         let interfaceStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         guard let previewData = CodeSnippetPreviewRenderer.pngData(
             for: draft,

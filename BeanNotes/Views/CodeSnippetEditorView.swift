@@ -16,7 +16,6 @@ struct CodeSnippetEditorSheet: View {
         static let defaultFontSize = CodeSnippetPreferences.defaultFontSize
     }
 
-    @Environment(\.accessibilityReduceTransparency) private var accessibilityReduceTransparency
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
 
@@ -184,10 +183,7 @@ struct CodeSnippetEditorSheet: View {
                 onLengthLimitReached: showLengthLimitNotice
             )
             .frame(maxWidth: .infinity, minHeight: 330)
-            .codeSnippetGlassSurface(
-                style: draft.backgroundStyle,
-                reduceTransparency: accessibilityReduceTransparency
-            )
+            .codeSnippetSurface(style: draft.backgroundStyle)
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
             if let editorNotice {
@@ -230,10 +226,7 @@ struct CodeSnippetEditorSheet: View {
                 inkColor: codeForegroundColor
             )
             .frame(maxWidth: .infinity, minHeight: 330)
-            .codeSnippetGlassSurface(
-                style: draft.backgroundStyle,
-                reduceTransparency: accessibilityReduceTransparency
-            )
+            .codeSnippetSurface(style: draft.backgroundStyle)
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
             Button {
@@ -351,7 +344,7 @@ struct CodeSnippetEditorSheet: View {
         return min(max(fontSize, Constants.minimumFontSize), Constants.maximumFontSize)
     }
 
-    private static func handwritingImage(from drawing: PKDrawing) -> UIImage? {
+    fileprivate static func handwritingImage(from drawing: PKDrawing) -> UIImage? {
         let drawingBounds = drawing.bounds
         guard !drawing.strokes.isEmpty,
               !drawingBounds.isNull,
@@ -387,9 +380,302 @@ struct CodeSnippetEditorSheet: View {
     }
 }
 
+/// An editor that lives inside the code attachment on the note canvas. It keeps the
+/// source where the user is working instead of moving typing, paste, or Pencil input
+/// into a separate sheet.
+struct CodeSnippetInlineEditor: View {
+    private enum Constants {
+        static let maximumCodeUTF16Length = CodeSyntaxHighlighter.maximumHighlightedUTF16Length
+    }
+
+    @State private var draft: CodeSnippetDraft
+    @State private var handwritingDrawing = PKDrawing()
+    @State private var isConvertingHandwriting = false
+    @State private var errorMessage: String?
+    @State private var pasteRequest = 0
+
+    let isDarkAppearance: Bool
+    let onSave: (CodeSnippetDraft) -> Bool
+    let onCancel: () -> Void
+
+    init(
+        draft: CodeSnippetDraft,
+        isDarkAppearance: Bool,
+        onSave: @escaping (CodeSnippetDraft) -> Bool,
+        onCancel: @escaping () -> Void
+    ) {
+        _draft = State(initialValue: draft)
+        self.isDarkAppearance = isDarkAppearance
+        self.onSave = onSave
+        self.onCancel = onCancel
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+                .frame(minHeight: 48)
+                .padding(.horizontal, 10)
+
+            Divider()
+                .overlay(foregroundColor.opacity(0.18))
+
+            Group {
+                if draft.preferredInputMode == .text {
+                    CodeSyntaxTextView(
+                        text: $draft.code,
+                        language: draft.language,
+                        font: draft.font,
+                        fontSize: draft.fontSize,
+                        foregroundColor: foregroundUIColor,
+                        maximumUTF16Length: Constants.maximumCodeUTF16Length,
+                        pasteRequest: pasteRequest,
+                        onLengthLimitReached: {
+                            errorMessage = "Code snippets are limited to \(Constants.maximumCodeUTF16Length.formatted()) characters."
+                        }
+                    )
+                    .accessibilityIdentifier("codeSnippet.inline.textEditor")
+                } else {
+                    ZStack(alignment: .bottomTrailing) {
+                        CodeSnippetHandwritingCanvas(
+                            drawing: $handwritingDrawing,
+                            inkColor: foregroundUIColor
+                        )
+                        .accessibilityIdentifier("codeSnippet.inline.handwriting")
+
+                        Button {
+                            convertHandwritingToCode()
+                        } label: {
+                            if isConvertingHandwriting {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Label("Convert to Code", systemImage: "text.viewfinder")
+                                    .labelStyle(.titleAndIcon)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .padding(10)
+                        .disabled(handwritingDrawing.strokes.isEmpty || isConvertingHandwriting)
+                        .accessibilityHint("Converts Pencil handwriting into editable code text")
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .foregroundStyle(foregroundColor)
+        .background(backgroundColor)
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(foregroundColor.opacity(0.2), lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .alert(
+            "Code Snippet",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Unable to update the code snippet.")
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(CodeSnippetLanguage.allCases) { language in
+                    Button {
+                        draft.language = language
+                    } label: {
+                        if draft.language == language {
+                            Label(language.label, systemImage: "checkmark")
+                        } else {
+                            Text(language.label)
+                        }
+                    }
+                }
+            } label: {
+                Label(draft.language.label, systemImage: "chevron.left.forwardslash.chevron.right")
+                    .lineLimit(1)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Code language")
+            .accessibilityValue(draft.language.label)
+            .accessibilityIdentifier("codeSnippet.inline.language")
+
+            Spacer(minLength: 4)
+
+            inputButton(.handwriting, systemImage: "pencil.tip")
+            inputButton(.text, systemImage: "keyboard")
+            appearanceMenu
+
+            if draft.preferredInputMode == .text {
+                Button {
+                    guard UIPasteboard.general.hasStrings else {
+                        errorMessage = "The clipboard does not contain text."
+                        return
+                    }
+                    pasteRequest &+= 1
+                } label: {
+                    Image(systemName: "doc.on.clipboard")
+                }
+                .accessibilityLabel("Paste code")
+                .accessibilityHint("Pastes plain text at the insertion point")
+            }
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+            }
+            .accessibilityLabel("Cancel code editing")
+
+            Button {
+                let limitedCode = codeSnippetText(
+                    draft.code,
+                    limitedToUTF16Length: Constants.maximumCodeUTF16Length
+                )
+                draft.code = limitedCode
+                if !onSave(draft) {
+                    errorMessage = "BeanNotes could not save the code snippet."
+                }
+            } label: {
+                Image(systemName: "checkmark")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isConvertingHandwriting)
+            .accessibilityLabel("Save code snippet")
+        }
+        .font(.subheadline.weight(.semibold))
+    }
+
+    private var appearanceMenu: some View {
+        Menu {
+            Section("Background") {
+                ForEach(CodeSnippetBackgroundStyle.allCases) { style in
+                    Button {
+                        draft.backgroundStyle = style
+                    } label: {
+                        if draft.backgroundStyle == style {
+                            Label(style.label, systemImage: "checkmark")
+                        } else {
+                            Text(style.label)
+                        }
+                    }
+                }
+            }
+
+            Section("Font") {
+                ForEach(CodeSnippetFontChoice.allCases) { font in
+                    Button {
+                        draft.font = font
+                    } label: {
+                        if draft.font == font {
+                            Label(font.label, systemImage: "checkmark")
+                        } else {
+                            Text(font.label)
+                        }
+                    }
+                }
+
+                Menu("Font Size") {
+                    ForEach(Array(stride(from: 10, through: 32, by: 2)), id: \.self) { size in
+                        Button {
+                            draft.fontSize = Double(size)
+                        } label: {
+                            if Int(draft.fontSize.rounded()) == size {
+                                Label("\(size) pt", systemImage: "checkmark")
+                            } else {
+                                Text("\(size) pt")
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "gearshape")
+        }
+        .accessibilityLabel("Code appearance")
+        .accessibilityHint("Changes the background, font, and font size")
+    }
+
+    private func inputButton(
+        _ mode: CodeSnippetInputMode,
+        systemImage: String
+    ) -> some View {
+        Button {
+            draft.preferredInputMode = mode
+        } label: {
+            Image(systemName: systemImage)
+                .frame(width: 24, height: 24)
+                .background(
+                    draft.preferredInputMode == mode
+                        ? foregroundColor.opacity(0.14)
+                        : .clear,
+                    in: RoundedRectangle(cornerRadius: 6)
+                )
+        }
+        .accessibilityLabel(mode.label)
+        .accessibilityAddTraits(draft.preferredInputMode == mode ? .isSelected : [])
+    }
+
+    private var resolvesToDark: Bool {
+        switch draft.backgroundStyle {
+        case .automatic: isDarkAppearance
+        case .light: false
+        case .dark: true
+        }
+    }
+
+    private var backgroundColor: Color {
+        resolvesToDark ? Color(red: 0.14, green: 0.15, blue: 0.17) : .white
+    }
+
+    private var foregroundColor: Color {
+        resolvesToDark ? .white : .black
+    }
+
+    private var foregroundUIColor: UIColor {
+        resolvesToDark ? .white : .black
+    }
+
+    private func convertHandwritingToCode() {
+        guard let image = CodeSnippetEditorSheet.handwritingImage(from: handwritingDrawing),
+              let cgImage = image.cgImage else {
+            errorMessage = CodeSnippetHandwritingError.renderFailed.localizedDescription
+            return
+        }
+
+        isConvertingHandwriting = true
+        let imageReference = CodeSnippetCGImageReference(cgImage)
+        let languageCustomWords = draft.language.visionCustomWords
+        Task {
+            defer { isConvertingHandwriting = false }
+            do {
+                draft.code = codeSnippetText(
+                    try await CodeSnippetHandwritingRecognizer.recognizeCode(
+                        in: imageReference,
+                        customWords: languageCustomWords
+                    ),
+                    limitedToUTF16Length: Constants.maximumCodeUTF16Length
+                )
+                draft.preferredInputMode = .text
+                UIAccessibility.post(
+                    notification: .announcement,
+                    argument: "Handwriting converted to editable code"
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
 private struct CodeSnippetConfigurationSheet: View {
     @Binding var draft: CodeSnippetDraft
-    @Environment(\.accessibilityReduceTransparency) private var accessibilityReduceTransparency
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
 
@@ -427,14 +713,14 @@ private struct CodeSnippetConfigurationSheet: View {
                 }
 
                 Section("Background") {
-                    Picker("Glass Tint", selection: $draft.backgroundStyle) {
+                    Picker("Color", selection: $draft.backgroundStyle) {
                         ForEach(CodeSnippetBackgroundStyle.allCases) { style in
                             Text(style.label)
                                 .tag(style)
                         }
                     }
 
-                    Text("Liquid Glass is used while editing on supported iPadOS versions. The note stores a matching flattened tint for reliable export; App Appearance captures the current light or dark appearance when saved.")
+                    Text("Code boxes use a solid white background in light mode and solid dark gray in dark mode. App Appearance captures the current appearance when saved.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -445,10 +731,7 @@ private struct CodeSnippetConfigurationSheet: View {
                         .foregroundStyle(Color(uiColor: previewForegroundColor))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
-                        .codeSnippetGlassSurface(
-                            style: draft.backgroundStyle,
-                            reduceTransparency: accessibilityReduceTransparency
-                        )
+                        .codeSnippetSurface(style: draft.backgroundStyle)
                 }
             }
             .navigationTitle("Code Appearance")
@@ -788,30 +1071,14 @@ private struct CodeSnippetHandwritingCanvas: UIViewRepresentable {
     }
 }
 
-private struct CodeSnippetGlassSurfaceModifier: ViewModifier {
+private struct CodeSnippetSurfaceModifier: ViewModifier {
     var style: CodeSnippetBackgroundStyle
-    var reduceTransparency: Bool
+
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
-        Group {
-            if reduceTransparency {
-                content
-                    .background(opaqueFallbackColor, in: surfaceShape)
-            } else if #available(iOS 26.0, *) {
-                content
-                    .glassEffect(.regular.tint(glassTintColor), in: surfaceShape)
-            } else {
-                content
-                    .background {
-                        surfaceShape
-                            .fill(.regularMaterial)
-                            .overlay {
-                                surfaceShape
-                                    .fill(materialTintColor)
-                            }
-                    }
-            }
-        }
+        content
+            .background(backgroundColor, in: surfaceShape)
         .overlay {
             surfaceShape
                 .stroke(borderColor, lineWidth: 1)
@@ -822,38 +1089,18 @@ private struct CodeSnippetGlassSurfaceModifier: ViewModifier {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
     }
 
-    private var glassTintColor: Color? {
+    private var backgroundColor: Color {
         switch style {
         case .automatic:
-            nil
+            colorScheme == .dark ? Self.darkBackground : .white
         case .light:
-            .white.opacity(0.28)
+            .white
         case .dark:
-            .black.opacity(0.42)
+            Self.darkBackground
         }
     }
 
-    private var materialTintColor: Color {
-        switch style {
-        case .automatic:
-            .clear
-        case .light:
-            .white.opacity(0.32)
-        case .dark:
-            .black.opacity(0.42)
-        }
-    }
-
-    private var opaqueFallbackColor: Color {
-        switch style {
-        case .automatic:
-            Color(uiColor: .secondarySystemBackground)
-        case .light:
-            Color(red: 0.95, green: 0.96, blue: 0.98)
-        case .dark:
-            Color(red: 0.10, green: 0.11, blue: 0.14)
-        }
-    }
+    private static let darkBackground = Color(red: 0.14, green: 0.15, blue: 0.17)
 
     private var borderColor: Color {
         switch style {
@@ -868,15 +1115,9 @@ private struct CodeSnippetGlassSurfaceModifier: ViewModifier {
 }
 
 private extension View {
-    func codeSnippetGlassSurface(
-        style: CodeSnippetBackgroundStyle,
-        reduceTransparency: Bool
-    ) -> some View {
+    func codeSnippetSurface(style: CodeSnippetBackgroundStyle) -> some View {
         modifier(
-            CodeSnippetGlassSurfaceModifier(
-                style: style,
-                reduceTransparency: reduceTransparency
-            )
+            CodeSnippetSurfaceModifier(style: style)
         )
     }
 }
