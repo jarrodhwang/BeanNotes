@@ -14,14 +14,18 @@ struct ExportView: View {
     var page: NotePage
     var service = ImportExportService()
 
+    @State private var path: [ExportRoute] = []
+    @State private var standardFormat = ExportFormat.pdf
+    @State private var advancedScope = ExportScope.currentPage
+    @State private var advancedFormat = ExportFormat.pdf
     @State private var sharePayload: ExportSharePayload?
+    @State private var savePayload: ExportSavePayload?
     @State private var isExporting = false
     @State private var exportProgress: Double?
     @State private var exportProgressMessage = "Preparing export..."
     @State private var exportTask: Task<Void, Never>?
     @State private var errorMessage: String?
-    @State private var isAdvancedExportsExpanded = false
-    @State private var didPrepareAdvancedExports = false
+    @State private var didPrepareAdvancedExport = false
     @State private var pageBackgroundMode = ExportPageBackgroundMode.original
     @State private var customBackgroundStyleRaw = NoteBackgroundStyle.plain.rawValue
     @State private var customBackgroundColorHex = NoteBackground.defaultColorHex
@@ -29,6 +33,50 @@ struct ExportView: View {
     @State private var pdfQuality = ExportPDFQuality.best
     @State private var imageResolution = ExportImageResolution.threeX
     @State private var jpegQuality = ExportJPEGQuality.best
+
+    private enum ExportRoute: Hashable {
+        case standard(ExportScope)
+        case advanced
+    }
+
+    private enum ExportScope: String, CaseIterable, Hashable, Identifiable {
+        case currentPage
+        case allPages
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .currentPage:
+                "Current Page"
+            case .allPages:
+                "All Pages"
+            }
+        }
+
+        var navigationTitle: String {
+            switch self {
+            case .currentPage:
+                "Export Current Page"
+            case .allPages:
+                "Export All Pages"
+            }
+        }
+    }
+
+    private enum ExportDestination {
+        case share
+        case saveToFiles
+
+        var progressMessage: String {
+            switch self {
+            case .share:
+                "Opening share sheet..."
+            case .saveToFiles:
+                "Opening Files..."
+            }
+        }
+    }
 
     private var pageOriginalAttachments: [Attachment] {
         page.attachments
@@ -44,191 +92,297 @@ struct ExportView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                if beanNotesTheme.supportsFriendlyVisits {
-                    Section {
-                        ThemeHintView(
-                            theme: beanNotesTheme,
-                            message: beanNotesTheme.mascotExportHint
-                        )
+        NavigationStack(path: $path) {
+            exportMenu
+                .navigationDestination(for: ExportRoute.self) { route in
+                    switch route {
+                    case .standard(let scope):
+                        standardExportPage(scope: scope)
+                    case .advanced:
+                        advancedExportPage
                     }
                 }
-
-                Section("Current Page") {
-                    ForEach(ExportFormat.allCases) { format in
-                        Button {
-                            exportCurrentPage(format)
-                        } label: {
-                            Label(format.label, systemImage: icon(for: format))
-                        }
-                    }
-                }
-
-                Section("Whole Note") {
-                    ForEach(ExportFormat.allCases) { format in
-                        Button {
-                            exportWholeNote(format)
-                        } label: {
-                            Label(noteExportLabel(for: format), systemImage: icon(for: format))
-                        }
-                    }
-                }
-
-                if !pageOriginalAttachments.isEmpty {
-                    Section("Page Originals") {
-                        ForEach(pageOriginalAttachments) { attachment in
-                            Button {
-                                shareOriginals([attachment])
-                            } label: {
-                                Label(originalLabel(for: attachment), systemImage: icon(for: attachment))
-                            }
-                        }
-                    }
-                }
-
-                if noteOriginalAttachments.count > pageOriginalAttachments.count {
-                    Section("Note Originals") {
-                        Button {
-                            shareOriginals(noteOriginalAttachments)
-                        } label: {
-                            Label("All Originals", systemImage: "doc.on.doc")
-                        }
-                    }
-                }
-
-                if let errorMessage {
-                    Section {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                advancedExportsSection
+        }
+        .sheet(item: $sharePayload) { payload in
+            ActivityView(activityItems: payload.urls) {
+                finishPresentation(payload)
             }
-            .navigationTitle("Export")
-            .navigationBarTitleDisplayMode(.inline)
-            .disabled(isExporting)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
+        }
+        .sheet(item: $savePayload) { payload in
+            ExportDocumentPicker(urls: payload.urls) {
+                finishPresentation(payload)
             }
-            .sheet(item: $sharePayload) { payload in
-                ActivityView(activityItems: payload.urls)
+        }
+        .alert("Export Failed", isPresented: errorAlertIsPresented) {
+            Button("OK", role: .cancel) {
+                errorMessage = nil
             }
-            .onDisappear {
-                exportTask?.cancel()
+        } message: {
+            Text(errorMessage ?? "BeanNotes could not create the export.")
+        }
+        .onAppear {
+            prepareAdvancedExportIfNeeded()
+        }
+        .onDisappear {
+            exportTask?.cancel()
+        }
+        .overlay {
+            if isExporting {
+                BeanNotesProgressOverlay(
+                    title: "Exporting",
+                    message: exportProgressMessage,
+                    progress: exportProgress,
+                    cancel: cancelExport
+                )
             }
-            .onAppear {
-                prepareAdvancedExportsIfNeeded()
-            }
-            .overlay {
-                if isExporting {
-                    BeanNotesProgressOverlay(
-                        title: "Exporting",
-                        message: exportProgressMessage,
-                        progress: exportProgress,
-                        cancel: cancelExport
+        }
+    }
+
+    private var exportMenu: some View {
+        List {
+            if beanNotesTheme.supportsFriendlyVisits {
+                Section {
+                    ThemeHintView(
+                        theme: beanNotesTheme,
+                        message: beanNotesTheme.mascotExportHint
                     )
                 }
             }
+
+            Section("Export") {
+                NavigationLink(value: ExportRoute.standard(.currentPage)) {
+                    Label("Current Page", systemImage: "doc")
+                }
+                .accessibilityIdentifier("export.scope.currentPage")
+
+                NavigationLink(value: ExportRoute.standard(.allPages)) {
+                    Label("All Pages", systemImage: "doc.on.doc")
+                }
+                .accessibilityIdentifier("export.scope.allPages")
+
+                NavigationLink(value: ExportRoute.advanced) {
+                    Label("Advanced Export", systemImage: "slider.horizontal.3")
+                }
+                .accessibilityIdentifier("export.advanced")
+            }
+
+            if !pageOriginalAttachments.isEmpty {
+                Section("Current Page Originals") {
+                    ForEach(pageOriginalAttachments) { attachment in
+                        Button {
+                            shareOriginals([attachment])
+                        } label: {
+                            Label(originalLabel(for: attachment), systemImage: icon(for: attachment))
+                        }
+                    }
+                }
+            }
+
+            if noteOriginalAttachments.count > pageOriginalAttachments.count {
+                Section("All Original Files") {
+                    Button {
+                        shareOriginals(noteOriginalAttachments)
+                    } label: {
+                        Label("Share All Originals", systemImage: "doc.on.doc")
+                    }
+                }
+            }
+        }
+        .navigationTitle("Export")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            doneToolbar
         }
     }
 
-    private func exportCurrentPage(_ format: ExportFormat) {
-        exportItems(cleanupGeneratedFilesOnCancel: true) {
-            [try await service.exportPageForSharing(
-                page,
-                format: format,
-                options: exportOptions,
-                progress: $0
-            )]
-        }
-    }
-
-    private func exportWholeNote(_ format: ExportFormat) {
-        exportItems(cleanupGeneratedFilesOnCancel: true) {
-            try await service.exportNoteForSharing(
-                note,
-                format: format,
-                options: exportOptions,
-                progress: $0
+    private func standardExportPage(scope: ExportScope) -> some View {
+        List {
+            formatSection(selection: $standardFormat, scope: scope)
+            destinationSection(
+                scope: scope,
+                format: standardFormat,
+                options: .standard
             )
         }
+        .navigationTitle(scope.navigationTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            doneToolbar
+        }
     }
 
-    private var advancedExportsSection: some View {
-        Section {
-            DisclosureGroup(isExpanded: $isAdvancedExportsExpanded) {
-                VStack(alignment: .leading, spacing: 18) {
-                    Picker("Page Background", selection: $pageBackgroundMode) {
-                        ForEach(ExportPageBackgroundMode.allCases) { mode in
-                            Text(mode.label).tag(mode)
-                        }
+    private var advancedExportPage: some View {
+        List {
+            Section("Pages") {
+                Picker("Pages", selection: $advancedScope) {
+                    ForEach(ExportScope.allCases) { scope in
+                        Text(scope.label).tag(scope)
                     }
-                    .accessibilityIdentifier("export.pageBackground")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityLabel("Pages to export")
+                .accessibilityIdentifier("export.advanced.scope")
+            }
 
-                    if pageBackgroundMode == .custom {
-                        NoteBackgroundPickerView(
-                            styleRaw: $customBackgroundStyleRaw,
-                            colorHex: $customBackgroundColorHex,
-                            artworkVisibilityOverride: includesThemeArtwork
-                        )
+            formatSection(selection: $advancedFormat, scope: advancedScope)
+
+            Section("Page Appearance") {
+                Picker("Page Background", selection: $pageBackgroundMode) {
+                    ForEach(ExportPageBackgroundMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
                     }
+                }
+                .accessibilityIdentifier("export.pageBackground")
 
-                    if beanNotesTheme.supportsFriendlyVisits {
-                        Toggle(themeArtworkLabel, isOn: includesThemeArtworkBinding)
-                            .disabled(pageBackgroundMode == .none)
-                            .accessibilityIdentifier("export.themeArtwork")
-                    }
+                if pageBackgroundMode == .custom {
+                    NoteBackgroundPickerView(
+                        styleRaw: $customBackgroundStyleRaw,
+                        colorHex: $customBackgroundColorHex,
+                        artworkVisibilityOverride: includesThemeArtwork
+                    )
+                }
 
-                    if pageBackgroundMode == .none {
-                        Text("PNG exports keep the page background transparent. PDF and JPEG exports use white where transparency is unavailable.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                if beanNotesTheme.supportsFriendlyVisits {
+                    Toggle(themeArtworkLabel, isOn: includesThemeArtworkBinding)
+                        .disabled(pageBackgroundMode == .none)
+                        .accessibilityIdentifier("export.themeArtwork")
+                }
 
-                    Divider()
-
-                    Picker("PDF Quality", selection: $pdfQuality) {
-                        ForEach(ExportPDFQuality.allCases) { quality in
-                            Text(quality.label).tag(quality)
-                        }
-                    }
-                    .accessibilityIdentifier("export.pdfQuality")
-
-                    Picker("Image Resolution", selection: $imageResolution) {
-                        ForEach(ExportImageResolution.allCases) { resolution in
-                            Text(resolution.label).tag(resolution)
-                        }
-                    }
-                    .accessibilityIdentifier("export.imageResolution")
-
-                    Picker("JPEG Quality", selection: $jpegQuality) {
-                        ForEach(ExportJPEGQuality.allCases) { quality in
-                            Text(quality.label).tag(quality)
-                        }
-                    }
-                    .accessibilityIdentifier("export.jpegQuality")
-
-                    Text("Lower PDF quality, image resolution, or JPEG quality creates smaller files. PNG ignores the JPEG quality setting.")
+                if pageBackgroundMode == .none {
+                    Text("PNG keeps the page background transparent. PDF and JPEG use white where transparency is unavailable.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    Button("Reset Advanced Options", action: resetAdvancedExports)
-                        .accessibilityIdentifier("export.resetAdvanced")
                 }
-                .padding(.top, 10)
-            } label: {
-                Label("Advanced Exports", systemImage: "slider.horizontal.3")
-                    .font(.body.weight(.semibold))
             }
-            .accessibilityIdentifier("export.advanced")
+
+            qualitySection
+
+            Section {
+                Button("Reset Advanced Options", action: resetAdvancedExport)
+                    .accessibilityIdentifier("export.resetAdvanced")
+            }
+
+            destinationSection(
+                scope: advancedScope,
+                format: advancedFormat,
+                options: advancedExportOptions
+            )
         }
+        .navigationTitle("Advanced Export")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            doneToolbar
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var doneToolbar: some ToolbarContent {
+        ToolbarItem(placement: .confirmationAction) {
+            Button("Done") {
+                dismiss()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func formatSection(selection: Binding<ExportFormat>, scope: ExportScope) -> some View {
+        Section {
+            ForEach(ExportFormat.allCases) { format in
+                Button {
+                    selection.wrappedValue = format
+                } label: {
+                    HStack {
+                        Label(format.label, systemImage: icon(for: format))
+                        Spacer()
+                        if selection.wrappedValue == format {
+                            Image(systemName: "checkmark")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.tint)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(selection.wrappedValue == format ? .isSelected : [])
+                .accessibilityIdentifier("export.format.\(format.rawValue)")
+            }
+        } header: {
+            Text("File Format")
+        } footer: {
+            if scope == .allPages {
+                Text("PDF combines all pages into one file. PNG and JPEG create one image per page.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var qualitySection: some View {
+        switch advancedFormat {
+        case .pdf:
+            Section("PDF Quality") {
+                Picker("Quality", selection: $pdfQuality) {
+                    ForEach(ExportPDFQuality.allCases) { quality in
+                        Text(quality.label).tag(quality)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("export.pdfQuality")
+            }
+        case .png:
+            imageResolutionSection
+        case .jpeg:
+            imageResolutionSection
+            Section("JPEG Quality") {
+                Picker("Quality", selection: $jpegQuality) {
+                    ForEach(ExportJPEGQuality.allCases) { quality in
+                        Text(quality.label).tag(quality)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("export.jpegQuality")
+            }
+        }
+    }
+
+    private var imageResolutionSection: some View {
+        Section("Image Resolution") {
+            Picker("Resolution", selection: $imageResolution) {
+                ForEach(ExportImageResolution.allCases) { resolution in
+                    Text(resolution.label).tag(resolution)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("export.imageResolution")
+        }
+    }
+
+    private func destinationSection(
+        scope: ExportScope,
+        format: ExportFormat,
+        options: ExportOptions
+    ) -> some View {
+        Section {
+            Button {
+                export(scope: scope, format: format, options: options, destination: .share)
+            } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("export.destination.share")
+
+            Button {
+                export(scope: scope, format: format, options: options, destination: .saveToFiles)
+            } label: {
+                Label("Save to Files", systemImage: "folder")
+            }
+            .accessibilityIdentifier("export.destination.files")
+        } header: {
+            Text("Destination")
+        } footer: {
+            Text("Share sends the export to another app or service. Save to Files lets you choose a folder on this device or in iCloud Drive.")
+        }
+        .disabled(isExporting)
     }
 
     private var customPageBackground: NoteBackground {
@@ -238,7 +392,7 @@ struct ExportView: View {
         )
     }
 
-    private var exportOptions: ExportOptions {
+    private var advancedExportOptions: ExportOptions {
         ExportOptions(
             pageBackgroundMode: pageBackgroundMode,
             customPageBackground: customPageBackground,
@@ -272,14 +426,23 @@ struct ExportView: View {
         }
     }
 
-    private func prepareAdvancedExportsIfNeeded() {
-        guard !didPrepareAdvancedExports else { return }
-        didPrepareAdvancedExports = true
+    private var errorAlertIsPresented: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
+    }
+
+    private func prepareAdvancedExportIfNeeded() {
+        guard !didPrepareAdvancedExport else { return }
+        didPrepareAdvancedExport = true
         customBackgroundStyleRaw = page.backgroundStyleRaw
         customBackgroundColorHex = page.backgroundColorHex
     }
 
-    private func resetAdvancedExports() {
+    private func resetAdvancedExport() {
+        advancedScope = .currentPage
+        advancedFormat = .pdf
         pageBackgroundMode = .original
         customBackgroundStyleRaw = page.backgroundStyleRaw
         customBackgroundColorHex = page.backgroundColorHex
@@ -289,8 +452,34 @@ struct ExportView: View {
         jpegQuality = .best
     }
 
+    private func export(
+        scope: ExportScope,
+        format: ExportFormat,
+        options: ExportOptions,
+        destination: ExportDestination
+    ) {
+        exportItems(destination: destination, cleanupGeneratedFiles: true) { progress in
+            switch scope {
+            case .currentPage:
+                return [try await service.exportPageForSharing(
+                    page,
+                    format: format,
+                    options: options,
+                    progress: progress
+                )]
+            case .allPages:
+                return try await service.exportNoteForSharing(
+                    note,
+                    format: format,
+                    options: options,
+                    progress: progress
+                )
+            }
+        }
+    }
+
     private func shareOriginals(_ attachments: [Attachment]) {
-        exportItems(cleanupGeneratedFilesOnCancel: false) {
+        exportItems(destination: .share, cleanupGeneratedFiles: false) {
             $0?(nil, "Preparing original files...")
             await Task.yield()
             return try attachments.map { try service.originalFileURL(for: $0) }
@@ -298,7 +487,8 @@ struct ExportView: View {
     }
 
     private func exportItems(
-        cleanupGeneratedFilesOnCancel: Bool,
+        destination: ExportDestination,
+        cleanupGeneratedFiles: Bool,
         _ makeURLs: @escaping (ImportExportProgressHandler?) async throws -> [URL]
     ) {
         guard !isExporting else { return }
@@ -327,36 +517,49 @@ struct ExportView: View {
                 try Task.checkCancellation()
                 guard !urls.isEmpty else { throw ImportExportError.exportFailed }
                 exportProgress = 1
-                exportProgressMessage = "Opening share sheet..."
+                exportProgressMessage = destination.progressMessage
                 await Task.yield()
                 try Task.checkCancellation()
-                sharePayload = ExportSharePayload(urls: urls)
+
+                switch destination {
+                case .share:
+                    sharePayload = ExportSharePayload(
+                        urls: urls,
+                        cleanupWhenFinished: cleanupGeneratedFiles
+                    )
+                case .saveToFiles:
+                    savePayload = ExportSavePayload(urls: urls)
+                }
                 errorMessage = nil
             } catch is CancellationError {
-                if cleanupGeneratedFilesOnCancel {
+                if cleanupGeneratedFiles {
                     service.removeTemporaryExportFiles(exportedURLs)
                 }
                 errorMessage = nil
             } catch {
+                if cleanupGeneratedFiles {
+                    service.removeTemporaryExportFiles(exportedURLs)
+                }
                 errorMessage = error.localizedDescription
             }
         }
     }
 
+    private func finishPresentation(_ payload: ExportSharePayload) {
+        if payload.cleanupWhenFinished {
+            service.removeTemporaryExportFiles(payload.urls)
+        }
+        sharePayload = nil
+    }
+
+    private func finishPresentation(_ payload: ExportSavePayload) {
+        service.removeTemporaryExportFiles(payload.urls)
+        savePayload = nil
+    }
+
     private func cancelExport() {
         exportProgressMessage = "Canceling export..."
         exportTask?.cancel()
-    }
-
-    private func noteExportLabel(for format: ExportFormat) -> String {
-        switch format {
-        case .pdf:
-            "PDF"
-        case .png:
-            "PNG Pages"
-        case .jpeg:
-            "JPEG Pages"
-        }
     }
 
     private func originalLabel(for attachment: Attachment) -> String {
@@ -399,14 +602,66 @@ struct ExportView: View {
 struct ExportSharePayload: Identifiable {
     let id = UUID()
     var urls: [URL]
+    var cleanupWhenFinished = false
+}
+
+private struct ExportSavePayload: Identifiable {
+    let id = UUID()
+    var urls: [URL]
 }
 
 struct ActivityView: UIViewControllerRepresentable {
     var activityItems: [URL]
+    var completion: (() -> Void)? = nil
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            DispatchQueue.main.async {
+                completion?()
+            }
+        }
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private struct ExportDocumentPicker: UIViewControllerRepresentable {
+    var urls: [URL]
+    var completion: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(completion: completion)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let controller = UIDocumentPickerViewController(forExporting: urls, asCopy: true)
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private var completion: (() -> Void)?
+
+        init(completion: @escaping () -> Void) {
+            self.completion = completion
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            finish()
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            finish()
+        }
+
+        private func finish() {
+            guard let completion else { return }
+            self.completion = nil
+            completion()
+        }
+    }
 }

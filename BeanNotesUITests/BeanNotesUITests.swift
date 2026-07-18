@@ -71,6 +71,31 @@ final class BeanNotesUITests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Export"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["export.scope.currentPage"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["export.scope.allPages"].exists)
+        XCTAssertTrue(app.buttons["export.advanced"].exists)
+
+        app.buttons["export.scope.currentPage"].tap()
+        XCTAssertTrue(app.navigationBars["Export Current Page"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["export.format.pdf"].exists)
+        XCTAssertTrue(app.buttons["export.format.png"].exists)
+        XCTAssertTrue(app.buttons["export.format.jpeg"].exists)
+        XCTAssertTrue(app.buttons["export.destination.share"].exists)
+        XCTAssertTrue(app.buttons["export.destination.files"].exists)
+
+        app.buttons["export.destination.files"].tap()
+        XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 8))
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Export Current Page"].waitForExistence(timeout: 8))
+
+        app.navigationBars["Export Current Page"].buttons["Export"].tap()
+        XCTAssertTrue(app.navigationBars["Export"].waitForExistence(timeout: 8))
+        app.buttons["export.advanced"].tap()
+        XCTAssertTrue(app.navigationBars["Advanced Export"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.segmentedControls["export.advanced.scope"].exists)
+        XCTAssertTrue(app.buttons["export.destination.share"].exists)
+        XCTAssertTrue(app.buttons["export.destination.files"].exists)
     }
 
     @MainActor
