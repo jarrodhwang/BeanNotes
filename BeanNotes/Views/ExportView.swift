@@ -230,6 +230,8 @@ struct ExportView: View {
             "doc.richtext"
         case .image:
             "photo"
+        case .codeSnippet:
+            "curlybraces.square"
         case .docx:
             "doc.text"
         case .csv:

@@ -95,6 +95,18 @@ final class NotePage {
             .sorted { $0.createdAt < $1.createdAt }
     }
 
+    /// Page elements rendered as positioned images. Code snippets retain their
+    /// editable source in SwiftData and use a generated PNG only as the canvas,
+    /// thumbnail, capture, and export representation.
+    var visualAttachments: [Attachment] {
+        attachments
+            .filter {
+                ($0.kind == .image || $0.kind == .codeSnippet)
+                    && $0.isVisibleInCurrentDocumentVersion
+            }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
     var lockedImageAttachments: [Attachment] {
         imageAttachments.filter(\.isLocked)
     }

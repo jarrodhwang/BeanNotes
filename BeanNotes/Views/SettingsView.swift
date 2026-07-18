@@ -30,6 +30,16 @@ struct SettingsView: View {
     private var paletteColorCount = DrawingPaletteConfiguration.defaultColorCountForCurrentDevice
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
+    @AppStorage(CodeSnippetPreferences.defaultLanguageKey)
+    private var codeSnippetLanguageRaw = CodeSnippetPreferences.defaultLanguage.rawValue
+    @AppStorage(CodeSnippetPreferences.defaultFontKey)
+    private var codeSnippetFontRaw = CodeSnippetPreferences.defaultFont.rawValue
+    @AppStorage(CodeSnippetPreferences.defaultFontSizeKey)
+    private var codeSnippetFontSize = CodeSnippetPreferences.defaultFontSize
+    @AppStorage(CodeSnippetPreferences.defaultBackgroundStyleKey)
+    private var codeSnippetBackgroundRaw = CodeSnippetPreferences.defaultBackgroundStyle.rawValue
+    @AppStorage(CodeSnippetPreferences.handwritingByDefaultKey)
+    private var codeSnippetHandwritingByDefault = CodeSnippetPreferences.defaultHandwritingByDefault
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(PaperSize.storageKey) private var paperSizeRaw = PaperSize.defaultPaperSize.rawValue
     @AppStorage(CustomPaperSize.widthStorageKey) private var customPaperWidth = Double(CustomPaperSize.defaultDimensions.width)
@@ -92,6 +102,7 @@ struct SettingsView: View {
             NoteBackground.migrateLegacyThemeControlledDefaultsIfNeeded()
             migrateLegacyPaginationSettingIfNeeded()
             restorePaletteColorCount()
+            CodeSnippetPreferences.normalizePersistedValues()
         }
         .task {
             await refreshStorageUsage()
@@ -101,6 +112,12 @@ struct SettingsView: View {
         }
         .onChange(of: paletteColorCount) { _, _ in
             normalizePaletteColorCountIfNeeded()
+        }
+        .onChange(of: codeSnippetFontSize) { _, newValue in
+            let normalized = CodeSnippetPreferences.normalizedFontSize(newValue)
+            if normalized != newValue {
+                codeSnippetFontSize = normalized
+            }
         }
         .confirmationDialog(
             "Clean up exports older than \(oldExportAgeDays) days?",
@@ -321,6 +338,45 @@ struct SettingsView: View {
                         Text(action.label).tag(action.rawValue)
                     }
                 }
+            }
+
+            Section("Code Snippets") {
+                Picker("Default Language", selection: $codeSnippetLanguageRaw) {
+                    ForEach(CodeSnippetLanguage.allCases) { language in
+                        Text(language.label).tag(language.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.codeSnippetLanguage")
+
+                Picker("Default Font", selection: $codeSnippetFontRaw) {
+                    ForEach(CodeSnippetFontChoice.allCases) { font in
+                        Text(font.label).tag(font.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.codeSnippetFont")
+
+                Stepper(
+                    value: $codeSnippetFontSize,
+                    in: CodeSnippetPreferences.supportedFontSize,
+                    step: 1
+                ) {
+                    LabeledContent("Default Font Size", value: "\(Int(codeSnippetFontSize.rounded())) pt")
+                }
+                .accessibilityIdentifier("settings.codeSnippetFontSize")
+
+                Picker("Default Background", selection: $codeSnippetBackgroundRaw) {
+                    ForEach(CodeSnippetBackgroundStyle.allCases) { style in
+                        Text(style.label).tag(style.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.codeSnippetBackground")
+
+                Toggle("Handwriting to Code by Default", isOn: $codeSnippetHandwritingByDefault)
+                    .accessibilityIdentifier("settings.codeSnippetHandwriting")
+
+                Text("New snippets use these defaults. App Appearance captures the current light or dark tint whenever a preview is saved. The gear button changes the current code box. Apple Pencil handwriting is converted locally and remains available if recognition fails.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .scrollContentBackground(.hidden)

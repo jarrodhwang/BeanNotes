@@ -1440,7 +1440,7 @@ struct BeanNotesTests {
 
         let manifest = LibraryBackupManifest(folders: [folder], createdAt: createdAt)
 
-        #expect(manifest.formatVersion == 3)
+        #expect(manifest.formatVersion == 4)
         #expect(manifest.folderCount == 1)
         #expect(manifest.noteCount == 1)
         #expect(manifest.pageCount == 1)
@@ -2339,7 +2339,7 @@ struct BeanNotesTests {
         let deleteButton = try #require(overlay.subviews
             .compactMap { $0 as? UIButton }
             .first { $0.accessibilityLabel == "Delete Behind" })
-        #expect(overlay.subviews.compactMap { $0 as? UIButton }.count == 1)
+        #expect(overlay.subviews.compactMap { $0 as? UIButton }.filter { !$0.isHidden }.count == 1)
         #expect(!overlay.bounds.intersects(deleteButton.frame))
         #expect(overlay.hitTest(deleteButton.center, with: nil) === deleteButton)
         #expect(deleteButton.accessibilityHint == "Removes the image after confirmation")
@@ -3142,6 +3142,238 @@ struct BeanNotesTests {
         #expect(compactInkSize.height > regularInkSize.height)
     }
 
+    @Test func codeSnippetLanguageCatalogIncludesEverySupportedLanguage() {
+        let expectedRawValues: Set<String> = [
+            "cpp", "c", "h", "asm", "java", "python", "ruby", "matlab",
+            "csharp", "javascript", "html", "css", "xml", "md", "typescript",
+            "visualBasic", "ini"
+        ]
+
+        #expect(Set(CodeSnippetLanguage.allCases.map(\.rawValue)) == expectedRawValues)
+        #expect(CodeSnippetLanguage.cpp.label == "C++")
+        #expect(CodeSnippetLanguage.cSharp.label == "C#")
+        #expect(CodeSnippetLanguage.visualBasic.label == "Visual Basic")
+        #expect(Set(CodeSnippetFontChoice.allCases.map(\.rawValue)) == ["systemMono", "menlo", "courier"])
+    }
+
+    @Test func codeSnippetPreferencesDefaultAndRepairInvalidValues() throws {
+        let suiteName = "BeanNotesCodeSnippetPreferences-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let initial = CodeSnippetPreferences.defaultDraft(in: defaults)
+        #expect(initial.language == .python)
+        #expect(initial.font == .systemMono)
+        #expect(initial.fontSize == 16)
+        #expect(initial.backgroundStyle == .automatic)
+        #expect(initial.preferredInputMode == .handwriting)
+
+        defaults.set("unknown", forKey: CodeSnippetPreferences.defaultLanguageKey)
+        defaults.set("missing-font", forKey: CodeSnippetPreferences.defaultFontKey)
+        defaults.set(Double.infinity, forKey: CodeSnippetPreferences.defaultFontSizeKey)
+        defaults.set("neon", forKey: CodeSnippetPreferences.defaultBackgroundStyleKey)
+        defaults.set(false, forKey: CodeSnippetPreferences.handwritingByDefaultKey)
+        CodeSnippetPreferences.normalizePersistedValues(in: defaults)
+
+        let repaired = CodeSnippetPreferences.defaultDraft(in: defaults)
+        #expect(repaired.language == .python)
+        #expect(repaired.font == .systemMono)
+        #expect(repaired.fontSize == 16)
+        #expect(repaired.backgroundStyle == .automatic)
+        #expect(repaired.preferredInputMode == .text)
+        #expect(defaults.string(forKey: CodeSnippetPreferences.defaultLanguageKey) == "python")
+
+        defaults.set(100, forKey: CodeSnippetPreferences.defaultFontSizeKey)
+        #expect(CodeSnippetPreferences.defaultDraft(in: defaults).fontSize == 32)
+    }
+
+    @Test func codeSyntaxHighlightingPreservesSourceAndBoundsLargeInput() {
+        let source = "let total = 42\n// keep indentation\n    return total"
+        let font = CodeSnippetFontChoice.systemMono.uiFont(size: 16)
+        let highlighted = CodeSyntaxHighlighter.attributedString(
+            for: source,
+            language: .javaScript,
+            font: font,
+            foregroundColor: .label
+        )
+
+        #expect(highlighted.string == source)
+        #expect(highlighted.length == (source as NSString).length)
+        let keywordRange = (source as NSString).range(of: "let")
+        let keywordColor = highlighted.attribute(.foregroundColor, at: keywordRange.location, effectiveRange: nil)
+            as? UIColor
+        #expect(keywordColor != UIColor.label)
+
+        let oversized = String(repeating: "x", count: CodeSyntaxHighlighter.maximumHighlightedUTF16Length + 1)
+        let bounded = CodeSyntaxHighlighter.attributedString(
+            for: oversized,
+            language: .python,
+            font: font,
+            foregroundColor: .label
+        )
+        #expect(bounded.string == oversized)
+
+        let urlSource = #"const url = "https://host"; // trailing comment"#
+        let urlHighlight = CodeSyntaxHighlighter.attributedString(
+            for: urlSource,
+            language: .javaScript,
+            font: font,
+            foregroundColor: .label
+        )
+        let urlNSString = urlSource as NSString
+        let stringColor = urlHighlight.attribute(
+            .foregroundColor,
+            at: urlNSString.range(of: "https").location,
+            effectiveRange: nil
+        ) as? UIColor
+        let embeddedSlashColor = urlHighlight.attribute(
+            .foregroundColor,
+            at: urlNSString.range(of: "//host").location,
+            effectiveRange: nil
+        ) as? UIColor
+        let trailingCommentColor = urlHighlight.attribute(
+            .foregroundColor,
+            at: urlNSString.range(of: "trailing").location,
+            effectiveRange: nil
+        ) as? UIColor
+        #expect(embeddedSlashColor == stringColor)
+        #expect(trailingCommentColor != stringColor)
+
+        let assemblySource = "mov eax, 1 ; preserve register"
+        let assemblyHighlight = CodeSyntaxHighlighter.attributedString(
+            for: assemblySource,
+            language: .assembly,
+            font: font,
+            foregroundColor: .label
+        )
+        let assemblyNSString = assemblySource as NSString
+        let semicolonColor = assemblyHighlight.attribute(
+            .foregroundColor,
+            at: assemblyNSString.range(of: ";").location,
+            effectiveRange: nil
+        ) as? UIColor
+        let assemblyCommentColor = assemblyHighlight.attribute(
+            .foregroundColor,
+            at: assemblyNSString.range(of: "register").location,
+            effectiveRange: nil
+        ) as? UIColor
+        #expect(semicolonColor == assemblyCommentColor)
+    }
+
+    @Test func codeSnippetSearchProjectionIsBoundedAndUnicodeSafe() {
+        let prefix = String(repeating: "a", count: CodeSnippetSearchIndex.maximumSourceUTF16Length - 1)
+        let source = prefix + "👩🏽‍💻" + String(repeating: "secret", count: 10_000)
+        let projection = CodeSnippetSearchIndex.sourceProjection(source)
+
+        #expect((projection as NSString).length <= CodeSnippetSearchIndex.maximumSourceUTF16Length)
+        #expect(source.hasPrefix(projection))
+        #expect(!projection.contains("secret"))
+    }
+
+    @Test func codeSnippetAttachmentIsVisualSearchableAndBackedUp() throws {
+        let context = try makeInMemoryModelContext()
+        let note = NoteDocument(title: "Algorithms")
+        let page = NotePage(pageOrder: 0)
+        let snippet = Attachment(
+            kind: .codeSnippet,
+            displayName: "Python Code",
+            originalFileName: "python-code.png",
+            storedFileName: "Imports/python-code.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            rendersBehindDrawing: false,
+            codeSnippetText: "def binary_search(items):\n    return items",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.python.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.menlo.rawValue,
+            codeSnippetFontSize: 17,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.dark.rawValue
+        )
+        note.pages.append(page)
+        page.attachments.append(snippet)
+        context.insert(note)
+        try context.save()
+
+        #expect(page.imageAttachments.isEmpty)
+        #expect(page.visualAttachments.map(\.id) == [snippet.id])
+        #expect(NotePageRenderSnapshot(page: page).imageAttachments.count == 1)
+
+        page.searchableText = "handwriting"
+        note.rebuildSearchableText()
+        #expect(note.matchesSearch("binary_search Menlo") == false)
+        #expect(note.matchesSearch("binary_search Python") == true)
+
+        let folder = NotebookFolder(name: "Computer Science")
+        folder.notes.append(note)
+        let manifest = LibraryBackupManifest(folders: [folder])
+        let snapshot = manifest.folders.first?.notes.first?.pages.first?.attachments.first
+        #expect(manifest.formatVersion == 4)
+        #expect(snapshot?.kindRaw == AttachmentKind.codeSnippet.rawValue)
+        #expect(snapshot?.codeSnippetText == snippet.codeSnippetText)
+        #expect(snapshot?.codeSnippetLanguageRaw == "python")
+        #expect(snapshot?.codeSnippetFontRaw == "menlo")
+        #expect(snapshot?.codeSnippetFontSize == 17)
+        #expect(snapshot?.codeSnippetBackgroundRaw == "dark")
+    }
+
+    @Test func codeSnippetPreviewRendererProducesBoundedPNG() throws {
+        let draft = CodeSnippetDraft(
+            code: "def greet(name):\n    print(f\"Hello {name}\")",
+            language: .python,
+            font: .systemMono,
+            fontSize: 16,
+            backgroundStyle: .dark,
+            preferredInputMode: .text
+        )
+        let data = try #require(CodeSnippetPreviewRenderer.pngData(for: draft))
+        let image = try #require(UIImage(data: data))
+
+        #expect(!data.isEmpty)
+        #expect(image.cgImage?.width == Int(CodeSnippetPreviewRenderer.defaultLogicalSize.width * 2))
+        #expect(image.cgImage?.height == Int(CodeSnippetPreviewRenderer.defaultLogicalSize.height * 2))
+    }
+
+    @Test @MainActor func codeSnippetEditingOverlayExposesConfigurationControl() throws {
+        let attachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "Python Code",
+            originalFileName: "python-code.png",
+            storedFileName: "Imports/python-code.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            rendersBehindDrawing: false,
+            codeSnippetText: "print('hello')",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.python.rawValue
+        )
+        let overlay = DrawingCanvasView.AttachmentEditingOverlayView()
+        var didRequestEditing = false
+        overlay.configure(
+            attachment: attachment,
+            pageSize: CGSize(width: 612, height: 792),
+            frameChanged: { _ in },
+            changeCommitted: {},
+            deleteRequested: {},
+            editRequested: { didRequestEditing = true },
+            dismiss: {}
+        )
+        overlay.layoutIfNeeded()
+
+        let visibleControls = overlay.subviews
+            .compactMap { $0 as? UIButton }
+            .filter { !$0.isHidden }
+        let editButton = try #require(
+            visibleControls.first { $0.accessibilityLabel == "Edit code snippet" }
+        )
+        let deleteButton = try #require(
+            visibleControls.first { $0.accessibilityLabel == "Delete Python Code" }
+        )
+
+        #expect(visibleControls.count == 2)
+        #expect(overlay.hitTest(editButton.center, with: nil) === editButton)
+        #expect(deleteButton.accessibilityHint == "Removes the code snippet after confirmation")
+        editButton.sendActions(for: .touchUpInside)
+        #expect(didRequestEditing)
+    }
+
     @Test func penPaletteDragClampsInsideEditorBounds() {
         let availableSize = CGSize(width: 744, height: 1_024)
         let paletteSize = CGSize(width: 288, height: 126)
@@ -3779,7 +4011,7 @@ struct BeanNotesTests {
         #expect(editingHostIndex > continuousIndex)
 
         overlay.layoutIfNeeded()
-        let controls = overlay.subviews.compactMap { $0 as? UIButton }
+        let controls = overlay.subviews.compactMap { $0 as? UIButton }.filter { !$0.isHidden }
         #expect(controls.count == 1)
         for control in controls {
             let controlCenter = control.convert(
@@ -7718,10 +7950,10 @@ struct BeanNotesTests {
         #expect(beanFileName != beanArtworkFileName)
         #expect(blueberryFileName != blueberryArtworkFileName)
         #expect(beanFileName != blueberryFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-v10.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-v10.jpg"))
-        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-v10.jpg"))
-        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-v10.jpg"))
+        #expect(beanFileName.hasSuffix("-bean-off-v11.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-v11.jpg"))
+        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-v11.jpg"))
+        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-v11.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,

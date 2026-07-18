@@ -94,7 +94,7 @@ struct NotePageRenderSnapshot: Sendable {
         self.height = Double(pageSize.height)
         self.themeRaw = theme.rawValue
         self.showsBeanArtwork = showsBeanArtwork ?? NoteBackground.showsArtwork(for: theme)
-        self.imageAttachments = page.imageAttachments.map {
+        self.imageAttachments = page.visualAttachments.map {
             NoteImageAttachmentRenderSnapshot(attachment: $0, pageSize: pageSize)
         }
     }
@@ -117,7 +117,7 @@ struct ThumbnailService {
         }
     }
 
-    nonisolated private static let thumbnailRenderVersion = 10
+    nonisolated private static let thumbnailRenderVersion = 11
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1

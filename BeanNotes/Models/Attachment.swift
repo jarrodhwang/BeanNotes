@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 enum AttachmentKind: String, Codable, CaseIterable, Sendable {
     case pdf
     case image
+    case codeSnippet
     case docx
     case csv
     case presentation
@@ -22,6 +23,8 @@ enum AttachmentKind: String, Codable, CaseIterable, Sendable {
             "PDF"
         case .image:
             "Image"
+        case .codeSnippet:
+            "Code Snippet"
         case .docx:
             "Word"
         case .csv:
@@ -345,6 +348,14 @@ final class Attachment {
     /// Optional so existing SwiftData stores migrate without inventing version state.
     var documentVersionIsCurrent: Bool?
     var documentVersionIsLatest: Bool?
+    /// Source and presentation metadata for a rendered code-snippet preview.
+    /// These remain optional so existing SwiftData stores migrate without
+    /// manufacturing snippet state for ordinary file attachments.
+    var codeSnippetText: String?
+    var codeSnippetLanguageRaw: String?
+    var codeSnippetFontRaw: String?
+    var codeSnippetFontSize: Double?
+    var codeSnippetBackgroundRaw: String?
     var createdAt: Date
     var updatedAt: Date
     var page: NotePage?
@@ -370,6 +381,11 @@ final class Attachment {
         documentVersionCreatedAt: Date? = nil,
         documentVersionIsCurrent: Bool? = nil,
         documentVersionIsLatest: Bool? = nil,
+        codeSnippetText: String? = nil,
+        codeSnippetLanguageRaw: String? = nil,
+        codeSnippetFontRaw: String? = nil,
+        codeSnippetFontSize: Double? = nil,
+        codeSnippetBackgroundRaw: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         page: NotePage? = nil
@@ -401,6 +417,11 @@ final class Attachment {
         self.documentVersionCreatedAt = documentVersionCreatedAt
         self.documentVersionIsCurrent = documentVersionIsCurrent
         self.documentVersionIsLatest = documentVersionIsLatest
+        self.codeSnippetText = codeSnippetText
+        self.codeSnippetLanguageRaw = codeSnippetLanguageRaw
+        self.codeSnippetFontRaw = codeSnippetFontRaw
+        self.codeSnippetFontSize = codeSnippetFontSize
+        self.codeSnippetBackgroundRaw = codeSnippetBackgroundRaw
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.page = page
@@ -417,6 +438,10 @@ final class Attachment {
 
     var belongsToDocumentVersion: Bool {
         documentVersionID != nil
+    }
+
+    var isCodeSnippet: Bool {
+        kind == .codeSnippet
     }
 
     /// Non-versioned attachments are always visible. Version-managed attachments

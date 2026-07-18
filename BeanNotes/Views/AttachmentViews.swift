@@ -96,6 +96,7 @@ struct AttachmentListView: View {
     var deleteAttachment: (Attachment) -> Void
     var toggleLock: (Attachment) -> Void
     var setDrawingLayer: (Attachment, Bool) -> Void
+    var editCodeSnippet: (Attachment) -> Void
 
     @State private var renamingAttachment: Attachment?
     @State private var renameDraft = ""
@@ -172,6 +173,14 @@ struct AttachmentListView: View {
             .accessibilityLabel("Preview")
 
             Menu {
+                if attachment.isCodeSnippet {
+                    Button {
+                        editCodeSnippet(attachment)
+                    } label: {
+                        Label("Edit Code Snippet", systemImage: "curlybraces.square")
+                    }
+                }
+
                 Button {
                     renameDraft = attachment.displayName
                     renamingAttachment = attachment
@@ -222,6 +231,11 @@ struct AttachmentListView: View {
 
         if attachment.kind == .image {
             parts.append(attachment.rendersBehindDrawing ? "Behind drawing" : "Above drawing")
+        } else if attachment.isCodeSnippet,
+                  let language = CodeSnippetLanguage(
+                    rawValue: attachment.codeSnippetLanguageRaw ?? ""
+                  ) {
+            parts.append(language.label)
         }
 
         return parts.joined(separator: " · ")
@@ -233,6 +247,8 @@ struct AttachmentListView: View {
             "doc.richtext"
         case .image:
             "photo"
+        case .codeSnippet:
+            "curlybraces.square"
         case .docx:
             "doc.text"
         case .csv:

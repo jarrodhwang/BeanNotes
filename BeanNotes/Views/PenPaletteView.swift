@@ -13,6 +13,7 @@ struct PenPaletteView: View {
     var strokeZoomBehavior: DrawingStrokeZoomBehavior = .pageWidth
     var isPastingImage = false
     var pasteImage: ([NSItemProvider]) -> Void = { _ in }
+    var createCodeSnippet: () -> Void = {}
 
     @AppStorage(PenPaletteLayoutMetrics.isCollapsedStorageKey) private var isCollapsed = false
     @AppStorage(PenPaletteLayoutMetrics.committedOffsetStorageKey) private var committedOffsetRaw = ""
@@ -191,6 +192,22 @@ struct PenPaletteView: View {
             ForEach(DrawingTool.allCases) { tool in
                 toolButton(tool)
             }
+
+            Button {
+                performSelectionFeedback()
+                createCodeSnippet()
+            } label: {
+                Image(systemName: "curlybraces.square")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.indigo)
+                    .frame(width: 38, height: 38)
+                    .background(Color.indigo.opacity(0.12), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .palettePrimaryHitTarget()
+            .accessibilityLabel("Add code snippet")
+            .accessibilityHint("Opens an editor for highlighted code, pasted text, or Apple Pencil handwriting")
+            .accessibilityIdentifier("penPalette.codeSnippet")
 
             if clipboardContainsImage {
                 PasteButton(supportedContentTypes: ImagePasteService.supportedContentTypes) { itemProviders in
@@ -1121,12 +1138,12 @@ struct PenPaletteLayoutMetrics {
 
         if isCompact {
             return CGSize(
-                width: showsInkControls ? max(270, 372 - widthReduction) : 270,
+                width: showsInkControls ? max(308, 410 - widthReduction) : 308,
                 height: showsInkControls ? 118 : 58
             )
         }
 
-        return CGSize(width: showsInkControls ? 650 - widthReduction : 306, height: 58)
+        return CGSize(width: showsInkControls ? 688 - widthReduction : 344, height: 58)
     }
 
     static func clampedCommittedOffset(

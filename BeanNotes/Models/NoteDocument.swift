@@ -79,7 +79,16 @@ final class NoteDocument {
         searchableText = NoteSearchText.join(
             sortedPages.map(\.searchableText) + sortedPages.flatMap { page in
                 page.attachments.map {
-                    "\($0.displayName) \($0.originalFileName) \($0.kind.displayName)"
+                    let language = CodeSnippetLanguage(
+                        rawValue: $0.codeSnippetLanguageRaw ?? ""
+                    )?.label ?? ""
+                    let source = page.searchIndexUpdatedAt == nil
+                        ? CodeSnippetSearchIndex.sourceProjection($0.codeSnippetText ?? "")
+                        : ""
+                    return NoteSearchText.join([
+                        "\($0.displayName) \($0.originalFileName) \($0.kind.displayName) \(language)",
+                        source
+                    ])
                 }
             }
         )

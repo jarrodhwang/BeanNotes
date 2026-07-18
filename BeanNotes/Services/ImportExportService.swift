@@ -373,7 +373,7 @@ struct ImportExportService {
             await Task.yield()
             try Task.checkCancellation()
             return try await importImageDocumentPage(from: sourceURL, into: note, pageOrder: startOrder, staging: staging)
-        case .docx, .csv, .presentation, .other:
+        case .codeSnippet, .docx, .csv, .presentation, .other:
             return try await importPreviewableDocumentPage(
                 from: sourceURL,
                 kind: kind,
@@ -474,7 +474,7 @@ struct ImportExportService {
                 staging: staging
             )
             return .image(result)
-        case .docx, .csv, .presentation, .other:
+        case .codeSnippet, .docx, .csv, .presentation, .other:
             throw ImportExportError.unsupportedVersionDocument
         }
     }
@@ -716,7 +716,7 @@ struct ImportExportService {
         AttachmentEditingGeometry.initialImageFrame(
             sourceSize: sourceSize,
             pageSize: page.pageSize,
-            occupiedFrames: page.imageAttachments.map { $0.normalizedFrame(for: page.pageSize) }
+            occupiedFrames: page.visualAttachments.map { $0.normalizedFrame(for: page.pageSize) }
         )
     }
 

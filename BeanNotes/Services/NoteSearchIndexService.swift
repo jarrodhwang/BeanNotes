@@ -97,7 +97,13 @@ struct NoteSearchIndexService {
     private static func attachmentMetadata(for page: NotePage) -> String {
         NoteSearchText.join(
             page.attachments.map {
-                "\($0.displayName) \($0.originalFileName) \($0.kind.displayName)"
+                let language = CodeSnippetLanguage(
+                    rawValue: $0.codeSnippetLanguageRaw ?? ""
+                )?.label ?? ""
+                return NoteSearchText.join([
+                    "\($0.displayName) \($0.originalFileName) \($0.kind.displayName) \(language)",
+                    CodeSnippetSearchIndex.sourceProjection($0.codeSnippetText ?? "")
+                ])
             }
         )
     }

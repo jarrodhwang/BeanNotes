@@ -133,7 +133,7 @@ struct DrawingCanvasConfigurationSignature: Equatable {
                 height: page.normalizedHeight,
                 backgroundStyleRaw: page.backgroundStyleRaw,
                 backgroundColorHex: page.backgroundColorHex,
-                attachments: page.imageAttachments.map { attachment in
+                attachments: page.visualAttachments.map { attachment in
                     let frame = attachment.frame
                     return AttachmentRevision(
                         id: attachment.id,
@@ -187,7 +187,7 @@ enum NotePageContextAction: Equatable {
 @MainActor
 enum DrawingCanvasStaticContentSignature {
     static func signature(for page: NotePage) -> String {
-        let attachments = page.imageAttachments
+        let attachments = page.visualAttachments
             .map(attachmentComponent)
             .joined(separator: "|")
 
@@ -202,17 +202,21 @@ enum DrawingCanvasStaticContentSignature {
         let frame = attachment.frame
         let origin = "\(Int(frame.minX.rounded())),\(Int(frame.minY.rounded()))"
         let size = "\(Int(frame.width.rounded()))x\(Int(frame.height.rounded()))"
-        return [
-            attachment.id.uuidString,
-            attachment.storedFileName,
-            attachment.originalFileName,
-            attachment.vectorSourceStoredFileName ?? "",
-            attachment.vectorSourcePageIndex.map(String.init) ?? "",
-            "\(attachment.isLocked)",
-            "\(attachment.rendersBehindDrawing)",
-            origin,
-            size
-        ].joined(separator: ":")
+        var components: [String] = []
+        components.append(attachment.id.uuidString)
+        components.append(attachment.storedFileName)
+        components.append(attachment.originalFileName)
+        components.append(attachment.vectorSourceStoredFileName ?? "")
+        if let vectorPageIndex = attachment.vectorSourcePageIndex {
+            components.append(String(vectorPageIndex))
+        } else {
+            components.append("")
+        }
+        components.append(String(attachment.isLocked))
+        components.append(String(attachment.rendersBehindDrawing))
+        components.append(origin)
+        components.append(size)
+        return components.joined(separator: ":")
     }
 }
 
@@ -239,6 +243,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var drawingStorage = DrawingStorageService()
     var attachmentChanged: () -> Void
     var deleteAttachment: (Attachment) -> Void
+    var editCodeSnippet: (Attachment) -> Void = { _ in }
     var drawingChanged: (UUID) -> Void
     var captureFailed: (Error) -> Void = { _ in }
     var saveStarted: () -> Void = {}
@@ -1947,6 +1952,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                     deleteAttachment: { [weak coordinator] attachment in
                         coordinator?.requestAttachmentDeletion(attachment)
                     },
+                    editCodeSnippet: { [weak coordinator] attachment in
+                        coordinator?.requestCodeSnippetEditing(attachment)
+                    },
                     canRemovePage: orderedPageIDs.count > 1,
                     drawingEnabled: pageFlowMode != .seamless,
                     seamlessAppearance: pageFlowMode == .seamless,
@@ -3435,6 +3443,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var configurationSignature: String?
         private var attachmentChanged: (() -> Void)?
         private var deleteAttachment: ((Attachment) -> Void)?
+        private var editCodeSnippet: ((Attachment) -> Void)?
         private var pageActionRequested: ((UUID, NotePageContextAction) -> Void)?
         private var pageContextMenuWillOpen: ((UUID) -> Void)?
         private var pageIDForPageAction: ((CGPoint) -> UUID?)?
@@ -3530,6 +3539,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             coordinator: Coordinator,
             attachmentChanged: @escaping () -> Void,
             deleteAttachment: @escaping (Attachment) -> Void,
+            editCodeSnippet: @escaping (Attachment) -> Void = { _ in },
             canRemovePage: Bool = false,
             drawingEnabled: Bool = true,
             seamlessAppearance: Bool = false,
@@ -3556,6 +3566,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 : "Drawing space section \(page.pageOrder + 1)"
             self.attachmentChanged = attachmentChanged
             self.deleteAttachment = deleteAttachment
+            self.editCodeSnippet = editCodeSnippet
             self.canRemovePage = canRemovePage
             self.pageActionRequested = pageActionRequested
             self.pageContextMenuWillOpen = pageContextMenuWillOpen
@@ -3587,7 +3598,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 backgroundView.showsBeanArtwork = showsBeanArtwork
                 backgroundView.pageID = page.id
                 backgroundView.setNeedsDisplay()
-                configureImages(page.imageAttachments, storage: storage, attachmentChanged: attachmentChanged)
+                configureImages(page.visualAttachments, storage: storage, attachmentChanged: attachmentChanged)
                 configurationSignature = signature
             }
 
@@ -3636,6 +3647,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             accessibilityLabel = "Continuous drawing canvas"
             attachmentChanged = nil
             deleteAttachment = nil
+            editCodeSnippet = nil
             self.canRemovePage = canRemovePage
             self.pageActionRequested = pageActionRequested
             self.pageContextMenuWillOpen = pageContextMenuWillOpen
@@ -3740,12 +3752,12 @@ struct DrawingCanvasView: UIViewRepresentable {
                 laidOutPageBounds = pageBounds
             }
 
-            for attachment in page.imageAttachments {
+            for attachment in page.visualAttachments {
                 imageViews[attachment.id]?.frame = displayedFrame(for: attachment)
             }
 
             if let selectedAttachmentID,
-               let selectedAttachment = page.imageAttachments.first(where: { $0.id == selectedAttachmentID }) {
+               let selectedAttachment = page.visualAttachments.first(where: { $0.id == selectedAttachmentID }) {
                 attachmentEditingOverlay?.updateFrame(
                     displayedFrame(for: selectedAttachment),
                     pageSize: page.pageSize
@@ -4291,7 +4303,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func beginEditingAttachment(id: UUID) {
-            guard let attachment = page?.imageAttachments.first(where: { $0.id == id && !$0.isLocked }) else {
+            guard let attachment = page?.visualAttachments.first(where: { $0.id == id && !$0.isLocked }) else {
                 clearAttachmentSelection()
                 return
             }
@@ -4336,6 +4348,13 @@ struct DrawingCanvasView: UIViewRepresentable {
                     self.clearAttachmentSelection()
                     self.deleteAttachment?(attachment)
                 },
+                editRequested: attachment.isCodeSnippet ? { [weak self] in
+                    guard let self,
+                          self.selectedAttachmentID == attachmentID else {
+                        return
+                    }
+                    self.editCodeSnippet?(attachment)
+                } : nil,
                 dismiss: { [weak self] in
                     self?.clearAttachmentSelection()
                 }
@@ -4361,7 +4380,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func topmostEditableAttachment(at point: CGPoint) -> Attachment? {
             guard let page else { return nil }
-            let attachments = page.imageAttachments.filter { !$0.isLocked }
+            let attachments = page.visualAttachments.filter { !$0.isLocked }
             let foreground = attachments.filter { !$0.rendersBehindDrawing }.reversed()
             let background = attachments.filter(\.rendersBehindDrawing).reversed()
 
@@ -5009,6 +5028,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let outerBorderView = UIView()
         private let innerBorderView = UIView()
         private let deleteButton = UIButton(type: .custom)
+        private let editButton = UIButton(type: .custom)
         private var resizeIndicators: [AttachmentResizeHandle: UIView] = [:]
         private weak var attachment: Attachment?
         private var pageSize: CGSize = .zero
@@ -5019,6 +5039,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var frameChanged: ((CGRect) -> Void)?
         private var changeCommitted: (() -> Void)?
         private var deleteRequested: (() -> Void)?
+        private var editRequested: (() -> Void)?
         private var dismiss: (() -> Void)?
         private(set) var editingPanGestureRecognizers: [UIPanGestureRecognizer] = []
         private let resizeHitWidth: CGFloat = 22
@@ -5043,12 +5064,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             frameChanged: @escaping (CGRect) -> Void,
             changeCommitted: @escaping () -> Void,
             deleteRequested: @escaping () -> Void,
+            editRequested: (() -> Void)? = nil,
             dismiss: @escaping () -> Void
         ) {
             self.attachment = attachment
             self.frameChanged = frameChanged
             self.changeCommitted = changeCommitted
             self.deleteRequested = deleteRequested
+            self.editRequested = editRequested
             self.dismiss = dismiss
             if let previewFrame {
                 self.pageSize = pageSize
@@ -5059,8 +5082,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             outerBorderView.accessibilityLabel = "Selected \(attachment.displayName)"
-            outerBorderView.accessibilityHint = "Drag the image to move it, or drag an edge or corner to resize it"
-            outerBorderView.accessibilityCustomActions = [
+            outerBorderView.accessibilityHint = "Drag the item to move it, or drag an edge or corner to resize it"
+            var accessibilityActions = [
                 UIAccessibilityCustomAction(name: "Move left") { [weak self] _ in
                     self?.nudge(by: CGPoint(x: -8, y: 0)) ?? false
                 },
@@ -5078,15 +5101,31 @@ struct DrawingCanvasView: UIViewRepresentable {
                 },
                 UIAccessibilityCustomAction(name: "Decrease size") { [weak self] _ in
                     self?.resize(by: CGPoint(x: -16, y: -16)) ?? false
-                },
+                }
+            ]
+            if editRequested != nil {
+                accessibilityActions.append(
+                    UIAccessibilityCustomAction(name: "Edit code snippet") { [weak self] _ in
+                        self?.editRequested?()
+                        return self?.editRequested != nil
+                    }
+                )
+            }
+            accessibilityActions.append(
                 UIAccessibilityCustomAction(name: "Finish editing") { [weak self] _ in
                     guard let self else { return false }
                     self.dismiss?()
                     return true
                 }
-            ]
+            )
+            outerBorderView.accessibilityCustomActions = accessibilityActions
             deleteButton.accessibilityLabel = "Delete \(attachment.displayName)"
-            deleteButton.accessibilityHint = "Removes the image after confirmation"
+            deleteButton.accessibilityHint = attachment.isCodeSnippet
+                ? "Removes the code snippet after confirmation"
+                : "Removes the image after confirmation"
+            editButton.isHidden = editRequested == nil
+            editButton.accessibilityLabel = "Edit code snippet"
+            editButton.accessibilityHint = "Opens the code, language, font, and background editor"
         }
 
         func updateFrame(_ frame: CGRect, pageSize: CGSize) {
@@ -5133,6 +5172,12 @@ struct DrawingCanvasView: UIViewRepresentable {
                 )
             }
 
+            if deleteButton.frame.minY < 0 || deleteButton.frame.minY >= bounds.maxY {
+                editButton.frame = deleteButton.frame.offsetBy(dx: -controlOffset, dy: 0)
+            } else {
+                editButton.frame = deleteButton.frame.offsetBy(dx: 0, dy: controlOffset)
+            }
+
             for (handle, indicator) in resizeIndicators {
                 let center = resizeIndicatorCenter(for: handle)
                 let isCorner = handle.movesLeftEdge || handle.movesRightEdge
@@ -5158,6 +5203,12 @@ struct DrawingCanvasView: UIViewRepresentable {
                !deleteButton.isHidden,
                deleteButton.alpha > 0.01 {
                 return deleteButton.hitTest(deleteButton.convert(point, from: self), with: event)
+            }
+
+            if editButton.frame.contains(point),
+               !editButton.isHidden,
+               editButton.alpha > 0.01 {
+                return editButton.hitTest(editButton.convert(point, from: self), with: event)
             }
 
             let resizeRegion = bounds.insetBy(dx: -resizeHitWidth, dy: -resizeHitWidth)
@@ -5204,6 +5255,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             deleteButton.addTarget(self, action: #selector(requestDeletion), for: .touchUpInside)
             addSubview(deleteButton)
 
+            configureHandle(
+                editButton,
+                systemImage: "gearshape.fill",
+                backgroundColor: UIColor.systemIndigo.withAlphaComponent(0.94)
+            )
+            editButton.addTarget(self, action: #selector(requestEditing), for: .touchUpInside)
+            addSubview(editButton)
+
             let editingGesture = UIPanGestureRecognizer(target: self, action: #selector(handleEditingPan(_:)))
             editingGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
             editingGesture.maximumNumberOfTouches = 1
@@ -5234,7 +5293,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             shouldReceive touch: UITouch
         ) -> Bool {
             guard let touchedView = touch.view else { return true }
-            return touchedView !== deleteButton && !touchedView.isDescendant(of: deleteButton)
+            return touchedView !== deleteButton
+                && !touchedView.isDescendant(of: deleteButton)
+                && touchedView !== editButton
+                && !touchedView.isDescendant(of: editButton)
         }
 
         func gestureRecognizer(
@@ -5254,6 +5316,10 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         @objc private func requestDeletion() {
             deleteRequested?()
+        }
+
+        @objc private func requestEditing() {
+            editRequested?()
         }
 
         @objc private func handleEditingPan(_ recognizer: UIPanGestureRecognizer) {
@@ -5873,6 +5939,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             let deleteAttachment = parent.deleteAttachment
             dispatchToSwiftUI {
                 deleteAttachment(attachment)
+            }
+        }
+
+        func requestCodeSnippetEditing(_ attachment: Attachment) {
+            guard attachment.isCodeSnippet else { return }
+            let editCodeSnippet = parent.editCodeSnippet
+            dispatchToSwiftUI {
+                editCodeSnippet(attachment)
             }
         }
 

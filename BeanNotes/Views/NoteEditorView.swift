@@ -85,10 +85,22 @@ private enum DocumentVersionImportOutcome {
     case failed
 }
 
+private struct CodeSnippetEditingSession: Identifiable {
+    enum Target {
+        case new(pageID: UUID)
+        case existing(attachmentID: UUID)
+    }
+
+    let id = UUID()
+    var target: Target
+    var draft: CodeSnippetDraft
+}
+
 struct NoteEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.beanNotesTheme) private var beanNotesTheme
+    @Environment(\.colorScheme) private var colorScheme
 
     @Bindable var note: NoteDocument
     @Binding private var isWorkspaceFocusModeEnabled: Bool
@@ -138,6 +150,7 @@ struct NoteEditorView: View {
     @State private var isEditingTitle = false
     @State private var draftTitle = ""
     @State private var attachmentPendingDeletion: Attachment?
+    @State private var codeSnippetEditingSession: CodeSnippetEditingSession?
     @State private var pagePendingDeletion: NotePage?
     @State private var pageUndoToast: PageUndoToast?
     @State private var pageUndoToastDismissTask: Task<Void, Never>?
@@ -199,6 +212,18 @@ struct NoteEditorView: View {
         }
 
         return note.sortedPages.first
+    }
+
+    private var attachmentDeletionTitle: String {
+        attachmentPendingDeletion?.isCodeSnippet == true
+            ? "Delete Code Snippet?"
+            : "Delete Image?"
+    }
+
+    private var attachmentDeletionMessage: String {
+        attachmentPendingDeletion?.isCodeSnippet == true
+            ? "This removes the code snippet and its rendered preview from the page."
+            : "This removes the image and its local file if no other note is using it."
     }
 
     private var doubleTapAction: PencilDoubleTapAction {
@@ -328,6 +353,11 @@ struct NoteEditorView: View {
                 )
             }
         }
+        .sheet(item: $codeSnippetEditingSession) { session in
+            CodeSnippetEditorSheet(initialDraft: session.draft) { draft in
+                saveCodeSnippet(draft, target: session.target)
+            }
+        }
         .sheet(isPresented: $isShowingPageReorder) {
             PageReorderSheet(
                 pages: note.sortedPages,
@@ -343,7 +373,13 @@ struct NoteEditorView: View {
                     renameAttachment: renameAttachment(_:to:),
                     deleteAttachment: deleteAttachment(_:),
                     toggleLock: toggleAttachmentLock(_:),
-                    setDrawingLayer: setAttachmentDrawingLayer(_:behindDrawing:)
+                    setDrawingLayer: setAttachmentDrawingLayer(_:behindDrawing:),
+                    saveCodeSnippet: { draft, attachment in
+                        saveCodeSnippet(
+                            draft,
+                            target: .existing(attachmentID: attachment.id)
+                        )
+                    }
                 )
             }
         }
@@ -372,7 +408,7 @@ struct NoteEditorView: View {
             allowsMultipleSelection: false,
             onCompletion: handleVersionFileImporterResult(_:)
         )
-        .alert("Delete Image?", isPresented: Binding(
+        .alert(attachmentDeletionTitle, isPresented: Binding(
             get: { attachmentPendingDeletion != nil },
             set: { if !$0 { attachmentPendingDeletion = nil } }
         )) {
@@ -385,7 +421,7 @@ struct NoteEditorView: View {
                 attachmentPendingDeletion = nil
             }
         } message: {
-            Text("This removes the image and its local file if no other note is using it.")
+            Text(attachmentDeletionMessage)
         }
         .alert("Delete Page?", isPresented: Binding(
             get: { pagePendingDeletion != nil },
@@ -439,6 +475,7 @@ struct NoteEditorView: View {
                         saveEditorChanges("save attachment changes")
                     },
                     deleteAttachment: { attachmentPendingDeletion = $0 },
+                    editCodeSnippet: beginEditingCodeSnippet(_:),
                     drawingChanged: handleDrawingChanged(pageID:),
                     captureFailed: { error in
                         errorMessage = error.localizedDescription
@@ -484,7 +521,8 @@ struct NoteEditorView: View {
                             zoomScale: currentZoomScale,
                             strokeZoomBehavior: strokeZoomBehavior,
                             isPastingImage: isPastingImage,
-                            pasteImage: { pasteImage(from: $0) }
+                            pasteImage: { pasteImage(from: $0) },
+                            createCodeSnippet: beginCreatingCodeSnippet
                         )
                     }
                     .zIndex(2)
@@ -1088,6 +1126,12 @@ struct NoteEditorView: View {
     private func pageActionsMenu(page: NotePage) -> some View {
         Menu {
             Button {
+                beginCreatingCodeSnippet()
+            } label: {
+                Label("Add Code Snippet", systemImage: "curlybraces.square")
+            }
+
+            Button {
                 duplicatePage(page)
             } label: {
                 Label("Duplicate Page", systemImage: "plus.square.on.square")
@@ -1363,6 +1407,151 @@ struct NoteEditorView: View {
         scheduleDrawingMetadataSave()
     }
 
+    private func beginCreatingCodeSnippet() {
+        guard let page = selectedPage else { return }
+        codeSnippetEditingSession = CodeSnippetEditingSession(
+            target: .new(pageID: page.id),
+            draft: CodeSnippetPreferences.defaultDraft()
+        )
+    }
+
+    private func beginEditingCodeSnippet(_ attachment: Attachment) {
+        guard attachment.isCodeSnippet else { return }
+        let defaults = CodeSnippetPreferences.defaultDraft()
+        codeSnippetEditingSession = CodeSnippetEditingSession(
+            target: .existing(attachmentID: attachment.id),
+            draft: CodeSnippetDraft(editing: attachment, defaults: defaults)
+        )
+    }
+
+    private func saveCodeSnippet(
+        _ draft: CodeSnippetDraft,
+        target: CodeSnippetEditingSession.Target
+    ) -> Bool {
+        let trimmedCode = draft.code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCode.isEmpty else { return false }
+        let interfaceStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
+        guard let previewData = CodeSnippetPreviewRenderer.pngData(
+            for: draft,
+            automaticInterfaceStyle: interfaceStyle
+        ),
+              !previewData.isEmpty else {
+            errorMessage = "BeanNotes could not render the code snippet preview."
+            return false
+        }
+
+        let storage = importExportService.storage
+        let staging = storage.beginImportStagingTransaction()
+        let storedFile: StoredFile
+        do {
+            storedFile = try staging.saveData(
+                previewData,
+                preferredName: "\(draft.language.label) Code Snippet.png",
+                contentType: .png
+            )
+            try staging.commit()
+        } catch {
+            staging.rollback()
+            errorMessage = "BeanNotes could not store the code snippet. \(error.localizedDescription)"
+            return false
+        }
+
+        switch target {
+        case .new(let pageID):
+            guard let page = note.pages.first(where: { $0.id == pageID }) else {
+                _ = try? storage.removeFile(relativePath: storedFile.relativePath)
+                errorMessage = "The page for this code snippet is no longer available."
+                return false
+            }
+
+            let frame = AttachmentEditingGeometry.initialImageFrame(
+                sourceSize: CodeSnippetPreviewRenderer.defaultLogicalSize,
+                pageSize: page.pageSize,
+                occupiedFrames: page.visualAttachments.map { $0.normalizedFrame(for: page.pageSize) }
+            )
+            let attachment = Attachment(
+                kind: .codeSnippet,
+                displayName: "\(draft.language.label) Code",
+                originalFileName: storedFile.fileName,
+                storedFileName: storedFile.relativePath,
+                contentTypeIdentifier: storedFile.contentTypeIdentifier,
+                fileExtension: "png",
+                x: Double(frame.minX),
+                y: Double(frame.minY),
+                width: Double(frame.width),
+                height: Double(frame.height),
+                rendersBehindDrawing: false,
+                codeSnippetText: draft.code,
+                codeSnippetLanguageRaw: draft.language.rawValue,
+                codeSnippetFontRaw: draft.font.rawValue,
+                codeSnippetFontSize: CodeSnippetPreferences.normalizedFontSize(draft.fontSize),
+                codeSnippetBackgroundRaw: draft.backgroundStyle.rawValue
+            )
+            page.attachments.append(attachment)
+            page.touch()
+
+            guard saveEditorChanges("save the code snippet") else {
+                page.attachments.removeAll { $0.id == attachment.id }
+                modelContext.delete(attachment)
+                _ = try? storage.removeFile(relativePath: storedFile.relativePath)
+                return false
+            }
+            return true
+
+        case .existing(let attachmentID):
+            guard let attachment = note.pages
+                .flatMap(\.attachments)
+                .first(where: { $0.id == attachmentID && $0.isCodeSnippet }) else {
+                _ = try? storage.removeFile(relativePath: storedFile.relativePath)
+                errorMessage = "This code snippet is no longer available."
+                return false
+            }
+
+            var oldPreviewCleanup = LocalStorageCleanupTarget(attachment: attachment)
+            let previousStoredFileName = attachment.storedFileName
+            let previousOriginalFileName = attachment.originalFileName
+            let previousContentTypeIdentifier = attachment.contentTypeIdentifier
+            let previousDisplayName = attachment.displayName
+            let previousText = attachment.codeSnippetText
+            let previousLanguageRaw = attachment.codeSnippetLanguageRaw
+            let previousFontRaw = attachment.codeSnippetFontRaw
+            let previousFontSize = attachment.codeSnippetFontSize
+            let previousBackgroundRaw = attachment.codeSnippetBackgroundRaw
+
+            attachment.storedFileName = storedFile.relativePath
+            attachment.originalFileName = storedFile.fileName
+            attachment.contentTypeIdentifier = storedFile.contentTypeIdentifier
+            if let previousLanguage = CodeSnippetLanguage(rawValue: previousLanguageRaw ?? ""),
+               previousDisplayName == "\(previousLanguage.label) Code" {
+                attachment.displayName = "\(draft.language.label) Code"
+            }
+            attachment.codeSnippetText = draft.code
+            attachment.codeSnippetLanguageRaw = draft.language.rawValue
+            attachment.codeSnippetFontRaw = draft.font.rawValue
+            attachment.codeSnippetFontSize = CodeSnippetPreferences.normalizedFontSize(draft.fontSize)
+            attachment.codeSnippetBackgroundRaw = draft.backgroundStyle.rawValue
+            attachment.touch()
+
+            guard saveEditorChanges("save the code snippet") else {
+                attachment.storedFileName = previousStoredFileName
+                attachment.originalFileName = previousOriginalFileName
+                attachment.contentTypeIdentifier = previousContentTypeIdentifier
+                attachment.displayName = previousDisplayName
+                attachment.codeSnippetText = previousText
+                attachment.codeSnippetLanguageRaw = previousLanguageRaw
+                attachment.codeSnippetFontRaw = previousFontRaw
+                attachment.codeSnippetFontSize = previousFontSize
+                attachment.codeSnippetBackgroundRaw = previousBackgroundRaw
+                _ = try? storage.removeFile(relativePath: storedFile.relativePath)
+                return false
+            }
+
+            excludeStillReferencedStorage(from: &oldPreviewCleanup, excluding: [Attachment]())
+            reportCleanup(storage.removeStoredFiles(matching: oldPreviewCleanup))
+            return true
+        }
+    }
+
     private func renameAttachment(_ attachment: Attachment, to name: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, trimmedName != attachment.displayName else { return }
@@ -1509,6 +1698,11 @@ struct NoteEditorView: View {
                     documentVersionCreatedAt: sourceAttachment.documentVersionCreatedAt,
                     documentVersionIsCurrent: sourceAttachment.documentVersionIsCurrent,
                     documentVersionIsLatest: sourceAttachment.documentVersionIsLatest,
+                    codeSnippetText: sourceAttachment.codeSnippetText,
+                    codeSnippetLanguageRaw: sourceAttachment.codeSnippetLanguageRaw,
+                    codeSnippetFontRaw: sourceAttachment.codeSnippetFontRaw,
+                    codeSnippetFontSize: sourceAttachment.codeSnippetFontSize,
+                    codeSnippetBackgroundRaw: sourceAttachment.codeSnippetBackgroundRaw,
                     createdAt: sourceAttachment.createdAt,
                     updatedAt: sourceAttachment.updatedAt
                 )
@@ -2982,8 +3176,10 @@ private struct AttachmentManagerSheet: View {
     var deleteAttachment: (Attachment) -> Void
     var toggleLock: (Attachment) -> Void
     var setDrawingLayer: (Attachment, Bool) -> Void
+    var saveCodeSnippet: (CodeSnippetDraft, Attachment) -> Bool
 
     @State private var previewAttachment: Attachment?
+    @State private var editingCodeSnippet: Attachment?
 
     var body: some View {
         NavigationStack {
@@ -2994,7 +3190,8 @@ private struct AttachmentManagerSheet: View {
                 renameAttachment: renameAttachment,
                 deleteAttachment: deleteAttachment,
                 toggleLock: toggleLock,
-                setDrawingLayer: setDrawingLayer
+                setDrawingLayer: setDrawingLayer,
+                editCodeSnippet: { editingCodeSnippet = $0 }
             )
             .navigationTitle("Attachments")
             .navigationBarTitleDisplayMode(.inline)
@@ -3011,6 +3208,16 @@ private struct AttachmentManagerSheet: View {
                 DocumentPreviewSheet(attachment: attachment, fileURL: url)
             } else {
                 ContentUnavailableView("Missing file", systemImage: "exclamationmark.triangle")
+            }
+        }
+        .sheet(item: $editingCodeSnippet) { attachment in
+            CodeSnippetEditorSheet(
+                initialDraft: CodeSnippetDraft(
+                    editing: attachment,
+                    defaults: CodeSnippetPreferences.defaultDraft()
+                )
+            ) { draft in
+                saveCodeSnippet(draft, attachment)
             }
         }
         .presentationDetents([.medium, .large])
