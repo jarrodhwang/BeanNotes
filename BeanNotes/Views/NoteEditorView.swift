@@ -638,7 +638,7 @@ struct NoteEditorView: View {
             Button {
                 isShowingBackgroundPicker = true
             } label: {
-                Image(systemName: "rectangle.inset.filled")
+                Image(systemName: "square.and.pencil")
                     .frame(width: 34, height: 34)
             }
             .accessibilityLabel("Page background")
