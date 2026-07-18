@@ -335,6 +335,14 @@ final class Attachment {
     var rendersBehindDrawing: Bool = true
     var vectorSourceStoredFileName: String?
     var vectorSourcePageIndex: Int?
+    /// Groups an imported source file and its rendered page backgrounds into one
+    /// document version. Nil keeps ordinary attachments backward compatible.
+    var documentVersionID: UUID?
+    var documentVersionName: String?
+    var documentVersionCreatedAt: Date?
+    /// Optional so existing SwiftData stores migrate without inventing version state.
+    var documentVersionIsCurrent: Bool?
+    var documentVersionIsLatest: Bool?
     var createdAt: Date
     var updatedAt: Date
     var page: NotePage?
@@ -355,6 +363,11 @@ final class Attachment {
         rendersBehindDrawing: Bool? = nil,
         vectorSourceStoredFileName: String? = nil,
         vectorSourcePageIndex: Int? = nil,
+        documentVersionID: UUID? = nil,
+        documentVersionName: String? = nil,
+        documentVersionCreatedAt: Date? = nil,
+        documentVersionIsCurrent: Bool? = nil,
+        documentVersionIsLatest: Bool? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         page: NotePage? = nil
@@ -381,6 +394,11 @@ final class Attachment {
         self.rendersBehindDrawing = rendersBehindDrawing ?? (kind == .image)
         self.vectorSourceStoredFileName = vectorSourceStoredFileName
         self.vectorSourcePageIndex = vectorSourcePageIndex
+        self.documentVersionID = documentVersionID
+        self.documentVersionName = documentVersionName
+        self.documentVersionCreatedAt = documentVersionCreatedAt
+        self.documentVersionIsCurrent = documentVersionIsCurrent
+        self.documentVersionIsLatest = documentVersionIsLatest
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.page = page
@@ -393,6 +411,16 @@ final class Attachment {
 
     var contentType: UTType {
         UTType(contentTypeIdentifier) ?? .data
+    }
+
+    var belongsToDocumentVersion: Bool {
+        documentVersionID != nil
+    }
+
+    /// Non-versioned attachments are always visible. Version-managed attachments
+    /// render only while their version is current.
+    var isVisibleInCurrentDocumentVersion: Bool {
+        documentVersionID == nil || documentVersionIsCurrent == true
     }
 
     var frame: CGRect {

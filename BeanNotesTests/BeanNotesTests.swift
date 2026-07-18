@@ -60,6 +60,51 @@ struct BeanNotesTests {
         return PKDrawing(strokes: [stroke])
     }
 
+    private func attachPDFVersion(
+        named name: String,
+        storedBaseName: String,
+        to pages: [NotePage],
+        createdAt: Date
+    ) -> [BeanNotes.Attachment] {
+        precondition(!pages.isEmpty)
+        let sourcePath = "Imports/\(storedBaseName).pdf"
+        var attachments = pages.enumerated().map { index, page in
+            let background = Attachment(
+                kind: .image,
+                displayName: "\(name) Page \(index + 1)",
+                originalFileName: "\(storedBaseName)-page-\(index + 1).jpg",
+                storedFileName: "Imports/\(storedBaseName)-page-\(index + 1).jpg",
+                contentTypeIdentifier: UTType.jpeg.identifier,
+                fileExtension: "jpg",
+                x: 0,
+                y: 0,
+                width: page.normalizedWidth,
+                height: page.normalizedHeight,
+                isLocked: true,
+                rendersBehindDrawing: true,
+                vectorSourceStoredFileName: sourcePath,
+                vectorSourcePageIndex: index,
+                createdAt: createdAt,
+                updatedAt: createdAt
+            )
+            page.attachments.append(background)
+            return background
+        }
+        let source = Attachment(
+            kind: .pdf,
+            displayName: name,
+            originalFileName: "\(storedBaseName).pdf",
+            storedFileName: sourcePath,
+            contentTypeIdentifier: UTType.pdf.identifier,
+            fileExtension: "pdf",
+            createdAt: createdAt,
+            updatedAt: createdAt
+        )
+        pages[0].attachments.append(source)
+        attachments.append(source)
+        return attachments
+    }
+
     private func makeTestStroke(
         from start: CGPoint,
         to end: CGPoint,
@@ -1314,6 +1359,7 @@ struct BeanNotesTests {
         let context = try makeInMemoryModelContext()
         let createdAt = Date(timeIntervalSince1970: 1_800_000_000)
         let archivedAt = createdAt.addingTimeInterval(600)
+        let documentVersionID = UUID(uuidString: "00000000-0000-0000-0000-000000000310")!
         let folder = NotebookFolder(
             name: "CMPT 310",
             colorHex: "#4F7CFF",
@@ -1342,6 +1388,11 @@ struct BeanNotesTests {
             fileExtension: "pdf",
             isLocked: true,
             rendersBehindDrawing: true,
+            documentVersionID: documentVersionID,
+            documentVersionName: "Instructor Revision",
+            documentVersionCreatedAt: createdAt,
+            documentVersionIsCurrent: true,
+            documentVersionIsLatest: true,
             createdAt: createdAt,
             updatedAt: createdAt
         )
@@ -1354,7 +1405,7 @@ struct BeanNotesTests {
 
         let manifest = LibraryBackupManifest(folders: [folder], createdAt: createdAt)
 
-        #expect(manifest.formatVersion == 2)
+        #expect(manifest.formatVersion == 3)
         #expect(manifest.folderCount == 1)
         #expect(manifest.noteCount == 1)
         #expect(manifest.pageCount == 1)
@@ -1364,6 +1415,12 @@ struct BeanNotesTests {
         #expect(manifest.folders.first?.notes.first?.title == "Weekly Activity")
         #expect(manifest.folders.first?.notes.first?.pages.first?.drawingFileName == "page-1.drawing")
         #expect(manifest.folders.first?.notes.first?.pages.first?.attachments.first?.storedFileName == "Imports/lecture.pdf")
+        let attachmentSnapshot = manifest.folders.first?.notes.first?.pages.first?.attachments.first
+        #expect(attachmentSnapshot?.documentVersionID == documentVersionID)
+        #expect(attachmentSnapshot?.documentVersionName == "Instructor Revision")
+        #expect(attachmentSnapshot?.documentVersionCreatedAt == createdAt)
+        #expect(attachmentSnapshot?.documentVersionIsCurrent == true)
+        #expect(attachmentSnapshot?.documentVersionIsLatest == true)
     }
 
     @Test @MainActor func libraryBackupCreatesBeanNotesArchiveAndSkipsPriorBackups() async throws {
@@ -7413,6 +7470,191 @@ struct BeanNotesTests {
         #expect(imageContainsDominantRedInk(thumbnail))
     }
 
+    @Test func documentVersionSwitchKeepsPageAndDrawingIdentityAndSeparatesCurrentFromLatest() throws {
+        let context = try makeInMemoryModelContext()
+        let firstPage = NotePage(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000101")!,
+            pageOrder: 0,
+            drawingFileName: "version-page-one.drawing",
+            width: 612,
+            height: 792
+        )
+        let secondPage = NotePage(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000102")!,
+            pageOrder: 1,
+            drawingFileName: "version-page-two.drawing",
+            width: 612,
+            height: 792
+        )
+        let note = NoteDocument(title: "Versioned Plan", pages: [secondPage, firstPage])
+        context.insert(note)
+        let pageIDs = note.sortedPages.map(\.id)
+        let drawingFileNames = note.sortedPages.map(\.drawingFileName)
+        let service = DocumentVersionService()
+
+        let originalAttachments = attachPDFVersion(
+            named: "Original",
+            storedBaseName: "original-plan",
+            to: note.sortedPages,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let original = try #require(service.registerImportedVersion(
+            attachments: originalAttachments,
+            named: "Original",
+            in: note,
+            createdAt: Date(timeIntervalSince1970: 100)
+        ))
+        let revisionAttachments = attachPDFVersion(
+            named: "Revision",
+            storedBaseName: "revised-plan",
+            to: note.sortedPages,
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        let revision = try #require(service.registerImportedVersion(
+            attachments: revisionAttachments,
+            named: "Revision",
+            in: note,
+            createdAt: Date(timeIntervalSince1970: 200)
+        ))
+
+        #expect(note.sortedPages.map(\.id) == pageIDs)
+        #expect(note.sortedPages.map(\.drawingFileName) == drawingFileNames)
+        #expect(note.sortedPages.map { $0.lockedImageAttachments.map(\.storedFileName) } == [
+            ["Imports/revised-plan-page-1.jpg"],
+            ["Imports/revised-plan-page-2.jpg"]
+        ])
+        #expect(service.versions(in: note).filter(\.isCurrent).map(\.id) == [revision.id])
+        #expect(service.versions(in: note).filter(\.isLatest).map(\.id) == [revision.id])
+
+        let indexedAt = Date(timeIntervalSince1970: 300)
+        for page in note.pages {
+            page.searchIndexUpdatedAt = indexedAt
+        }
+        note.searchIndexUpdatedAt = indexedAt
+        #expect(service.useVersion(original.id, in: note))
+        #expect(note.sortedPages.map(\.id) == pageIDs)
+        #expect(note.sortedPages.map(\.drawingFileName) == drawingFileNames)
+        #expect(note.sortedPages.allSatisfy { $0.searchIndexUpdatedAt == nil })
+        #expect(note.searchIndexUpdatedAt == nil)
+        #expect(note.sortedPages.map { $0.lockedImageAttachments.map(\.storedFileName) } == [
+            ["Imports/original-plan-page-1.jpg"],
+            ["Imports/original-plan-page-2.jpg"]
+        ])
+        #expect(service.versions(in: note).filter(\.isCurrent).map(\.id) == [original.id])
+        #expect(service.versions(in: note).filter(\.isLatest).map(\.id) == [revision.id])
+
+        #expect(service.renameVersion(original.id, to: "  Archived Original  ", in: note))
+        #expect(service.attachments(for: original.id, in: note).allSatisfy {
+            $0.documentVersionName == "Archived Original"
+        })
+        #expect(!service.renameVersion(original.id, to: "  \n ", in: note))
+        #expect(service.makeLatest(original.id, in: note))
+        let renamed = try #require(service.versions(in: note).first { $0.id == original.id })
+        #expect(renamed.name == "Archived Original")
+        #expect(renamed.isCurrent)
+        #expect(renamed.isLatest)
+        #expect(service.versions(in: note).filter(\.isLatest).count == 1)
+    }
+
+    @Test func deletingCurrentLatestDocumentVersionFallsBackWithoutDeletingPagesOrDrawings() throws {
+        let context = try makeInMemoryModelContext()
+        let firstPage = NotePage(pageOrder: 0, drawingFileName: "retained-first.drawing")
+        let secondPage = NotePage(pageOrder: 1, drawingFileName: "retained-second.drawing")
+        let ordinaryAttachment = Attachment(
+            kind: .other,
+            displayName: "Reference",
+            originalFileName: "reference.txt",
+            storedFileName: "Imports/reference.txt",
+            contentTypeIdentifier: UTType.plainText.identifier,
+            fileExtension: "txt"
+        )
+        firstPage.attachments.append(ordinaryAttachment)
+        let note = NoteDocument(title: "Retained Notes", pages: [firstPage, secondPage])
+        context.insert(note)
+        let pageIDs = note.sortedPages.map(\.id)
+        let drawingFileNames = note.sortedPages.map(\.drawingFileName)
+        let service = DocumentVersionService()
+
+        let firstAttachments = attachPDFVersion(
+            named: "Version 1",
+            storedBaseName: "retained-v1",
+            to: note.sortedPages,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let firstVersion = try #require(service.registerImportedVersion(
+            attachments: firstAttachments,
+            named: "Version 1",
+            in: note,
+            createdAt: Date(timeIntervalSince1970: 100)
+        ))
+        let secondAttachments = attachPDFVersion(
+            named: "Version 2",
+            storedBaseName: "retained-v2",
+            to: note.sortedPages,
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        let secondVersion = try #require(service.registerImportedVersion(
+            attachments: secondAttachments,
+            named: "Version 2",
+            in: note,
+            createdAt: Date(timeIntervalSince1970: 200)
+        ))
+        let removedIDs = Set(secondAttachments.map(\.id))
+
+        let removed = service.removeVersion(secondVersion.id, from: note)
+        let retainedAttachmentIDs = Set(note.sortedPages.flatMap(\.attachments).map(\.id))
+
+        #expect(Set(removed.map(\.id)) == removedIDs)
+        #expect(removedIDs.isDisjoint(with: retainedAttachmentIDs))
+        #expect(note.sortedPages.map(\.id) == pageIDs)
+        #expect(note.sortedPages.map(\.drawingFileName) == drawingFileNames)
+        #expect(firstPage.attachments.contains { $0.id == ordinaryAttachment.id })
+        #expect(note.sortedPages.map { $0.lockedImageAttachments.map(\.storedFileName) } == [
+            ["Imports/retained-v1-page-1.jpg"],
+            ["Imports/retained-v1-page-2.jpg"]
+        ])
+        let fallback = try #require(service.versions(in: note).first)
+        #expect(fallback.id == firstVersion.id)
+        #expect(fallback.isCurrent)
+        #expect(fallback.isLatest)
+        #expect(service.versions(in: note).count == 1)
+    }
+
+    @Test func legacyPDFAdoptsDocumentVersionMetadataWithoutCopying() throws {
+        let context = try makeInMemoryModelContext()
+        let pdfPages = [
+            NotePage(pageOrder: 0, width: 612, height: 792),
+            NotePage(pageOrder: 1, width: 792, height: 612)
+        ]
+        let pdfNote = NoteDocument(title: "Legacy PDF", pages: pdfPages)
+        context.insert(pdfNote)
+        let legacyPDFAttachments = attachPDFVersion(
+            named: "Legacy PDF",
+            storedBaseName: "legacy-source",
+            to: pdfNote.sortedPages,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let legacyPDFBackgrounds = legacyPDFAttachments.filter { $0.kind == .image }
+        for page in pdfNote.pages {
+            page.attachments.removeAll { $0.kind == .pdf }
+        }
+        let service = DocumentVersionService()
+
+        #expect(legacyPDFAttachments.allSatisfy { $0.documentVersionID == nil })
+        let adoptedPDF = try #require(service.adoptLegacyVersionIfNeeded(
+            in: pdfNote,
+            at: Date(timeIntervalSince1970: 200)
+        ))
+        #expect(adoptedPDF.name == "Legacy PDF")
+        #expect(adoptedPDF.kind == .pdf)
+        #expect(adoptedPDF.pageCount == 2)
+        #expect(adoptedPDF.isCurrent)
+        #expect(adoptedPDF.isLatest)
+        #expect(Set(legacyPDFBackgrounds.compactMap(\.documentVersionID)) == Set([adoptedPDF.id]))
+        #expect(legacyPDFAttachments.first { $0.kind == .pdf }?.documentVersionID == nil)
+        #expect(service.adoptLegacyVersionIfNeeded(in: pdfNote)?.id == adoptedPDF.id)
+    }
+
     @Test func thumbnailCacheIdentityIncludesThemeAndRendererVersion() {
         let pageID = UUID()
         let beanFileName = ThumbnailService.thumbnailFileName(
@@ -7621,6 +7863,162 @@ struct BeanNotesTests {
         imageContainer.setImageLoadingEnabled(true)
         #expect(imageContainer.hasVectorPDFView)
         #expect(imageContainer.isVectorPDFVisible)
+    }
+
+    @Test @MainActor func stagedDocumentVersionImportPreservesPagesAndDrawingsAndCreatesLatestVersion() async throws {
+        let context = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesVersionImport-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let thumbnailService = ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        let importService = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: thumbnailService
+        )
+        try storage.prepareDirectories()
+
+        let originalURL = rootURL.appendingPathComponent("Original.pdf")
+        let originalRenderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try originalRenderer.writePDF(to: originalURL) { rendererContext in
+            rendererContext.beginPage()
+            "Original 1".draw(
+                at: CGPoint(x: 72, y: 72),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24)]
+            )
+            rendererContext.beginPage()
+            "Original 2".draw(
+                at: CGPoint(x: 72, y: 72),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24)]
+            )
+        }
+
+        let revisionURL = rootURL.appendingPathComponent("Revision.pdf")
+        let revisionRenderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 792, height: 612))
+        try revisionRenderer.writePDF(to: revisionURL) { rendererContext in
+            rendererContext.beginPage()
+            "Revision 1".draw(
+                at: CGPoint(x: 72, y: 72),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24)]
+            )
+            rendererContext.beginPage()
+            "Revision 2".draw(
+                at: CGPoint(x: 72, y: 72),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24)]
+            )
+        }
+
+        let folder = NotebookFolder(name: "Version Imports")
+        context.insert(folder)
+        try context.save()
+        let originalStaging = storage.beginImportStagingTransaction()
+        let imported = try await importService.importDocumentAsNote(
+            from: originalURL,
+            into: folder,
+            staging: originalStaging
+        )
+        try context.save()
+        try originalStaging.commit()
+
+        let versionService = DocumentVersionService()
+        for attachment in imported.attachments {
+            attachment.documentVersionID = nil
+            attachment.documentVersionName = nil
+            attachment.documentVersionCreatedAt = nil
+            attachment.documentVersionIsCurrent = nil
+            attachment.documentVersionIsLatest = nil
+        }
+        let legacyAttachmentIDs = Set(imported.attachments.map(\.id))
+        #expect(versionService.versions(in: imported.note).isEmpty)
+        let originalBackground = try #require(imported.attachments.first { $0.kind == .image })
+        let ordinaryImage = Attachment(
+            kind: .image,
+            displayName: "Pinned Overlay",
+            originalFileName: "pinned-overlay.jpg",
+            storedFileName: originalBackground.storedFileName,
+            contentTypeIdentifier: UTType.jpeg.identifier,
+            fileExtension: "jpg",
+            x: 48,
+            y: 48,
+            width: 120,
+            height: 120,
+            isLocked: false,
+            rendersBehindDrawing: true,
+            createdAt: Date(timeIntervalSinceNow: 3_600)
+        )
+        imported.note.sortedPages[0].attachments.append(ordinaryImage)
+        let originalPageIDs = imported.note.sortedPages.map(\.id)
+        let originalDrawingFileNames = imported.note.sortedPages.map(\.drawingFileName)
+        var drawingDataByFileName: [String: Data] = [:]
+        for (index, page) in imported.note.sortedPages.enumerated() {
+            try drawingStorage.save(
+                makeTestDrawing(color: index == 0 ? .systemRed : .systemBlue, xOffset: CGFloat(index * 24)),
+                for: page
+            )
+            drawingDataByFileName[page.drawingFileName] = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        }
+        try context.save()
+
+        let revisionStaging = storage.beginImportStagingTransaction()
+        let revision = try await importService.importDocumentVersion(
+            from: revisionURL,
+            into: imported.note,
+            named: "Final Review",
+            staging: revisionStaging
+        )
+        let revisionAttachments = versionService.attachments(for: revision.id, in: imported.note)
+
+        #expect(revisionStaging.stagedFileNames().count == 3)
+        #expect(!FileManager.default.fileExists(atPath: revisionStaging.finalDirectoryURL.path))
+        #expect(revisionAttachments.allSatisfy {
+            !FileManager.default.fileExists(atPath: storage.url(forRelativePath: $0.storedFileName).path)
+        })
+
+        try context.save()
+        try revisionStaging.commit()
+
+        #expect(imported.note.sortedPages.map(\.id) == originalPageIDs)
+        #expect(imported.note.sortedPages.map(\.drawingFileName) == originalDrawingFileNames)
+        #expect(imported.note.sortedPages.count == 2)
+        for page in imported.note.sortedPages {
+            let expectedDrawingData = try #require(drawingDataByFileName[page.drawingFileName])
+            #expect(try Data(contentsOf: drawingStorage.drawingURL(for: page)) == expectedDrawingData)
+        }
+
+        let versions = versionService.versions(in: imported.note)
+        #expect(versions.count == 2)
+        #expect(versions.filter(\.isCurrent).map(\.id) == [revision.id])
+        #expect(versions.filter(\.isLatest).map(\.id) == [revision.id])
+        #expect(revision.name == "Final Review")
+        #expect(revision.originalFileName == "Revision.pdf")
+        let adoptedLegacyVersion = try #require(versions.first { $0.id != revision.id })
+        #expect(Set(versionService.attachments(for: adoptedLegacyVersion.id, in: imported.note).map(\.id)) == legacyAttachmentIDs)
+        #expect(!versionService.attachments(for: adoptedLegacyVersion.id, in: imported.note).contains {
+            $0.documentVersionIsCurrent == true
+        })
+        let revisionBackgrounds = Set(revisionAttachments.filter { $0.kind == .image }.map(\.storedFileName))
+        let visibleBackgrounds = Set(imported.note.sortedPages.flatMap {
+            $0.lockedImageAttachments.map(\.storedFileName)
+        })
+        #expect(visibleBackgrounds == revisionBackgrounds)
+        #expect(imported.note.sortedPages.allSatisfy { $0.lockedImageAttachments.count == 1 })
+        let firstPageImages = imported.note.sortedPages[0].imageAttachments
+        let revisionBackground = try #require(firstPageImages.first { $0.documentVersionID == revision.id })
+        #expect(revisionBackground.createdAt < ordinaryImage.createdAt)
+        #expect(firstPageImages.first?.id == revisionBackground.id)
+        #expect(firstPageImages.last?.id == ordinaryImage.id)
+        #expect(revisionAttachments.allSatisfy {
+            FileManager.default.fileExists(atPath: storage.url(forRelativePath: $0.storedFileName).path)
+        })
+        #expect(versionService.attachments(for: adoptedLegacyVersion.id, in: imported.note).allSatisfy {
+            FileManager.default.fileExists(atPath: storage.url(forRelativePath: $0.storedFileName).path)
+        })
     }
 
     @Test @MainActor func rotatedPDFImportUsesDisplayedPageAspect() async throws {
@@ -7981,6 +8379,23 @@ struct BeanNotesTests {
         #expect(lockedImage.height == page.height)
         #expect(folder.notes.contains { $0.id == imported.note.id })
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: lockedImage.storedFileName).path))
+
+        let storedFileName = lockedImage.storedFileName
+        lockedImage.documentVersionID = nil
+        lockedImage.documentVersionName = nil
+        lockedImage.documentVersionCreatedAt = nil
+        lockedImage.documentVersionIsCurrent = nil
+        lockedImage.documentVersionIsLatest = nil
+        let adoptedVersion = try #require(DocumentVersionService().adoptLegacyVersionIfNeeded(
+            in: imported.note,
+            at: Date(timeIntervalSince1970: 200)
+        ))
+        #expect(adoptedVersion.kind == .image)
+        #expect(adoptedVersion.pageCount == 1)
+        #expect(adoptedVersion.isCurrent)
+        #expect(adoptedVersion.isLatest)
+        #expect(lockedImage.documentVersionID == adoptedVersion.id)
+        #expect(lockedImage.storedFileName == storedFileName)
     }
 
     @Test @MainActor func csvImportCreatesPreviewNoteAndKeepsOriginalFile() async throws {

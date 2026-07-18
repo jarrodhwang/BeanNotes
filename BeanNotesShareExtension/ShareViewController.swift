@@ -13,8 +13,16 @@ final class ShareViewController: UIViewController {
         var colorHex: String
     }
 
+    private struct NoteSummary: Codable, Equatable {
+        var id: UUID
+        var title: String
+        var folderID: UUID?
+        var folderName: String
+    }
+
     private struct FolderIndex: Codable {
         var folders: [FolderSummary]
+        var notes: [NoteSummary]?
     }
 
     private struct ImportRequest: Codable {
@@ -22,7 +30,13 @@ final class ShareViewController: UIViewController {
         var title: String
         var folderID: UUID?
         var importMode: String
+        var targetNoteID: UUID?
         var files: [String]
+    }
+
+    private enum ImportDestination: Int {
+        case newNote
+        case newVersion
     }
 
     private enum ImportMode: Int {
@@ -82,9 +96,17 @@ final class ShareViewController: UIViewController {
     private let fileManager = FileManager.default
     private let appGroupIdentifier = "group.com.snowfox.BeanNotes"
 
+    private let scrollView = UIScrollView()
     private let cardView = UIView()
+    private let headerSubtitleLabel = UILabel()
+    private let importAsControl = UISegmentedControl(items: ["New Note", "New Version"])
+    private let titleLabel = UILabel()
     private let titleField = UITextField()
+    private let folderLabel = UILabel()
     private let folderButton = UIButton(type: .system)
+    private let noteLabel = UILabel()
+    private let noteButton = UIButton(type: .system)
+    private let newNoteModeLabel = UILabel()
     private let modeControl = UISegmentedControl(items: ["Note Pages", "Attachments"])
     private let previewImageView = UIImageView()
     private let previewTitleLabel = UILabel()
@@ -99,38 +121,58 @@ final class ShareViewController: UIViewController {
     private var providers: [NSItemProvider] = []
     private var folders: [FolderSummary] = []
     private var selectedFolder: FolderSummary?
+    private var notes: [NoteSummary] = []
+    private var selectedNote: NoteSummary?
     private var shouldOpenAppAfterSaving = true
     private var didCompleteRequest = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
         providers = sharedItemProviders()
-        folders = loadFolders()
+        let index = loadFolderIndex()
+        folders = resolvedFolders(from: index)
         selectedFolder = folders.first
+        notes = resolvedNotes(from: index)
+        selectedNote = notes.first
 
-        preferredContentSize = CGSize(width: 560, height: 620)
+        preferredContentSize = CGSize(width: 560, height: 700)
         configureView()
         updateFolderMenu()
-        updateSharedItemSummary()
+        updateNoteMenu()
+        updateImportConfiguration()
         updatePreview()
     }
 
     private func configureView() {
         view.backgroundColor = .secondarySystemGroupedBackground
 
-        let titleLabel = makeLabel("Title")
+        configureFormLabel(titleLabel, text: "Title")
         titleField.borderStyle = .roundedRect
         titleField.placeholder = "Shared Import"
         titleField.text = suggestedTitle()
         titleField.clearButtonMode = .whileEditing
+        titleField.accessibilityLabel = "Note title"
 
-        let folderLabel = makeLabel("Folder")
+        let importAsLabel = makeLabel("Import As")
+        importAsControl.selectedSegmentIndex = ImportDestination.newNote.rawValue
+        importAsControl.addTarget(self, action: #selector(importDestinationChanged), for: .valueChanged)
+        importAsControl.accessibilityLabel = "Import destination"
+
+        configureFormLabel(folderLabel, text: "Folder")
         folderButton.contentHorizontalAlignment = .leading
         folderButton.showsMenuAsPrimaryAction = true
         folderButton.changesSelectionAsPrimaryAction = false
+        folderButton.accessibilityLabel = "Destination folder"
 
-        let modeLabel = makeLabel("Import As")
+        configureFormLabel(noteLabel, text: "Existing Note")
+        noteButton.contentHorizontalAlignment = .leading
+        noteButton.showsMenuAsPrimaryAction = true
+        noteButton.changesSelectionAsPrimaryAction = false
+        noteButton.accessibilityLabel = "Existing note for new version"
+
+        configureFormLabel(newNoteModeLabel, text: "New Note Content")
         modeControl.selectedSegmentIndex = ImportMode.notePages.rawValue
+        modeControl.accessibilityLabel = "New note content"
 
         openAppButton.contentHorizontalAlignment = .leading
         openAppButton.addTarget(self, action: #selector(openAppButtonTapped), for: .touchUpInside)
@@ -162,11 +204,15 @@ final class ShareViewController: UIViewController {
         let stack = UIStackView(arrangedSubviews: [
             makeHeader(),
             makePreviewCard(),
+            importAsLabel,
+            importAsControl,
             titleLabel,
             titleField,
             folderLabel,
             folderButton,
-            modeLabel,
+            noteLabel,
+            noteButton,
+            newNoteModeLabel,
             modeControl,
             openAppButton,
             itemSummaryLabel,
@@ -186,16 +232,30 @@ final class ShareViewController: UIViewController {
         cardView.layer.shadowOffset = CGSize(width: 0, height: 12)
         cardView.translatesAutoresizingMaskIntoConstraints = false
         cardView.addSubview(stack)
-        view.addSubview(cardView)
+
+        scrollView.alwaysBounceVertical = true
+        scrollView.keyboardDismissMode = .interactive
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(cardView)
+        view.addSubview(scrollView)
+
+        let preferredCardWidth = cardView.widthAnchor.constraint(equalToConstant: 560)
+        preferredCardWidth.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
-            cardView.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
-            cardView.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
-            cardView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            cardView.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
-            cardView.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
-            cardView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            scrollView.contentLayoutGuide.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+
+            cardView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 24),
+            cardView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -24),
+            cardView.centerXAnchor.constraint(equalTo: scrollView.contentLayoutGuide.centerXAnchor),
+            cardView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 24),
+            cardView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -24),
             cardView.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
+            preferredCardWidth,
 
             stack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
@@ -203,6 +263,8 @@ final class ShareViewController: UIViewController {
             stack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -20),
             titleField.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             folderButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            noteButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            importAsControl.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
             modeControl.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
             openAppButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             importButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
@@ -228,13 +290,13 @@ final class ShareViewController: UIViewController {
         title.font = .preferredFont(forTextStyle: .title2)
         title.adjustsFontForContentSizeCategory = true
 
-        let subtitle = UILabel()
-        subtitle.text = "Pick a folder and import style."
-        subtitle.font = .preferredFont(forTextStyle: .footnote)
-        subtitle.textColor = .secondaryLabel
-        subtitle.adjustsFontForContentSizeCategory = true
+        headerSubtitleLabel.text = "Pick a folder and import style."
+        headerSubtitleLabel.font = .preferredFont(forTextStyle: .footnote)
+        headerSubtitleLabel.textColor = .secondaryLabel
+        headerSubtitleLabel.adjustsFontForContentSizeCategory = true
+        headerSubtitleLabel.numberOfLines = 0
 
-        let textStack = UIStackView(arrangedSubviews: [title, subtitle])
+        let textStack = UIStackView(arrangedSubviews: [title, headerSubtitleLabel])
         textStack.axis = .vertical
         textStack.spacing = 2
 
@@ -314,11 +376,15 @@ final class ShareViewController: UIViewController {
 
     private func makeLabel(_ text: String) -> UILabel {
         let label = UILabel()
+        configureFormLabel(label, text: text)
+        return label
+    }
+
+    private func configureFormLabel(_ label: UILabel, text: String) {
         label.text = text
         label.font = .preferredFont(forTextStyle: .subheadline)
         label.textColor = .secondaryLabel
         label.adjustsFontForContentSizeCategory = true
-        return label
     }
 
     private func sharedItemProviders() -> [NSItemProvider] {
@@ -340,6 +406,26 @@ final class ShareViewController: UIViewController {
     private func updateSharedItemSummary() {
         guard !providers.isEmpty else {
             itemSummaryLabel.text = "No supported item found."
+            return
+        }
+
+        if isImportingNewVersion {
+            guard providers.count == 1 else {
+                itemSummaryLabel.text = "A new version needs exactly one PDF or image."
+                return
+            }
+
+            guard providerCanCreateVersion(providers[0]) else {
+                itemSummaryLabel.text = "Only a PDF or image can be added as a new version."
+                return
+            }
+
+            guard let selectedNote else {
+                itemSummaryLabel.text = "No eligible notes are available. Open BeanNotes and import a PDF or image note first."
+                return
+            }
+
+            itemSummaryLabel.text = "Ready to add a new version to \(displayTitle(for: selectedNote))."
             return
         }
 
@@ -424,17 +510,44 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func loadFolders() -> [FolderSummary] {
+    private func loadFolderIndex() -> FolderIndex? {
         guard
             let indexURL = sharedFolderIndexURL(),
             let data = try? Data(contentsOf: indexURL),
-            let index = try? JSONDecoder().decode(FolderIndex.self, from: data),
-            !index.folders.isEmpty
+            let index = try? JSONDecoder().decode(FolderIndex.self, from: data)
         else {
+            return nil
+        }
+
+        return index
+    }
+
+    private func resolvedFolders(from index: FolderIndex?) -> [FolderSummary] {
+        guard let folders = index?.folders, !folders.isEmpty else {
             return [FolderSummary(id: nil, name: "Inbox", colorHex: "#F59E0B")]
         }
 
-        return index.folders
+        return folders
+    }
+
+    private func resolvedNotes(from index: FolderIndex?) -> [NoteSummary] {
+        var seenIDs: Set<UUID> = []
+
+        return (index?.notes ?? [])
+            .filter { seenIDs.insert($0.id).inserted }
+            .sorted { lhs, rhs in
+                let folderComparison = lhs.folderName.localizedCaseInsensitiveCompare(rhs.folderName)
+                if folderComparison != .orderedSame {
+                    return folderComparison == .orderedAscending
+                }
+
+                let titleComparison = displayTitle(for: lhs).localizedCaseInsensitiveCompare(displayTitle(for: rhs))
+                if titleComparison != .orderedSame {
+                    return titleComparison == .orderedAscending
+                }
+
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
     }
 
     private func updateFolderMenu() {
@@ -458,6 +571,100 @@ final class ShareViewController: UIViewController {
 
         folderButton.configuration = configuration
         folderButton.menu = UIMenu(title: "Choose Folder", children: actions)
+        folderButton.accessibilityValue = selectedFolder?.name ?? "Inbox"
+    }
+
+    private func updateNoteMenu() {
+        let actions = notes.map { note in
+            UIAction(
+                title: noteMenuTitle(for: note),
+                image: UIImage(systemName: "doc.text"),
+                state: note == selectedNote ? .on : .off
+            ) { [weak self] _ in
+                self?.selectedNote = note
+                self?.updateNoteMenu()
+                self?.updateSharedItemSummary()
+                self?.updateImportButtonState()
+            }
+        }
+
+        var configuration = UIButton.Configuration.bordered()
+        configuration.title = selectedNote.map(noteMenuTitle(for:)) ?? "No eligible notes found"
+        configuration.image = UIImage(systemName: selectedNote == nil ? "exclamationmark.triangle" : "doc.text")
+        configuration.imagePadding = 8
+        configuration.titleAlignment = .leading
+        configuration.baseForegroundColor = selectedNote == nil ? .secondaryLabel : .label
+
+        noteButton.configuration = configuration
+        noteButton.menu = UIMenu(title: "Choose Existing Note", children: actions)
+        noteButton.isEnabled = !notes.isEmpty
+        noteButton.accessibilityValue = selectedNote.map(noteMenuTitle(for:)) ?? "No eligible notes found"
+        noteButton.accessibilityHint = notes.isEmpty
+            ? "Open BeanNotes and import a PDF or image note first."
+            : "Chooses the note whose background will receive this version."
+    }
+
+    private func displayTitle(for note: NoteSummary) -> String {
+        let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Untitled Note" : title
+    }
+
+    private func noteMenuTitle(for note: NoteSummary) -> String {
+        let folderName = note.folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !folderName.isEmpty else { return displayTitle(for: note) }
+        return "\(displayTitle(for: note)) — \(folderName)"
+    }
+
+    private var selectedImportDestination: ImportDestination {
+        ImportDestination(rawValue: importAsControl.selectedSegmentIndex) ?? .newNote
+    }
+
+    private var isImportingNewVersion: Bool {
+        selectedImportDestination == .newVersion
+    }
+
+    @objc private func importDestinationChanged() {
+        statusLabel.text = nil
+        updateImportConfiguration()
+    }
+
+    private func updateImportConfiguration() {
+        let isNewVersion = isImportingNewVersion
+
+        folderLabel.isHidden = isNewVersion
+        folderButton.isHidden = isNewVersion
+        newNoteModeLabel.isHidden = isNewVersion
+        modeControl.isHidden = isNewVersion
+        noteLabel.isHidden = !isNewVersion
+        noteButton.isHidden = !isNewVersion
+
+        titleLabel.text = isNewVersion ? "Version Name" : "Title"
+        titleField.placeholder = isNewVersion ? "Version Name" : "Shared Import"
+        titleField.accessibilityLabel = isNewVersion ? "Version name" : "Note title"
+        headerSubtitleLabel.text = isNewVersion
+            ? "Choose an existing note and add a replacement background."
+            : "Pick a folder and import style."
+        importButton.configuration?.title = isNewVersion ? "Add Version" : "Add"
+        importButton.accessibilityLabel = isNewVersion ? "Add new version" : "Add to BeanNotes"
+
+        updateSharedItemSummary()
+        updateImportButtonState()
+    }
+
+    private func updateImportButtonState() {
+        importButton.isEnabled = !providers.isEmpty
+            && (!isImportingNewVersion || canCreateNewVersionRequest)
+    }
+
+    private var canCreateNewVersionRequest: Bool {
+        providers.count == 1
+            && providers.first.map(providerCanCreateVersion) == true
+            && selectedNote != nil
+    }
+
+    private func providerCanCreateVersion(_ provider: NSItemProvider) -> Bool {
+        provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
+            || provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
     }
 
     @objc private func cancelTapped() {
@@ -484,8 +691,15 @@ final class ShareViewController: UIViewController {
 
     @objc private func importTapped() {
         titleField.resignFirstResponder()
+
+        if let validationMessage = importValidationMessage {
+            showRecoverableFailure(message: validationMessage)
+            return
+        }
+
         importButton.isEnabled = false
         cancelButton.isEnabled = false
+        setFormEnabled(false)
         statusLabel.text = "Saving..."
         statusLabel.textColor = .secondaryLabel
 
@@ -544,11 +758,13 @@ final class ShareViewController: UIViewController {
 
             do {
                 let title = self.titleField.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let isNewVersion = self.isImportingNewVersion
                 let request = ImportRequest(
                     id: requestID,
                     title: title?.isEmpty == false ? title ?? "Shared Import" : "Shared Import",
-                    folderID: self.selectedFolder?.id,
-                    importMode: self.selectedImportMode().rawValueForRequest,
+                    folderID: isNewVersion ? self.selectedNote?.folderID : self.selectedFolder?.id,
+                    importMode: isNewVersion ? "newVersion" : self.selectedImportMode().rawValueForRequest,
+                    targetNoteID: isNewVersion ? self.selectedNote?.id : nil,
                     files: savedFiles.sorted()
                 )
                 let data = try JSONEncoder().encode(request)
@@ -566,6 +782,37 @@ final class ShareViewController: UIViewController {
 
     private func selectedImportMode() -> ImportMode {
         ImportMode(rawValue: modeControl.selectedSegmentIndex) ?? .notePages
+    }
+
+    private var importValidationMessage: String? {
+        guard !providers.isEmpty else {
+            return "No supported item was found."
+        }
+
+        guard isImportingNewVersion else { return nil }
+
+        guard providers.count == 1 else {
+            return "Choose exactly one PDF or image to add as a new version."
+        }
+
+        guard let provider = providers.first, providerCanCreateVersion(provider) else {
+            return "Only a PDF or image can be added as a new version."
+        }
+
+        guard selectedNote != nil else {
+            return "Choose an existing note before adding a new version."
+        }
+
+        return nil
+    }
+
+    private func setFormEnabled(_ isEnabled: Bool) {
+        importAsControl.isEnabled = isEnabled
+        titleField.isEnabled = isEnabled
+        folderButton.isEnabled = isEnabled
+        noteButton.isEnabled = isEnabled && !notes.isEmpty
+        modeControl.isEnabled = isEnabled
+        openAppButton.isEnabled = isEnabled
     }
 
     private func saveResult(for provider: NSItemProvider, work: () throws -> String) -> SharedItemSaveResult {
@@ -929,8 +1176,9 @@ final class ShareViewController: UIViewController {
     private func showRecoverableFailure(message: String) {
         statusLabel.text = message
         statusLabel.textColor = .systemRed
-        importButton.isEnabled = !providers.isEmpty
         cancelButton.isEnabled = true
+        setFormEnabled(true)
+        updateImportButtonState()
     }
 
     private func previewPlaceholderImage() -> UIImage? {

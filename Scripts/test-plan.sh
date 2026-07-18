@@ -16,6 +16,7 @@ COMMON_ARGS=(
 SLOW_IMPORT_TESTS=(
   "BeanNotesTests/BeanNotesTests/thumbnailGenerationStoresFirstPagePreview()"
   "BeanNotesTests/BeanNotesTests/pdfImportCreatesAnnotatablePages()"
+  "BeanNotesTests/BeanNotesTests/stagedDocumentVersionImportPreservesPagesAndDrawingsAndCreatesLatestVersion()"
   "BeanNotesTests/BeanNotesTests/rotatedPDFImportUsesDisplayedPageAspect()"
   "BeanNotesTests/BeanNotesTests/stagedPDFImportRollbackRemovesCopiedFilesBeforeCommit()"
   "BeanNotesTests/BeanNotesTests/imageImportCreatesAnnotatableImageNote()"

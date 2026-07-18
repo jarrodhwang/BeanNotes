@@ -862,6 +862,7 @@ struct LibraryView: View {
             try modelContext.save()
             didSave = true
             try staging.commit()
+            syncSharedFolderIndex(including: [selectedFolder])
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
@@ -931,6 +932,7 @@ struct LibraryView: View {
             try modelContext.save()
             didSave = true
             try staging.commit()
+            syncSharedFolderIndex(including: [selectedFolder])
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
@@ -960,6 +962,7 @@ struct LibraryView: View {
             if !movedNotes.isEmpty {
                 showTrashUndoToast(for: movedNotes)
             }
+            syncSharedFolderIndex()
         } catch {
             errorMessage = "BeanNotes could not move the selected notes to Trash. \(error.localizedDescription)"
         }
@@ -986,6 +989,7 @@ struct LibraryView: View {
 
         do {
             try NoteTrashService().undoMoveToTrash(toast.notes, in: modelContext)
+            syncSharedFolderIndex()
             dismissTrashUndoToast(id: toast.id)
         } catch {
             errorMessage = "BeanNotes could not undo moving the selected notes to Trash. \(error.localizedDescription)"
@@ -1016,6 +1020,7 @@ struct LibraryView: View {
         }
 
         if notesNeedingDestination.isEmpty {
+            syncSharedFolderIndex()
             openRestoredNoteIfNeeded(in: notesWithPreviousFolders)
         } else {
             notesPendingRestore = notesNeedingDestination
@@ -1025,6 +1030,7 @@ struct LibraryView: View {
     private func restoreNotes(_ notes: [NoteDocument], to folder: NotebookFolder) {
         do {
             try NoteTrashService().restore(notes, to: folder, in: modelContext)
+            syncSharedFolderIndex(including: [folder])
             openRestoredNoteIfNeeded(in: notes)
         } catch {
             errorMessage = "BeanNotes could not restore the selected notes. \(error.localizedDescription)"
@@ -1062,6 +1068,7 @@ struct LibraryView: View {
             let result = try NoteTrashService().permanentlyDelete(notes, in: modelContext)
             closeNoteTabs(result.deletedNoteIDs)
             reportCleanup(result.cleanupReport)
+            syncSharedFolderIndex()
         } catch {
             errorMessage = "BeanNotes could not permanently delete the selected notes. \(error.localizedDescription)"
         }
@@ -1072,6 +1079,7 @@ struct LibraryView: View {
             let result = try NoteTrashService().purgeExpiredNotes(in: modelContext)
             closeNoteTabs(result.deletedNoteIDs)
             reportCleanup(result.cleanupReport)
+            syncSharedFolderIndex()
         } catch {
             errorMessage = "BeanNotes could not finish cleaning up expired Trash items. \(error.localizedDescription)"
         }

@@ -91,7 +91,7 @@ final class NotePage {
 
     var imageAttachments: [Attachment] {
         attachments
-            .filter { $0.kind == .image }
+            .filter { $0.kind == .image && $0.isVisibleInCurrentDocumentVersion }
             .sorted { $0.createdAt < $1.createdAt }
     }
 

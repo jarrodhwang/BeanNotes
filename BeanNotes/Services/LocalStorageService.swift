@@ -237,6 +237,12 @@ struct LocalStorageCleanupTarget: Equatable {
         insert(attachment)
     }
 
+    init(attachments: [Attachment]) {
+        for attachment in attachments {
+            insert(attachment)
+        }
+    }
+
     init(folder: NotebookFolder) {
         for note in folder.notes {
             insert(note)

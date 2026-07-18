@@ -23,14 +23,14 @@ struct ExportView: View {
 
     private var pageOriginalAttachments: [Attachment] {
         page.attachments
-            .filter { !$0.rendersBehindDrawing }
+            .filter { !$0.rendersBehindDrawing && $0.isVisibleInCurrentDocumentVersion }
             .sorted { $0.createdAt < $1.createdAt }
     }
 
     private var noteOriginalAttachments: [Attachment] {
         note.sortedPages
             .flatMap(\.attachments)
-            .filter { !$0.rendersBehindDrawing }
+            .filter { !$0.rendersBehindDrawing && $0.isVisibleInCurrentDocumentVersion }
             .sorted { $0.createdAt < $1.createdAt }
     }
 

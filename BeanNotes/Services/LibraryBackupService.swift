@@ -53,7 +53,7 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
             }
             .map(FolderSnapshot.init(folder:))
 
-        self.formatVersion = 2
+        self.formatVersion = 3
         self.appName = "BeanNotes"
         self.archiveExtension = "beannotes"
         self.createdAt = createdAt
@@ -165,6 +165,11 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
         var rendersBehindDrawing: Bool
         var vectorSourceStoredFileName: String?
         var vectorSourcePageIndex: Int?
+        var documentVersionID: UUID?
+        var documentVersionName: String?
+        var documentVersionCreatedAt: Date?
+        var documentVersionIsCurrent: Bool?
+        var documentVersionIsLatest: Bool?
         var createdAt: Date
         var updatedAt: Date
 
@@ -184,6 +189,11 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
             self.rendersBehindDrawing = attachment.rendersBehindDrawing
             self.vectorSourceStoredFileName = attachment.vectorSourceStoredFileName
             self.vectorSourcePageIndex = attachment.vectorSourcePageIndex
+            self.documentVersionID = attachment.documentVersionID
+            self.documentVersionName = attachment.documentVersionName
+            self.documentVersionCreatedAt = attachment.documentVersionCreatedAt
+            self.documentVersionIsCurrent = attachment.documentVersionIsCurrent
+            self.documentVersionIsLatest = attachment.documentVersionIsLatest
             self.createdAt = attachment.createdAt
             self.updatedAt = attachment.updatedAt
         }

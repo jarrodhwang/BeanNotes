@@ -7,6 +7,7 @@ import Combine
 import SwiftData
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Transient editor state retained while a note remains open in the tab workspace.
 ///
@@ -78,6 +79,12 @@ final class NoteEditorSessionStore: ObservableObject {
     }
 }
 
+private enum DocumentVersionImportOutcome {
+    case imported
+    case cancelled
+    case failed
+}
+
 struct NoteEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -86,6 +93,7 @@ struct NoteEditorView: View {
     @Bindable var note: NoteDocument
     @Binding private var isWorkspaceFocusModeEnabled: Bool
     @Query(sort: \NoteDocument.updatedAt, order: .reverse) private var allNotes: [NoteDocument]
+    @Query(sort: \NotebookFolder.createdAt) private var allFolders: [NotebookFolder]
     @FocusState private var isTitleFieldFocused: Bool
 
     @StateObject private var toolState = DrawingToolState()
@@ -105,6 +113,9 @@ struct NoteEditorView: View {
     @State private var isShowingPageNavigator = false
     @State private var isShowingAttachmentManager = false
     @State private var isShowingBackgroundPicker = false
+    @State private var isShowingDocumentVersions = false
+    @State private var isShowingVersionFileImporter = false
+    @State private var shouldReopenDocumentVersionsAfterImport = false
     @State private var isImportingFiles = false
     @State private var isPastingImage = false
     @State private var importProgress: Double?
@@ -248,6 +259,10 @@ struct NoteEditorView: View {
         NoteBackground.fromDefaults(styleRaw: defaultBackgroundStyleRaw, colorHex: defaultBackgroundColorHex)
     }
 
+    private var documentVersions: [NoteDocumentVersion] {
+        DocumentVersionService().versions(in: note)
+    }
+
     var body: some View {
         Group {
             if let page = selectedPage {
@@ -323,7 +338,7 @@ struct NoteEditorView: View {
         .sheet(isPresented: $isShowingAttachmentManager) {
             if let page = selectedPage {
                 AttachmentManagerSheet(
-                    attachments: page.attachments,
+                    attachments: page.attachments.filter { !$0.belongsToDocumentVersion },
                     originalURL: { try? importExportService.originalFileURL(for: $0) },
                     renameAttachment: renameAttachment(_:to:),
                     deleteAttachment: deleteAttachment(_:),
@@ -331,6 +346,16 @@ struct NoteEditorView: View {
                     setDrawingLayer: setAttachmentDrawingLayer(_:behindDrawing:)
                 )
             }
+        }
+        .sheet(isPresented: $isShowingDocumentVersions) {
+            DocumentVersionManagerSheet(
+                versions: documentVersions,
+                useVersion: useDocumentVersion(_:),
+                makeLatest: makeDocumentVersionLatest(_:),
+                renameVersion: renameDocumentVersion(_:to:),
+                deleteVersion: deleteDocumentVersion(_:),
+                addVersion: beginAddingDocumentVersion
+            )
         }
         .sheet(item: $pagePendingMove) { page in
             PageMoveTargetSheet(
@@ -341,6 +366,12 @@ struct NoteEditorView: View {
                 }
             )
         }
+        .fileImporter(
+            isPresented: $isShowingVersionFileImporter,
+            allowedContentTypes: [.pdf, .image],
+            allowsMultipleSelection: false,
+            onCompletion: handleVersionFileImporterResult(_:)
+        )
         .alert("Delete Image?", isPresented: Binding(
             get: { attachmentPendingDeletion != nil },
             set: { if !$0 { attachmentPendingDeletion = nil } }
@@ -692,6 +723,16 @@ struct NoteEditorView: View {
             }
             .keyboardShortcut("i", modifiers: [.command])
             .accessibilityLabel("Add attachment")
+
+            Button {
+                openDocumentVersionManager()
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .frame(width: 34, height: 34)
+            }
+            .accessibilityLabel("Document versions")
+            .accessibilityHint("View, replace, or manage PDF and image versions while keeping drawings")
+            .accessibilityIdentifier("editor.documentVersions")
 
             Button {
                 togglePageNavigator()
@@ -1120,6 +1161,7 @@ struct NoteEditorView: View {
         note.touch()
 
         if saveEditorChanges("save the note title") {
+            syncSharedDocumentIndex()
             isEditingTitle = false
             isTitleFieldFocused = false
         } else {
@@ -1433,7 +1475,11 @@ struct NoteEditorView: View {
 
             note.pages.append(duplicatedPage)
 
-            for sourceAttachment in sourcePage.attachments {
+            let copiedAttachments = sourcePage.attachments.filter { attachment in
+                !attachment.belongsToDocumentVersion
+                    || (attachment.documentVersionIsCurrent == true && attachment.kind == .image)
+            }
+            for sourceAttachment in copiedAttachments {
                 guard let copiedAttachmentPath = try storage.copyStoredFileIfPresent(
                     relativePath: sourceAttachment.storedFileName,
                     preferredFileName: sourceAttachment.originalFileName
@@ -1457,7 +1503,14 @@ struct NoteEditorView: View {
                     isLocked: sourceAttachment.isLocked,
                     rendersBehindDrawing: sourceAttachment.rendersBehindDrawing,
                     vectorSourceStoredFileName: sourceAttachment.vectorSourceStoredFileName,
-                    vectorSourcePageIndex: sourceAttachment.vectorSourcePageIndex
+                    vectorSourcePageIndex: sourceAttachment.vectorSourcePageIndex,
+                    documentVersionID: sourceAttachment.documentVersionID,
+                    documentVersionName: sourceAttachment.documentVersionName,
+                    documentVersionCreatedAt: sourceAttachment.documentVersionCreatedAt,
+                    documentVersionIsCurrent: sourceAttachment.documentVersionIsCurrent,
+                    documentVersionIsLatest: sourceAttachment.documentVersionIsLatest,
+                    createdAt: sourceAttachment.createdAt,
+                    updatedAt: sourceAttachment.updatedAt
                 )
                 duplicatedPage.attachments.append(attachment)
             }
@@ -1659,6 +1712,10 @@ struct NoteEditorView: View {
 
     private func movePage(_ page: NotePage, to targetNote: NoteDocument) {
         guard targetNote.id != note.id else { return }
+        guard !page.attachments.contains(where: \.belongsToDocumentVersion) else {
+            errorMessage = "Pages containing document-version backgrounds cannot be moved to another note. Duplicate the page or export it instead."
+            return
+        }
         guard note.sortedPages.count > 1 else {
             errorMessage = "A note needs at least one page."
             return
@@ -1792,11 +1849,19 @@ struct NoteEditorView: View {
     }
 
     private func excludeStillReferencedStorage(from target: inout LocalStorageCleanupTarget, excluding deletedAttachment: Attachment) {
+        excludeStillReferencedStorage(from: &target, excluding: [deletedAttachment])
+    }
+
+    private func excludeStillReferencedStorage(
+        from target: inout LocalStorageCleanupTarget,
+        excluding deletedAttachments: [Attachment]
+    ) {
+        let deletedAttachmentIDs = Set(deletedAttachments.map(\.id))
         let referencedRelativePaths = Set(
             allNotes
                 .flatMap(\.pages)
                 .flatMap(\.attachments)
-                .filter { $0.id != deletedAttachment.id }
+                .filter { !deletedAttachmentIDs.contains($0.id) }
                 .flatMap { attachment in
                     [attachment.storedFileName, attachment.vectorSourceStoredFileName].compactMap { $0 }
                 }
@@ -1819,6 +1884,207 @@ struct NoteEditorView: View {
     private func goToNextPage() {
         guard let currentPageIndex, currentPageIndex < note.sortedPages.count - 1 else { return }
         selectedPageID = note.sortedPages[currentPageIndex + 1].id
+    }
+
+    private func openDocumentVersionManager() {
+        let versionService = DocumentVersionService()
+        let hadVersions = !versionService.versions(in: note).isEmpty
+
+        if !hadVersions, versionService.adoptLegacyVersionIfNeeded(in: note) != nil {
+            guard saveDocumentVersionChanges("save the document version history") else { return }
+        }
+
+        isShowingDocumentVersions = true
+    }
+
+    private func useDocumentVersion(_ version: NoteDocumentVersion) {
+        let versionService = DocumentVersionService()
+        guard versionService.useVersion(version.id, in: note) else {
+            errorMessage = "That document version is no longer available."
+            return
+        }
+
+        _ = saveDocumentVersionChanges("switch document versions")
+    }
+
+    private func makeDocumentVersionLatest(_ version: NoteDocumentVersion) {
+        let versionService = DocumentVersionService()
+        guard versionService.makeLatest(version.id, in: note) else {
+            errorMessage = "That document version is no longer available."
+            return
+        }
+
+        _ = saveDocumentVersionChanges("make the document version latest")
+    }
+
+    private func renameDocumentVersion(_ version: NoteDocumentVersion, to name: String) {
+        let versionService = DocumentVersionService()
+        guard versionService.renameVersion(version.id, to: name, in: note) else {
+            errorMessage = "Enter a name for this document version."
+            return
+        }
+
+        _ = saveDocumentVersionChanges("rename the document version")
+    }
+
+    private func deleteDocumentVersion(_ version: NoteDocumentVersion) {
+        saveNow()
+        let versionID = version.id
+
+        runAfterPendingCanvasSave {
+            deleteDocumentVersionAfterPendingSave(versionID)
+        }
+    }
+
+    private func deleteDocumentVersionAfterPendingSave(_ versionID: UUID) {
+        let versionService = DocumentVersionService()
+        let removedAttachments = versionService.removeVersion(versionID, from: note)
+        guard !removedAttachments.isEmpty else {
+            errorMessage = "That document version is no longer available."
+            return
+        }
+
+        var cleanupTarget = LocalStorageCleanupTarget(attachments: removedAttachments)
+        excludeStillReferencedStorage(from: &cleanupTarget, excluding: removedAttachments)
+
+        for attachment in removedAttachments {
+            modelContext.delete(attachment)
+        }
+
+        guard saveDocumentVersionChanges("delete the document version") else { return }
+        reportCleanup(importExportService.storage.removeStoredFiles(matching: cleanupTarget))
+    }
+
+    private func beginAddingDocumentVersion() {
+        saveNow()
+        shouldReopenDocumentVersionsAfterImport = true
+        isShowingDocumentVersions = false
+
+        DispatchQueue.main.async {
+            isShowingVersionFileImporter = true
+        }
+    }
+
+    private func handleVersionFileImporterResult(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let sourceURL = urls.first else {
+                reopenDocumentVersionManagerAfterImport()
+                return
+            }
+
+            importTask?.cancel()
+            importTask = Task { @MainActor in
+                let outcome = await importDocumentVersion(from: sourceURL)
+                importTask = nil
+
+                switch outcome {
+                case .imported, .cancelled:
+                    reopenDocumentVersionManagerAfterImport()
+                case .failed:
+                    shouldReopenDocumentVersionsAfterImport = false
+                }
+            }
+        case .failure(let error):
+            let cocoaError = error as NSError
+            if cocoaError.domain == NSCocoaErrorDomain, cocoaError.code == NSUserCancelledError {
+                reopenDocumentVersionManagerAfterImport()
+            } else {
+                shouldReopenDocumentVersionsAfterImport = false
+                errorMessage = "BeanNotes could not open the document picker. \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func reopenDocumentVersionManagerAfterImport() {
+        guard shouldReopenDocumentVersionsAfterImport else { return }
+        shouldReopenDocumentVersionsAfterImport = false
+
+        DispatchQueue.main.async {
+            isShowingDocumentVersions = true
+        }
+    }
+
+    private func importDocumentVersion(from sourceURL: URL) async -> DocumentVersionImportOutcome {
+        guard importExportService.importsAsDocumentVersion(sourceURL) else {
+            errorMessage = ImportExportError.unsupportedVersionDocument.localizedDescription
+            return .failed
+        }
+
+        isImportingFiles = true
+        importProgress = 0
+        importProgressMessage = "Preparing document version..."
+
+        defer {
+            isImportingFiles = false
+            importProgress = nil
+            importProgressMessage = "Preparing import..."
+        }
+
+        let staging = importExportService.storage.beginImportStagingTransaction()
+
+        do {
+            try await Task.sleep(nanoseconds: 80_000_000)
+            try Task.checkCancellation()
+
+            _ = try await importExportService.importDocumentVersion(
+                from: sourceURL,
+                into: note,
+                staging: staging
+            ) { fraction, message in
+                importProgress = fraction
+                importProgressMessage = message
+            }
+            try Task.checkCancellation()
+
+            try staging.commit()
+
+            guard saveDocumentVersionChanges("save the imported document version") else {
+                removeCommittedVersionImport(staging)
+                return .failed
+            }
+
+            return .imported
+        } catch is CancellationError {
+            modelContext.rollback()
+            staging.rollback()
+            return .cancelled
+        } catch {
+            modelContext.rollback()
+            staging.rollback()
+            errorMessage = "BeanNotes could not add the document version. \(error.localizedDescription)"
+            return .failed
+        }
+    }
+
+    private func removeCommittedVersionImport(_ staging: ImportStagingTransaction) {
+        try? importExportService.storage.fileManager.removeItem(at: staging.finalDirectoryURL)
+    }
+
+    @discardableResult
+    private func saveDocumentVersionChanges(_ action: String) -> Bool {
+        isMetadataSavePending = true
+        didMetadataSaveFail = false
+        refreshAutosaveState()
+
+        do {
+            try modelContext.save()
+            syncSharedDocumentIndex()
+            isMetadataSavePending = false
+            refreshAutosaveState()
+            return true
+        } catch {
+            modelContext.rollback()
+            isMetadataSavePending = false
+            didMetadataSaveFail = true
+            refreshAutosaveState()
+            errorMessage = "BeanNotes could not \(action). \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func syncSharedDocumentIndex() {
+        try? ImportExportService().writeSharedFolderIndex(folders: allFolders)
     }
 
     private func importFiles(_ urls: [URL]) async {
@@ -2504,6 +2770,206 @@ private struct PageReorderSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+private struct DocumentVersionManagerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var versions: [NoteDocumentVersion]
+    var useVersion: (NoteDocumentVersion) -> Void
+    var makeLatest: (NoteDocumentVersion) -> Void
+    var renameVersion: (NoteDocumentVersion, String) -> Void
+    var deleteVersion: (NoteDocumentVersion) -> Void
+    var addVersion: () -> Void
+
+    @State private var renamingVersion: NoteDocumentVersion?
+    @State private var renameDraft = ""
+    @State private var deletingVersion: NoteDocumentVersion?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if versions.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Document Versions", systemImage: "clock.arrow.circlepath")
+                    } description: {
+                        Text("Add a PDF or image to use behind your drawings.")
+                    }
+                } else {
+                    List {
+                        Section {
+                            ForEach(versions) { version in
+                                versionRow(version)
+                            }
+                        } footer: {
+                            Text("Changing versions replaces only the document behind your note. Drawings and other attachments stay in place.")
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("Document Versions")
+            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                Button(action: addVersion) {
+                    Label("Add PDF or Image Version", systemImage: "plus.circle.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.bar)
+                .accessibilityIdentifier("documentVersions.add")
+                .accessibilityHint("Choose one PDF or image and make it the latest version")
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .alert("Rename Version", isPresented: Binding(
+            get: { renamingVersion != nil },
+            set: { if !$0 { renamingVersion = nil } }
+        )) {
+            TextField("Version name", text: $renameDraft)
+            Button("Save") {
+                guard let version = renamingVersion else { return }
+                renameVersion(version, renameDraft)
+                renamingVersion = nil
+            }
+            .disabled(renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {
+                renamingVersion = nil
+            }
+        } message: {
+            Text("Choose a name that helps identify this PDF or image version.")
+        }
+        .alert("Delete Version?", isPresented: Binding(
+            get: { deletingVersion != nil },
+            set: { if !$0 { deletingVersion = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                guard let version = deletingVersion else { return }
+                deletingVersion = nil
+                deleteVersion(version)
+            }
+            Button("Cancel", role: .cancel) {
+                deletingVersion = nil
+            }
+        } message: {
+            Text("This removes the selected PDF or image version and its local files. Your drawings and other attachments remain.")
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func versionRow(_ version: NoteDocumentVersion) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: version.kind == .pdf ? "doc.richtext" : "photo")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 32)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(version.name)
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    if version.isCurrent {
+                        versionBadge("Current", color: .blue)
+                    }
+
+                    if version.isLatest {
+                        versionBadge("Latest", color: .green)
+                    }
+                }
+
+                Text(version.originalFileName)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Text(versionMetadata(version))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            if !version.isCurrent {
+                Button("Use") {
+                    useVersion(version)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Use \(version.name)")
+                .accessibilityHint("Show this document behind the existing drawings")
+            }
+
+            Menu {
+                if !version.isCurrent {
+                    Button {
+                        useVersion(version)
+                    } label: {
+                        Label("Use Version", systemImage: "eye")
+                    }
+                }
+
+                Button {
+                    makeLatest(version)
+                } label: {
+                    Label("Make Latest", systemImage: "star")
+                }
+                .disabled(version.isLatest)
+
+                Button {
+                    renameDraft = version.name
+                    renamingVersion = version
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    deletingVersion = version
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Actions for \(version.name)")
+        }
+        .padding(.vertical, 5)
+        .accessibilityIdentifier("documentVersions.row.\(version.id.uuidString)")
+    }
+
+    private func versionBadge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.12), in: Capsule())
+    }
+
+    private func versionMetadata(_ version: NoteDocumentVersion) -> String {
+        let pageLabel = version.pageCount == 1 ? "1 page" : "\(version.pageCount) pages"
+        let date = version.createdAt.formatted(date: .abbreviated, time: .shortened)
+        return "\(version.kind.displayName) · \(pageLabel) · \(date)"
     }
 }
 

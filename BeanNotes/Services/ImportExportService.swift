@@ -65,19 +65,29 @@ struct SharedFolderSummary: Codable, Identifiable, Equatable {
     var colorHex: String
 }
 
+struct SharedNoteSummary: Codable, Identifiable, Equatable {
+    var id: UUID
+    var title: String
+    var folderID: UUID
+    var folderName: String
+}
+
 private struct SharedFolderIndex: Codable {
     var folders: [SharedFolderSummary]
+    var notes: [SharedNoteSummary]?
 }
 
 private enum SharedImportMode: String, Codable {
     case notePages
     case attachments
+    case newVersion
 }
 
 private struct SharedImportRequest: Codable {
     var id: UUID
     var title: String
     var folderID: UUID?
+    var targetNoteID: UUID?
     var importMode: SharedImportMode
     var files: [String]
 }
@@ -94,6 +104,8 @@ private struct SharedImportFailureReport: Codable {
 private enum SharedInboxImportError: LocalizedError {
     case missingRequestManifest
     case noImportableFiles([String])
+    case missingVersionTarget
+    case invalidVersionFileCount
 
     var errorDescription: String? {
         switch self {
@@ -105,6 +117,10 @@ private enum SharedInboxImportError: LocalizedError {
             } else {
                 "None of the shared import files could be found: \(fileNames.joined(separator: ", "))"
             }
+        case .missingVersionTarget:
+            "The note selected for this document version is no longer available."
+        case .invalidVersionFileCount:
+            "Share exactly one PDF or image when adding a document version."
         }
     }
 }
@@ -141,9 +157,15 @@ private struct StoredImagePageResult: Sendable {
     var displayName: String
 }
 
+private enum PreparedDocumentVersion: Sendable {
+    case pdf(PDFImportWorkerResult)
+    case image(StoredImagePageResult)
+}
+
 enum ImportExportError: LocalizedError {
     case unsupportedImageData
     case unsupportedDocument
+    case unsupportedVersionDocument
     case originalFileMissing
     case exportFailed
 
@@ -153,6 +175,8 @@ enum ImportExportError: LocalizedError {
             "BeanNotes could not read that image."
         case .unsupportedDocument:
             "BeanNotes could not import that document as note pages."
+        case .unsupportedVersionDocument:
+            "Document versions must be a PDF or image."
         case .originalFileMissing:
             "The original attachment file is missing from local storage."
         case .exportFailed:
@@ -193,6 +217,12 @@ struct ImportExportService {
         return kind == .pdf || kind == .docx || kind == .presentation
     }
 
+    func importsAsDocumentVersion(_ sourceURL: URL) -> Bool {
+        let contentType = UTType(filenameExtension: sourceURL.pathExtension) ?? .data
+        let kind = attachmentKind(for: contentType, fileExtension: sourceURL.pathExtension)
+        return kind == .pdf || kind == .image
+    }
+
     func importDocumentAsNote(
         from sourceURL: URL,
         into folder: NotebookFolder,
@@ -214,6 +244,13 @@ struct ImportExportService {
                 progress: progress
             )
             try Task.checkCancellation()
+            if importsAsDocumentVersion(sourceURL) {
+                _ = DocumentVersionService(storage: storage).registerImportedVersion(
+                    attachments: imported.attachments,
+                    named: note.title,
+                    in: note
+                )
+            }
             try ownedStaging?.commit()
             folder.updatedAt = Date()
 
@@ -242,6 +279,11 @@ struct ImportExportService {
                 displayName: note.title,
                 into: note,
                 pageOrder: 0
+            )
+            _ = DocumentVersionService(storage: storage).registerImportedVersion(
+                attachments: imported.attachments,
+                named: note.title,
+                in: note
             )
             folder.updatedAt = Date()
 
@@ -282,6 +324,11 @@ struct ImportExportService {
                 displayName: note.title,
                 into: note,
                 pageOrder: 0
+            )
+            _ = DocumentVersionService(storage: storage).registerImportedVersion(
+                attachments: imported.attachments,
+                named: note.title,
+                in: note
             )
             folder.updatedAt = Date()
 
@@ -331,6 +378,212 @@ struct ImportExportService {
                 progress: progress
             )
         }
+    }
+
+    /// Imports an immutable PDF/image version, then maps its backgrounds onto
+    /// existing note pages without replacing page or drawing identities.
+    func importDocumentVersion(
+        from sourceURL: URL,
+        into note: NoteDocument,
+        named proposedName: String? = nil,
+        staging: ImportStagingTransaction? = nil,
+        progress: ImportExportProgressHandler? = nil
+    ) async throws -> NoteDocumentVersion {
+        guard importsAsDocumentVersion(sourceURL) else {
+            throw ImportExportError.unsupportedVersionDocument
+        }
+
+        try Task.checkCancellation()
+        let ownedStaging = staging == nil ? storage.beginImportStagingTransaction() : nil
+        let activeStaging = staging ?? ownedStaging
+
+        do {
+            let preparedVersion = try await prepareDocumentVersion(
+                from: sourceURL,
+                staging: activeStaging,
+                progress: progress
+            )
+            try Task.checkCancellation()
+
+            // With an owned transaction, finalize files before mutating the live
+            // note so a commit failure cannot leave dangling model references.
+            try ownedStaging?.commit()
+
+            // Adopt an existing pre-versioning background before attaching the
+            // replacement. Otherwise the new unversioned PDF/image can make
+            // legacy detection ambiguous and leave both backgrounds visible.
+            let versionService = DocumentVersionService(storage: storage)
+            _ = versionService.adoptLegacyVersionIfNeeded(in: note)
+
+            let existingPages = note.sortedPages
+            let backgroundLayerDate = documentVersionBackgroundLayerDate(in: note)
+            let mappedAttachments = attachPreparedDocumentVersion(
+                preparedVersion,
+                to: note,
+                existingPages: existingPages,
+                backgroundLayerDate: backgroundLayerDate
+            )
+
+            let versionName = proposedName ?? sourceURL.deletingPathExtension().lastPathComponent
+            guard let version = versionService.registerImportedVersion(
+                attachments: mappedAttachments,
+                named: versionName,
+                in: note
+            ) else {
+                throw ImportExportError.unsupportedVersionDocument
+            }
+            progress?(1, "Version import ready.")
+            return version
+        } catch {
+            ownedStaging?.rollback()
+            throw error
+        }
+    }
+
+    private func prepareDocumentVersion(
+        from sourceURL: URL,
+        staging: ImportStagingTransaction?,
+        progress: ImportExportProgressHandler?
+    ) async throws -> PreparedDocumentVersion {
+        let contentType = UTType(filenameExtension: sourceURL.pathExtension) ?? .data
+        let kind = attachmentKind(for: contentType, fileExtension: sourceURL.pathExtension)
+
+        switch kind {
+        case .pdf:
+            let result = try await Self.importPDFPagesInBackground(
+                from: sourceURL,
+                rootURL: storage.rootURL,
+                startOrder: 0,
+                staging: staging,
+                progress: progress
+            )
+            guard !result.pages.isEmpty else {
+                throw ImportExportError.unsupportedDocument
+            }
+            return .pdf(result)
+        case .image:
+            progress?(nil, "Importing image...")
+            let result = try await Self.storeImageFileInBackground(
+                from: sourceURL,
+                rootURL: storage.rootURL,
+                staging: staging
+            )
+            return .image(result)
+        case .docx, .csv, .presentation, .other:
+            throw ImportExportError.unsupportedVersionDocument
+        }
+    }
+
+    private func attachPreparedDocumentVersion(
+        _ preparedVersion: PreparedDocumentVersion,
+        to note: NoteDocument,
+        existingPages: [NotePage],
+        backgroundLayerDate: Date
+    ) -> [Attachment] {
+        switch preparedVersion {
+        case .pdf(let result):
+            var attachments: [Attachment] = []
+            var firstTargetPage: NotePage?
+
+            for (index, pageFile) in result.pages.enumerated() {
+                let targetPage = documentVersionTargetPage(
+                    at: index,
+                    preferredSize: pageFile.pageSize,
+                    in: note,
+                    existingPages: existingPages
+                )
+                firstTargetPage = firstTargetPage ?? targetPage
+
+                let background = Attachment(
+                    kind: .image,
+                    displayName: pageFile.displayName,
+                    originalFileName: pageFile.originalFileName,
+                    storedFileName: pageFile.storedImage.relativePath,
+                    contentTypeIdentifier: UTType.jpeg.identifier,
+                    fileExtension: "jpg",
+                    x: 0,
+                    y: 0,
+                    width: targetPage.normalizedWidth,
+                    height: targetPage.normalizedHeight,
+                    isLocked: true,
+                    rendersBehindDrawing: true,
+                    vectorSourceStoredFileName: result.originalStored.relativePath,
+                    vectorSourcePageIndex: index,
+                    createdAt: backgroundLayerDate
+                )
+                targetPage.attachments.append(background)
+                attachments.append(background)
+            }
+
+            if let firstTargetPage {
+                let original = Attachment(
+                    kind: .pdf,
+                    displayName: result.baseName,
+                    originalFileName: result.sourceFileName,
+                    storedFileName: result.originalStored.relativePath,
+                    contentTypeIdentifier: result.originalStored.contentTypeIdentifier,
+                    fileExtension: result.sourceFileExtension
+                )
+                firstTargetPage.attachments.append(original)
+                attachments.append(original)
+            }
+
+            return attachments
+        case .image(let result):
+            let pageSize = Self.normalizedImagePageSize(for: result.sourceSize)
+            let targetPage = documentVersionTargetPage(
+                at: 0,
+                preferredSize: pageSize,
+                in: note,
+                existingPages: existingPages
+            )
+            let image = Attachment(
+                kind: .image,
+                displayName: result.displayName.isEmpty ? "Image" : result.displayName,
+                originalFileName: result.originalFileName,
+                storedFileName: result.storedImage.relativePath,
+                contentTypeIdentifier: result.storedImage.contentTypeIdentifier,
+                fileExtension: URL(fileURLWithPath: result.storedImage.fileName).pathExtension,
+                x: 0,
+                y: 0,
+                width: targetPage.normalizedWidth,
+                height: targetPage.normalizedHeight,
+                isLocked: true,
+                rendersBehindDrawing: true,
+                createdAt: backgroundLayerDate
+            )
+            targetPage.attachments.append(image)
+            return [image]
+        }
+    }
+
+    private func documentVersionBackgroundLayerDate(in note: NoteDocument) -> Date {
+        let oldestImageDate = note.pages
+            .flatMap(\.attachments)
+            .filter { $0.kind == .image }
+            .map(\.createdAt)
+            .min()
+        return oldestImageDate?.addingTimeInterval(-0.001) ?? Date()
+    }
+
+    private func documentVersionTargetPage(
+        at index: Int,
+        preferredSize: CGSize,
+        in note: NoteDocument,
+        existingPages: [NotePage]
+    ) -> NotePage {
+        if existingPages.indices.contains(index) {
+            return existingPages[index]
+        }
+
+        let page = NotePage(
+            pageOrder: (note.pages.map(\.pageOrder).max() ?? -1) + 1,
+            background: .plain(),
+            width: Double(preferredSize.width),
+            height: Double(preferredSize.height)
+        )
+        note.pages.append(page)
+        return page
     }
 
     func importFile(
@@ -681,11 +934,67 @@ struct ImportExportService {
                         name: $0.name,
                         colorHex: $0.colorHex
                     )
+                },
+            notes: folders
+                .filter { !$0.isArchived }
+                .flatMap { folder in
+                    folder.notes.compactMap { note -> SharedNoteSummary? in
+                        guard !note.isInTrash, supportsDocumentVersions(note) else { return nil }
+                        let trimmedTitle = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        return SharedNoteSummary(
+                            id: note.id,
+                            title: trimmedTitle.isEmpty ? "Untitled Note" : trimmedTitle,
+                            folderID: folder.id,
+                            folderName: folder.name
+                        )
+                    }
+                }
+                .sorted { lhs, rhs in
+                    if lhs.folderName == rhs.folderName {
+                        return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+                    }
+                    return lhs.folderName.localizedCaseInsensitiveCompare(rhs.folderName) == .orderedAscending
                 }
         )
         let data = try JSONEncoder().encode(index)
         try storage.fileManager.createDirectory(at: indexURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: indexURL, options: [.atomic])
+    }
+
+    private func supportsDocumentVersions(_ note: NoteDocument) -> Bool {
+        let attachments = note.pages.flatMap(\.attachments)
+        if attachments.contains(where: { $0.documentVersionID != nil }) {
+            return true
+        }
+        let vectorSourcePaths = Set(attachments.compactMap { attachment -> String? in
+            guard attachment.documentVersionID == nil,
+                  attachment.kind == .image,
+                  attachment.isLocked,
+                  attachment.rendersBehindDrawing,
+                  let sourcePath = attachment.vectorSourceStoredFileName?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !sourcePath.isEmpty else {
+                return nil
+            }
+            return sourcePath
+        })
+        if vectorSourcePaths.count == 1 {
+            return true
+        }
+
+        guard note.sortedPages.count == 1, let page = note.sortedPages.first else { return false }
+        return page.attachments.contains { attachment in
+            guard attachment.kind == .image,
+                  attachment.isLocked,
+                  attachment.rendersBehindDrawing else {
+                return false
+            }
+            let frame = attachment.normalizedFrame(for: page.pageSize)
+            return abs(frame.minX) < 0.5
+                && abs(frame.minY) < 0.5
+                && abs(frame.width - page.pageSize.width) < 0.5
+                && abs(frame.height - page.pageSize.height) < 0.5
+        }
     }
 
     func absorbSharedInbox(into modelContext: ModelContext) async throws {
@@ -809,13 +1118,22 @@ struct ImportExportService {
         var didCommitStaging = false
 
         do {
-            let folder = try folder(for: request.folderID, in: modelContext)
-            try await importSharedRequest(
-                request,
-                fileURLs: fileURLs,
-                into: folder,
-                staging: staging
-            )
+            if request.importMode == .newVersion {
+                try await importSharedVersionRequest(
+                    request,
+                    fileURLs: fileURLs,
+                    in: modelContext,
+                    staging: staging
+                )
+            } else {
+                let folder = try folder(for: request.folderID, in: modelContext)
+                try await importSharedRequest(
+                    request,
+                    fileURLs: fileURLs,
+                    into: folder,
+                    staging: staging
+                )
+            }
             try staging.commit()
             didCommitStaging = true
             try modelContext.save()
@@ -902,6 +1220,8 @@ struct ImportExportService {
             try await importSharedFilesAsPages(fileURLs, into: note, staging: staging)
         case .attachments:
             try importSharedFilesAsAttachments(fileURLs, into: note, staging: staging)
+        case .newVersion:
+            throw SharedInboxImportError.missingVersionTarget
         }
 
         if note.pages.isEmpty {
@@ -909,6 +1229,37 @@ struct ImportExportService {
             note.pages.append(page)
         }
 
+        note.touch()
+    }
+
+    private func importSharedVersionRequest(
+        _ request: SharedImportRequest,
+        fileURLs: [URL],
+        in modelContext: ModelContext,
+        staging: ImportStagingTransaction
+    ) async throws {
+        guard fileURLs.count == 1, let sourceURL = fileURLs.first else {
+            throw SharedInboxImportError.invalidVersionFileCount
+        }
+        guard importsAsDocumentVersion(sourceURL) else {
+            throw ImportExportError.unsupportedVersionDocument
+        }
+        guard let targetNoteID = request.targetNoteID else {
+            throw SharedInboxImportError.missingVersionTarget
+        }
+
+        let notes = try modelContext.fetch(FetchDescriptor<NoteDocument>())
+        guard let note = notes.first(where: { $0.id == targetNoteID && !$0.isInTrash }) else {
+            throw SharedInboxImportError.missingVersionTarget
+        }
+
+        let proposedName = request.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try await importDocumentVersion(
+            from: sourceURL,
+            into: note,
+            named: proposedName.isEmpty ? nil : proposedName,
+            staging: staging
+        )
         note.touch()
     }
 
@@ -923,12 +1274,19 @@ struct ImportExportService {
             let retainedStagedFiles = staging.stagedFileNames()
             do {
                 let nextOrder = (note.pages.map(\.pageOrder).max() ?? -1) + 1
-                _ = try await importDocumentPages(
+                let imported = try await importDocumentPages(
                     from: fileURL,
                     into: note,
                     startingAt: nextOrder,
                     staging: staging
                 )
+                if fileURLs.count == 1, importsAsDocumentVersion(fileURL) {
+                    _ = DocumentVersionService(storage: storage).registerImportedVersion(
+                        attachments: imported.attachments,
+                        named: note.title,
+                        in: note
+                    )
+                }
             } catch {
                 staging.removeStagedFiles(excluding: retainedStagedFiles)
 
