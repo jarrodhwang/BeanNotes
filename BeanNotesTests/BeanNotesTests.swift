@@ -836,10 +836,12 @@ struct BeanNotesTests {
         #expect(page.normalizedHeight == 612)
     }
 
-    @Test func paperSizesProvideValidDimensionsIncludingWideChalkboard() {
+    @Test func paperSizesProvideValidDimensionsIncludingLandscapeDisplayPresets() {
+        let landscapePaperSizes: Set<PaperSize> = [.chalkboard, .hd, .fhd, .fhdPlus, .qhd, .qhdPlus, .fourK]
+
         for paperSize in PaperSize.allCases {
             #expect(paperSize.dimensions.width > 0)
-            if paperSize == .chalkboard {
+            if landscapePaperSizes.contains(paperSize) {
                 #expect(paperSize.dimensions.width > paperSize.dimensions.height)
             } else {
                 #expect(paperSize.dimensions.height > paperSize.dimensions.width)
@@ -852,8 +854,16 @@ struct BeanNotesTests {
         #expect(PaperSize.a4.dimensions == CGSize(width: 595, height: 842))
         #expect(PaperSize.b5.dimensions == CGSize(width: 499, height: 709))
         #expect(PaperSize.chalkboard.dimensions == CGSize(width: 960, height: 540))
+        #expect(PaperSize.hd.dimensions == CGSize(width: 1_280, height: 720))
+        #expect(PaperSize.fhd.dimensions == CGSize(width: 1_920, height: 1_080))
+        #expect(PaperSize.fhdPlus.dimensions == CGSize(width: 1_920, height: 1_200))
+        #expect(PaperSize.qhd.dimensions == CGSize(width: 2_560, height: 1_440))
+        #expect(PaperSize.qhdPlus.dimensions == CGSize(width: 3_200, height: 1_800))
+        #expect(PaperSize.fourK.dimensions == CGSize(width: 3_840, height: 2_160))
         #expect(PaperSize.matching(CGSize(width: 595, height: 842)) == .a4)
         #expect(PaperSize.matching(CGSize(width: 960, height: 540)) == .chalkboard)
+        #expect(PaperSize.matching(CGSize(width: 1_920, height: 1_080)) == .fhd)
+        #expect(PaperSize.matching(CGSize(width: 3_840, height: 2_160)) == .fourK)
         #expect(PaperSize.matching(CGSize(width: 595.25, height: 841.75)) == .a4)
         #expect(PaperSize.matching(CGSize(width: 640, height: 900)) == nil)
     }

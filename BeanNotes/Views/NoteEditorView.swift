@@ -2310,11 +2310,17 @@ private struct PageBackgroundEditorSheet: View {
                             .keyboardType(.decimalPad)
                             .accessibilityIdentifier("pageAppearance.customPaperHeight")
 
-                        Button("Apply Custom Size") {
+                        Button {
                             pageSize = CGSize(width: customWidth, height: customHeight)
+                        } label: {
+                            Label("Apply Custom Size", systemImage: "checkmark.circle.fill")
+                                .frame(maxWidth: .infinity, minHeight: 44)
                         }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
                         .disabled(!CustomPaperSize.isValid(width: customWidth, height: customHeight))
                         .accessibilityIdentifier("pageAppearance.applyCustomPaperSize")
+                        .accessibilityHint("Applies the entered width and height to this page.")
 
                         if !CustomPaperSize.isValid(width: customWidth, height: customHeight) {
                             Text("Width and height must each be between 1 and 4096 points.")

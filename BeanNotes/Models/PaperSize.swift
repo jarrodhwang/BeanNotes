@@ -5,7 +5,7 @@
 
 import Foundation
 
-/// Portrait page sizes, expressed in PostScript points (72 points per inch).
+/// Page sizes, expressed in PostScript points (72 points per inch).
 enum PaperSize: String, CaseIterable, Identifiable {
     static let storageKey = "defaultPaperSize"
     static let defaultPaperSize: PaperSize = .letter
@@ -20,6 +20,12 @@ enum PaperSize: String, CaseIterable, Identifiable {
     case b4
     case b5
     case chalkboard
+    case hd
+    case fhd
+    case fhdPlus
+    case qhd
+    case qhdPlus
+    case fourK
 
     var id: String { rawValue }
 
@@ -35,6 +41,12 @@ enum PaperSize: String, CaseIterable, Identifiable {
         case .b4: "B4"
         case .b5: "B5"
         case .chalkboard: "Chalkboard"
+        case .hd: "HD"
+        case .fhd: "FHD"
+        case .fhdPlus: "FHD+"
+        case .qhd: "QHD"
+        case .qhdPlus: "QHD+"
+        case .fourK: "4K"
         }
     }
 
@@ -50,6 +62,12 @@ enum PaperSize: String, CaseIterable, Identifiable {
         case .b4: "250 × 353 mm"
         case .b5: "176 × 250 mm"
         case .chalkboard: "16:9 landscape"
+        case .hd: "1280 × 720"
+        case .fhd: "1920 × 1080"
+        case .fhdPlus: "1920 × 1200"
+        case .qhd: "2560 × 1440"
+        case .qhdPlus: "3200 × 1800"
+        case .fourK: "3840 × 2160"
         }
     }
 
@@ -65,6 +83,12 @@ enum PaperSize: String, CaseIterable, Identifiable {
         case .b4: CGSize(width: 709, height: 1_001)
         case .b5: CGSize(width: 499, height: 709)
         case .chalkboard: CGSize(width: 960, height: 540)
+        case .hd: CGSize(width: 1_280, height: 720)
+        case .fhd: CGSize(width: 1_920, height: 1_080)
+        case .fhdPlus: CGSize(width: 1_920, height: 1_200)
+        case .qhd: CGSize(width: 2_560, height: 1_440)
+        case .qhdPlus: CGSize(width: 3_200, height: 1_800)
+        case .fourK: CGSize(width: 3_840, height: 2_160)
         }
     }
 
