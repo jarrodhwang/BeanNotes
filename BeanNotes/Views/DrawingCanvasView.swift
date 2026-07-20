@@ -4443,15 +4443,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
-            if attachment.isCodeSnippet {
-                if saveCodeSnippet != nil {
-                    beginInlineCodeSnippetEditing(attachment)
-                } else {
-                    editCodeSnippet?(attachment)
-                }
-                return
-            }
-
             selectedAttachmentID = attachment.id
             let overlay = attachmentEditingOverlay ?? {
                 let overlay = AttachmentEditingOverlayView()

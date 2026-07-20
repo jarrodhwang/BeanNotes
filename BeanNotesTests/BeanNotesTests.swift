@@ -3527,13 +3527,7 @@ struct BeanNotesTests {
         #expect(firstDarkPixel[2] >= 38 && firstDarkPixel[2] <= 48)
     }
 
-    @Test @MainActor func codeSnippetSelectionOpensInlineEditorWithoutModifyControl() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("BeanNotesCodeSnippetSelection-\(UUID().uuidString)", isDirectory: true)
-        let storage = LocalStorageService(rootURL: rootURL)
-        try storage.prepareDirectories()
-        let drawingStorage = DrawingStorageService(storage: storage)
-        let page = NotePage(pageOrder: 0, drawingFileName: "CodeSnippetSelection.drawing", width: 612, height: 792)
+    @Test @MainActor func codeSnippetEditingOverlayExposesMoveAndDeleteControls() throws {
         let attachment = Attachment(
             kind: .codeSnippet,
             displayName: "Python Code",
@@ -3545,41 +3539,26 @@ struct BeanNotesTests {
             codeSnippetText: "print('hello')",
             codeSnippetLanguageRaw: CodeSnippetLanguage.python.rawValue
         )
-        page.attachments.append(attachment)
-        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
-        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
-        let pageView = DrawingCanvasView.PageCanvasView()
-        defer {
-            pageView.releaseHeavyResources()
-            DrawingStorageService.clearCache()
-            try? FileManager.default.removeItem(at: rootURL)
-        }
+        let overlay = DrawingCanvasView.AttachmentEditingOverlayView()
+        overlay.configure(
+            attachment: attachment,
+            pageSize: CGSize(width: 612, height: 792),
+            frameChanged: { _ in },
+            changeCommitted: {},
+            deleteRequested: {},
+            dismiss: {}
+        )
+        overlay.layoutIfNeeded()
 
-        pageView.configure(
-            page: page,
-            storage: storage,
-            drawingStorage: drawingStorage,
-            inputMode: .pencilOnly,
-            coordinator: coordinator,
-            attachmentChanged: {},
-            deleteAttachment: { _ in },
-            saveCodeSnippet: { _, savedAttachment in
-                savedAttachment.id == attachment.id
-            }
+        let visibleControls = overlay.subviews
+            .compactMap { $0 as? UIButton }
+            .filter { !$0.isHidden }
+        let deleteButton = try #require(
+            visibleControls.first { $0.accessibilityLabel == "Delete Python Code" }
         )
 
-        #expect(pageView.behindImageContainerView.subviews.count == 1)
-        #expect(pageView.foregroundImageContainerView.subviews.isEmpty)
-
-        pageView.beginEditingAttachment(id: attachment.id)
-
-        #expect(pageView.selectedAttachmentID == attachment.id)
-        #expect(!pageView.subviews.contains {
-            $0 is DrawingCanvasView.AttachmentEditingOverlayView
-        })
-        #expect(pageView.subviews.contains {
-            $0.accessibilityIdentifier == "codeSnippet.inlineEditor"
-        })
+        #expect(visibleControls.count == 1)
+        #expect(deleteButton.accessibilityHint == "Removes the code snippet after confirmation")
     }
 
     @Test func penPaletteDragClampsInsideEditorBounds() {
