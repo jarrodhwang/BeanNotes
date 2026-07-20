@@ -328,8 +328,12 @@ struct DrawingCanvasView: UIViewRepresentable {
         doubleTapZoom.numberOfTapsRequired = 2
         doubleTapZoom.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         doubleTapZoom.delegate = context.coordinator
-        doubleTapZoom.cancelsTouchesInView = false
+        // A recognized editor double tap must own its second touch. Leaving that
+        // touch active lets PencilKit's private recognizers open their edit menu
+        // after the zoom gesture has completed.
+        doubleTapZoom.cancelsTouchesInView = true
         containerView.addGestureRecognizer(doubleTapZoom)
+        containerView.setFingerDoubleTapGesture(doubleTapZoom)
 
         if let pinchGesture = containerView.scrollView.pinchGestureRecognizer {
             twoFingerTap.require(toFail: pinchGesture)
@@ -520,6 +524,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var captureSelectionPageID: UUID?
         private var isCaptureToolEnabled = false
         private var seamlessAttachmentSelectionGesture: UITapGestureRecognizer?
+        private weak var fingerDoubleTapGesture: UITapGestureRecognizer?
         private var pagesByID: [UUID: NotePage] = [:]
         private var orderedPageIDs: [UUID] = []
         private var pageFrames: [UUID: CGRect] = [:]
@@ -1427,6 +1432,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     coordinator?.selectPageForContextMenu(pageID)
                 }
             )
+            pageView.prioritizePageActionGestures(over: fingerDoubleTapGesture)
             pageView.setDocumentTraversalActive(isUserScrolling)
             pageView.setDrawingInteractionActive(isDrawingInteractionActive)
             pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
@@ -2057,6 +2063,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 )
                 pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
             }
+            pageView.prioritizePageActionGestures(over: fingerDoubleTapGesture)
 
             return didCreatePageView
         }
@@ -2307,6 +2314,21 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pageView.dismissNativeCanvasEditMenus()
             }
             continuousPageView?.dismissNativeCanvasEditMenus()
+        }
+
+        func suppressNativeCanvasEditMenus() {
+            for pageView in pageViews.values {
+                pageView.suppressNativeCanvasEditMenus()
+            }
+            continuousPageView?.suppressNativeCanvasEditMenus()
+        }
+
+        func setFingerDoubleTapGesture(_ gesture: UITapGestureRecognizer) {
+            fingerDoubleTapGesture = gesture
+            for pageView in pageViews.values {
+                pageView.prioritizePageActionGestures(over: gesture)
+            }
+            continuousPageView?.prioritizePageActionGestures(over: gesture)
         }
 
         private func updateVisiblePage() {
@@ -3513,14 +3535,10 @@ struct DrawingCanvasView: UIViewRepresentable {
         /// creating a second native menu during a finger hold.
         private final class DrawingOnlyCanvasView: PKCanvasView {
             override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-                switch action {
-                case #selector(UIResponder.selectAll(_:)),
-                     Selector(("insertSpace:")),
-                     Selector(("insertTab:")):
+                if PageCanvasView.blocksNativeDrawingEditAction(action) {
                     return false
-                default:
-                    return super.canPerformAction(action, withSender: sender)
                 }
+                return super.canPerformAction(action, withSender: sender)
             }
         }
 
@@ -3549,6 +3567,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var pageContextMenuWillOpen: ((UUID) -> Void)?
         private var pageIDForPageAction: ((CGPoint) -> UUID?)?
         private var activePageActionPageID: UUID?
+        private var nativeEditMenuSuppressionGeneration = 0
         private var canRemovePage = false
         private(set) lazy var pageActionMenuInteraction = UIEditMenuInteraction(delegate: self)
         private(set) var pageActionLongPressGesture: UILongPressGestureRecognizer?
@@ -3619,6 +3638,22 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         var allowsPageActionLongPress: Bool {
             !isCaptureInteractionEnabled && !(canvasView.tool is PKLassoTool)
+        }
+
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            guard !Self.blocksNativeDrawingEditAction(action) else { return false }
+            return super.canPerformAction(action, withSender: sender)
+        }
+
+        private static func blocksNativeDrawingEditAction(_ action: Selector) -> Bool {
+            switch action {
+            case #selector(UIResponder.selectAll(_:)),
+                 Selector(("insertSpace:")),
+                 Selector(("insertTab:")):
+                return true
+            default:
+                return false
+            }
         }
 
         override init(frame: CGRect) {
@@ -4046,6 +4081,43 @@ struct DrawingCanvasView: UIViewRepresentable {
             addInteraction(pageActionMenuInteraction)
         }
 
+        /// Gives the editor's direct-touch gestures priority over PencilKit's private
+        /// tap and hold recognizers, which otherwise can present Select All / Insert
+        /// Space after a completed page action gesture.
+        func prioritizePageActionGestures(over fingerDoubleTap: UITapGestureRecognizer?) {
+            installPageActionGestureRequirements(over: fingerDoubleTap)
+            DispatchQueue.main.async { [weak self, weak fingerDoubleTap] in
+                self?.installPageActionGestureRequirements(over: fingerDoubleTap)
+            }
+        }
+
+        private func installPageActionGestureRequirements(over fingerDoubleTap: UITapGestureRecognizer?) {
+            guard let pageActionLongPressGesture else { return }
+
+            for recognizer in nativeDirectTouchMenuRecognizers(in: canvasView) {
+                recognizer.require(toFail: pageActionLongPressGesture)
+                if let fingerDoubleTap {
+                    recognizer.require(toFail: fingerDoubleTap)
+                }
+            }
+        }
+
+        private func nativeDirectTouchMenuRecognizers(in view: UIView) -> [UIGestureRecognizer] {
+            let directTouch = NSNumber(value: UITouch.TouchType.direct.rawValue)
+            let localRecognizers = (view.gestureRecognizers ?? []).filter { recognizer in
+                guard recognizer !== pageActionLongPressGesture,
+                      recognizer !== canvasView.drawingGestureRecognizer,
+                      recognizer !== eraserScopeGesture,
+                      recognizer is UILongPressGestureRecognizer || recognizer is UITapGestureRecognizer
+                else {
+                    return false
+                }
+
+                return recognizer.allowedTouchTypes.contains(directTouch)
+            }
+            return localRecognizers + view.subviews.flatMap(nativeDirectTouchMenuRecognizers(in:))
+        }
+
         func makePageContextMenu(
             for pageID: UUID,
             canRemovePage: Bool,
@@ -4069,6 +4141,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             ) { [weak self] _ in
                 self?.pageActionRequested?(pageID, .pasteImage)
             }
+            pasteImage.attributes = canPasteImage ? [] : [.disabled]
             let remove = UIAction(
                 title: "Remove Page",
                 image: UIImage(systemName: "trash"),
@@ -4077,14 +4150,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                 self?.pageActionRequested?(pageID, .remove)
             }
 
-            var actions: [UIMenuElement] = [addBelow, addAbove]
-            if canPasteImage {
-                actions.append(pasteImage)
-            }
-            actions.append(remove)
-            // Keep every page action in the first menu instead of allowing UIKit to
-            // represent the custom menu as a disclosure submenu.
-            return UIMenu(title: "", options: [.displayInline], children: actions)
+            // Do not use displayInline here. In an edit menu UIKit can collapse that
+            // representation into two actions plus a disclosure button. A normal menu
+            // presents all page operations together when the disclosure is opened.
+            return UIMenu(title: "", children: [addBelow, addAbove, pasteImage, remove])
         }
 
         func editMenuInteraction(
@@ -4114,16 +4183,14 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             activePageActionPageID = pageID
             clearAttachmentSelection()
-            dismissNativeCanvasEditMenus()
+            suppressNativeCanvasEditMenus()
             pageContextMenuWillOpen?(pageID)
             let configuration = UIEditMenuConfiguration(
                 identifier: pageID as NSUUID,
                 sourcePoint: recognizer.location(in: self)
             )
             pageActionMenuInteraction.presentEditMenu(with: configuration)
-            DispatchQueue.main.async { [weak self] in
-                self?.dismissNativeCanvasEditMenus()
-            }
+            suppressNativeCanvasEditMenus()
         }
 
         func updateRenderScale(
@@ -4433,6 +4500,21 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func dismissNativeCanvasEditMenus() {
             dismissEditMenus(in: canvasView)
+        }
+
+        func suppressNativeCanvasEditMenus() {
+            nativeEditMenuSuppressionGeneration &+= 1
+            let generation = nativeEditMenuSuppressionGeneration
+            let delays: [TimeInterval] = [0, 0.1, 0.35, 0.75, 1.5, 2.25]
+
+            for delay in delays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, self.nativeEditMenuSuppressionGeneration == generation else {
+                        return
+                    }
+                    self.dismissNativeCanvasEditMenus()
+                }
+            }
         }
 
         private func dismissEditMenus(in view: UIView) {
@@ -7742,10 +7824,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             // PencilKit can defer its private edit menu until the second touch ends.
             // Close both the immediate and deferred presentation before performing the
             // editor's own double-tap zoom.
-            containerView.dismissNativeCanvasEditMenus()
-            DispatchQueue.main.async { [weak containerView] in
-                containerView?.dismissNativeCanvasEditMenus()
-            }
+            containerView.suppressNativeCanvasEditMenus()
 
             guard parent.inputMode == .pencilOnly else { return }
             guard containerView.isZoomGestureActiveOrRecentlyEnded != true else { return }

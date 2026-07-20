@@ -2799,7 +2799,7 @@ struct BeanNotesTests {
             "Paste Image",
             "Remove Page"
         ])
-        #expect(enabledMenu.options.contains(.displayInline))
+        #expect(!enabledMenu.options.contains(.displayInline))
         #expect(enabledActions[3].attributes.contains(.destructive))
         #expect(!enabledActions[3].attributes.contains(.disabled))
 
@@ -2812,8 +2812,10 @@ struct BeanNotesTests {
         #expect(actionsWithoutPasteImage.map(\.title) == [
             "Add Page Below",
             "Add Page Above",
+            "Paste Image",
             "Remove Page"
         ])
+        #expect(actionsWithoutPasteImage[2].attributes.contains(.disabled))
 
         let solePageMenu = pageView.makePageContextMenu(
             for: UUID(),
@@ -2821,9 +2823,10 @@ struct BeanNotesTests {
             canPasteImage: false
         )
         let solePageActions = solePageMenu.children.compactMap { $0 as? UIAction }
-        try #require(solePageActions.count == 3)
-        #expect(solePageActions[2].attributes.contains(.destructive))
+        try #require(solePageActions.count == 4)
         #expect(solePageActions[2].attributes.contains(.disabled))
+        #expect(solePageActions[3].attributes.contains(.destructive))
+        #expect(solePageActions[3].attributes.contains(.disabled))
 
         #expect(!pageView.canPerformAction(#selector(UIResponder.selectAll(_:)), withSender: nil))
         #expect(!pageView.canPerformAction(Selector(("insertSpace:")), withSender: nil))
