@@ -2799,6 +2799,7 @@ struct BeanNotesTests {
             "Paste Image",
             "Remove Page"
         ])
+        #expect(enabledMenu.options.contains(.displayInline))
         #expect(enabledActions[3].attributes.contains(.destructive))
         #expect(!enabledActions[3].attributes.contains(.disabled))
 
@@ -2826,8 +2827,20 @@ struct BeanNotesTests {
 
         #expect(!pageView.canPerformAction(#selector(UIResponder.selectAll(_:)), withSender: nil))
         #expect(!pageView.canPerformAction(Selector(("insertSpace:")), withSender: nil))
-        #expect(type(of: pageView.canvasView) == PKCanvasView.self)
+        #expect(type(of: pageView.canvasView) != PKCanvasView.self)
         #expect(pageView.canvasView.canBecomeFirstResponder)
+        #expect(!pageView.canvasView.canPerformAction(
+            #selector(UIResponder.selectAll(_:)),
+            withSender: nil
+        ))
+        #expect(!pageView.canvasView.canPerformAction(
+            Selector(("insertSpace:")),
+            withSender: nil
+        ))
+        #expect(!pageView.canvasView.canPerformAction(
+            Selector(("insertTab:")),
+            withSender: nil
+        ))
         #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
 
         pageView.applyInputMode(.anyInput)

@@ -3507,12 +3507,27 @@ struct DrawingCanvasView: UIViewRepresentable {
             var force: Bool
         }
 
+        /// PencilKit's canvas is still needed for drawing, but its standard edit
+        /// commands are not meaningful for a drawing page. Keep the canvas's normal
+        /// responder behavior for PencilKit while preventing those commands from
+        /// creating a second native menu during a finger hold.
+        private final class DrawingOnlyCanvasView: PKCanvasView {
+            override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+                switch action {
+                case #selector(UIResponder.selectAll(_:)),
+                     Selector(("insertSpace:")),
+                     Selector(("insertTab:")):
+                    return false
+                default:
+                    return super.canPerformAction(action, withSender: sender)
+                }
+            }
+        }
+
         let backgroundView = PageBackgroundUIView()
         let behindImageContainerView = UIView(frame: .zero)
         let drawingViewportView = UIView(frame: .zero)
-        // PencilKit must retain its responder actions so UIKit can build a valid
-        // edit-menu configuration after an ink or palette interaction.
-        let canvasView = PKCanvasView(frame: .zero)
+        let canvasView: PKCanvasView = DrawingOnlyCanvasView(frame: .zero)
         let foregroundImageContainerView = UIView(frame: .zero)
         let eraserScopeView = EraserScopeView(frame: .zero)
 
@@ -4067,7 +4082,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 actions.append(pasteImage)
             }
             actions.append(remove)
-            return UIMenu(children: actions)
+            // Keep every page action in the first menu instead of allowing UIKit to
+            // represent the custom menu as a disclosure submenu.
+            return UIMenu(title: "", options: [.displayInline], children: actions)
         }
 
         func editMenuInteraction(
