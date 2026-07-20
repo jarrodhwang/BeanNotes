@@ -4150,10 +4150,13 @@ struct DrawingCanvasView: UIViewRepresentable {
                 self?.pageActionRequested?(pageID, .remove)
             }
 
-            // Do not use displayInline here. In an edit menu UIKit can collapse that
-            // representation into two actions plus a disclosure button. A normal menu
-            // presents all page operations together when the disclosure is opened.
-            return UIMenu(title: "", children: [addBelow, addAbove, pasteImage, remove])
+          
+                return UIMenu(
+                    title: "",
+                    options:  [],
+                    children: [addBelow, addAbove, pasteImage, remove]
+                )
+            
         }
 
         func editMenuInteraction(

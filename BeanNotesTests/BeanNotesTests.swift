@@ -2799,7 +2799,7 @@ struct BeanNotesTests {
             "Paste Image",
             "Remove Page"
         ])
-        #expect(!enabledMenu.options.contains(.displayInline))
+        #expect(enabledMenu.options.contains(.displayInline))
         #expect(enabledActions[3].attributes.contains(.destructive))
         #expect(!enabledActions[3].attributes.contains(.disabled))
 
