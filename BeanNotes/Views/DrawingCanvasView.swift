@@ -4991,7 +4991,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             layer.contentsScale = UIScreen.main.scale
             layer.rasterizationScale = UIScreen.main.scale
             layer.shouldRasterize = false
-            layer.drawsAsynchronously = true
+            // This view is redrawn when theme artwork is toggled. Drawing it on the
+            // main thread keeps the new background state in lockstep with the live
+            // PencilKit canvas above it; asynchronous layer drawing can otherwise
+            // present a cleared or stale backing store during the transition.
+            layer.drawsAsynchronously = false
         }
 
         required init?(coder: NSCoder) {
@@ -5002,7 +5006,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             layer.contentsScale = UIScreen.main.scale
             layer.rasterizationScale = UIScreen.main.scale
             layer.shouldRasterize = false
-            layer.drawsAsynchronously = true
+            // See init(frame:): artwork visibility changes must repaint this opaque
+            // background deterministically without affecting the drawing layer.
+            layer.drawsAsynchronously = false
         }
 
         func updateRenderScale(_ scale: CGFloat) {
