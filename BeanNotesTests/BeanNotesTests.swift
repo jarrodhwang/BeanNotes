@@ -3756,7 +3756,6 @@ struct BeanNotesTests {
                 renderQuality: .balanced,
                 storageRootURL: URL(fileURLWithPath: "/tmp/BeanNotesConfigurationSignature"),
                 theme: .bean,
-                showsBeanArtwork: false,
                 hasTopContent: false
             )
         }
@@ -3780,6 +3779,50 @@ struct BeanNotesTests {
         attachment.height = .infinity
         let corruptGeometry = signature()
         #expect(signature() == corruptGeometry)
+    }
+
+    @Test @MainActor func artworkVisibilityUpdatePreservesLiveDrawing() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesArtworkVisibility-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "artwork-visibility.drawing")
+        let drawing = makeTestDrawing(color: .systemRed, xOffset: 24)
+        try drawingStorage.save(drawing, for: page)
+
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        defer {
+            DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+        }
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.layoutIfNeeded()
+
+        let canvasView = try #require(container.activeCanvasView)
+        let originalDrawingData = canvasView.drawing.dataRepresentation()
+        container.updateArtworkVisibility(true)
+        container.updateArtworkVisibility(false)
+
+        #expect(canvasView.drawing.dataRepresentation() == originalDrawingData)
     }
 
     @Test @MainActor func attachmentPreviewCommitsOnceAndSurvivesCanvasRefresh() throws {

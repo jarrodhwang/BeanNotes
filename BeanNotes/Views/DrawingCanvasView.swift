@@ -128,7 +128,6 @@ struct DrawingCanvasConfigurationSignature: Equatable {
     private var renderQuality: DrawingRenderQuality
     private var storageRootPath: String
     private var theme: BeanNotesTheme
-    private var showsBeanArtwork: Bool
     private var hasTopContent: Bool
 
     init(
@@ -138,7 +137,6 @@ struct DrawingCanvasConfigurationSignature: Equatable {
         renderQuality: DrawingRenderQuality,
         storageRootURL: URL,
         theme: BeanNotesTheme,
-        showsBeanArtwork: Bool,
         hasTopContent: Bool
     ) {
         self.pages = pages.map { page in
@@ -172,7 +170,6 @@ struct DrawingCanvasConfigurationSignature: Equatable {
         self.renderQuality = renderQuality
         self.storageRootPath = storageRootURL.standardizedFileURL.path
         self.theme = theme
-        self.showsBeanArtwork = showsBeanArtwork
         self.hasTopContent = hasTopContent
     }
 }
@@ -388,6 +385,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
             context.coordinator.configurationSignature = configurationSignature
         }
+        // Artwork is a repaint-only preference. Keep it out of the canvas rebuild
+        // signature so changing it cannot release or reload live PencilKit drawings.
+        containerView.updateArtworkVisibility(showsBeanArtwork)
         containerView.synchronizeSelectedPageID(selectionUpdate.effectivePageID)
         containerView.reassertInteractionState()
 
@@ -459,7 +459,6 @@ struct DrawingCanvasView: UIViewRepresentable {
             renderQuality: renderQuality,
             storageRootURL: drawingStorage.storage.rootURL,
             theme: theme,
-            showsBeanArtwork: showsBeanArtwork,
             hasTopContent: topContent != nil
         )
     }
@@ -798,6 +797,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             if inputModeChanged {
                 applyInputModeToMaterializedPages()
             }
+        }
+
+        func updateArtworkVisibility(_ showsBeanArtwork: Bool) {
+            self.showsBeanArtwork = showsBeanArtwork
+            for pageView in pageViews.values {
+                pageView.updateArtworkVisibility(showsBeanArtwork)
+            }
+            continuousPageView?.updateArtworkVisibility(showsBeanArtwork)
         }
 
         /// Defers restoration until the document has frames, zoom limits, and a viewport.
@@ -3715,6 +3722,12 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             layoutPage()
             restoreDrawingLayerOrder()
+        }
+
+        func updateArtworkVisibility(_ showsBeanArtwork: Bool) {
+            guard backgroundView.showsBeanArtwork != showsBeanArtwork else { return }
+            backgroundView.showsBeanArtwork = showsBeanArtwork
+            backgroundView.setNeedsDisplay()
         }
 
         func configureContinuousDrawingOverlay(
