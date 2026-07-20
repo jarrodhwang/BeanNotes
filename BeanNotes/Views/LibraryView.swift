@@ -2491,11 +2491,9 @@ private struct NoteCardView: View {
             loadThumbnail()
         }
         .onChange(of: beanNotesTheme) { _, _ in
-            thumbnailImage = nil
             loadThumbnail(forceRefresh: true)
         }
         .onChange(of: showsThemeArtwork) { _, _ in
-            thumbnailImage = nil
             loadThumbnail(forceRefresh: true)
         }
         .onChange(of: thumbnailRefreshVersion) { _, _ in
@@ -2628,7 +2626,12 @@ private struct NoteCardView: View {
                 )
                 try Task.checkCancellation()
                 guard thumbnailLoadRequestID == requestID else { return }
-                thumbnailImage = generatedImage
+                // Keep the existing preview visible until the replacement has been
+                // decoded. A preference-only refresh must never turn a note card
+                // into an empty state while the background render is in flight.
+                if let generatedImage {
+                    thumbnailImage = generatedImage
+                }
                 try modelContext.save()
             } catch is CancellationError {
                 return

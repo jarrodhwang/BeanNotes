@@ -800,6 +800,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func updateArtworkVisibility(_ showsBeanArtwork: Bool) {
+            guard self.showsBeanArtwork != showsBeanArtwork else { return }
             self.showsBeanArtwork = showsBeanArtwork
             for pageView in pageViews.values {
                 pageView.updateArtworkVisibility(showsBeanArtwork)
@@ -3728,6 +3729,9 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard backgroundView.showsBeanArtwork != showsBeanArtwork else { return }
             backgroundView.showsBeanArtwork = showsBeanArtwork
             backgroundView.setNeedsDisplay()
+            // Repainting the background must not alter the PencilKit and attachment
+            // layer order, and must not require rebuilding the live drawing.
+            restoreDrawingLayerOrder()
         }
 
         func configureContinuousDrawingOverlay(
