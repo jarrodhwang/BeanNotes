@@ -14,7 +14,8 @@ struct PenPaletteView: View {
     var createCodeSnippet: () -> Void = {}
 
     @AppStorage(PenPaletteLayoutMetrics.isCollapsedStorageKey) private var isCollapsed = false
-    @AppStorage(PenPaletteLayoutMetrics.committedOffsetStorageKey) private var committedOffsetRaw = ""
+    @AppStorage(PenPaletteLayoutMetrics.committedPositionStorageKey) private var committedPositionRaw = ""
+    @AppStorage(PenPaletteLayoutMetrics.committedOffsetStorageKey) private var legacyCommittedOffsetRaw = ""
     @AppStorage(DrawingPaletteConfiguration.colorCountStorageKey)
     private var paletteColorCount = DrawingPaletteConfiguration.defaultColorCountForCurrentDevice
     @State private var isShowingEraserModes = false
@@ -28,6 +29,7 @@ struct PenPaletteView: View {
     @State private var measuredPaletteSize: CGSize = .zero
     @State private var selectionFeedback = UISelectionFeedbackGenerator()
     @State private var hasLoadedCommittedOffset = false
+    @State private var loadedLegacyCommittedOffset = false
 
     var body: some View {
         paletteBody
@@ -578,22 +580,51 @@ struct PenPaletteView: View {
     private func clampCommittedOffset(persisting: Bool = false) {
         loadCommittedOffsetIfNeeded()
         let clamped = clampedOffset(committedOffset)
-        guard clamped != committedOffset else { return }
-        committedOffset = clamped
+        if clamped != committedOffset {
+            committedOffset = clamped
+        }
 
-        if persisting {
+        if persisting || (measuredPaletteSize != .zero && loadedLegacyCommittedOffset) {
             persistCommittedOffset()
+            loadedLegacyCommittedOffset = false
         }
     }
 
     private func loadCommittedOffsetIfNeeded() {
         guard !hasLoadedCommittedOffset else { return }
-        committedOffset = PenPaletteLayoutMetrics.decodedCommittedOffset(from: committedOffsetRaw) ?? .zero
+        if let position = PenPaletteLayoutMetrics.decodedCommittedPosition(from: committedPositionRaw) {
+            committedOffset = PenPaletteLayoutMetrics.committedOffset(
+                for: position,
+                dockOffset: dockOffset
+            )
+        } else {
+            // Migrate positions saved by versions that stored an offset from
+            // the old responsive dock into the new absolute position format.
+            if let legacyOffset = PenPaletteLayoutMetrics.decodedCommittedOffset(
+                from: legacyCommittedOffsetRaw
+            ) {
+                let legacyPosition = PenPaletteLayoutMetrics.position(
+                    for: legacyOffset,
+                    dockOffset: PenPaletteLayoutMetrics.legacyDockOffset(for: availableSize)
+                )
+                committedOffset = PenPaletteLayoutMetrics.committedOffset(
+                    for: legacyPosition,
+                    dockOffset: dockOffset
+                )
+                loadedLegacyCommittedOffset = true
+            } else {
+                committedOffset = .zero
+            }
+        }
         hasLoadedCommittedOffset = true
     }
 
     private func persistCommittedOffset() {
-        committedOffsetRaw = PenPaletteLayoutMetrics.encodedCommittedOffset(committedOffset)
+        let position = PenPaletteLayoutMetrics.position(
+            for: committedOffset,
+            dockOffset: dockOffset
+        )
+        committedPositionRaw = PenPaletteLayoutMetrics.encodedCommittedPosition(position)
     }
 
     private func clampedOffset(_ proposedOffset: CGSize) -> CGSize {
@@ -1074,6 +1105,7 @@ private struct RubEraserGlyph: Shape {
 
 struct PenPaletteLayoutMetrics {
     static let isCollapsedStorageKey = "penPalette.isCollapsed"
+    static let committedPositionStorageKey = "penPalette.committedPosition"
     static let committedOffsetStorageKey = "penPalette.committedOffset"
     static let compactWidthThreshold: CGFloat = 1_180
     static let primaryControlHitSize: CGFloat = 44
@@ -1086,10 +1118,28 @@ struct PenPaletteLayoutMetrics {
         return availableSize.width < compactWidthThreshold
     }
 
-    static func defaultDockOffset(for availableSize: CGSize) -> CGSize {
+    static func defaultDockOffset(for _: CGSize) -> CGSize {
+        CGSize(width: 8, height: 8)
+    }
+
+    static func legacyDockOffset(for availableSize: CGSize) -> CGSize {
         CGSize(
             width: prefersCompactLayout(for: availableSize) ? 18 : 96,
             height: 14
+        )
+    }
+
+    static func position(for committedOffset: CGSize, dockOffset: CGSize) -> CGSize {
+        CGSize(
+            width: dockOffset.width + committedOffset.width,
+            height: dockOffset.height + committedOffset.height
+        )
+    }
+
+    static func committedOffset(for position: CGSize, dockOffset: CGSize) -> CGSize {
+        CGSize(
+            width: position.width - dockOffset.width,
+            height: position.height - dockOffset.height
         )
     }
 
@@ -1157,6 +1207,14 @@ struct PenPaletteLayoutMetrics {
         }
 
         return CGSize(width: width, height: height)
+    }
+
+    static func encodedCommittedPosition(_ position: CGSize) -> String {
+        encodedCommittedOffset(position)
+    }
+
+    static func decodedCommittedPosition(from rawValue: String) -> CGSize? {
+        decodedCommittedOffset(from: rawValue)
     }
 }
 

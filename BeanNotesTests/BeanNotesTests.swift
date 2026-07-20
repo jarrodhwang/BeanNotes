@@ -3237,16 +3237,14 @@ struct BeanNotesTests {
         ))
     }
 
-    @Test func penPaletteUsesCompactDockingOnNarrowIPadWidths() {
+    @Test func penPaletteStartsAtTheTopLeftAndKeepsResponsiveLayout() {
         let narrowSize = CGSize(width: 1_024, height: 1_366)
         let wideSize = CGSize(width: 1_366, height: 1_024)
 
         #expect(PenPaletteLayoutMetrics.prefersCompactLayout(for: narrowSize))
         #expect(!PenPaletteLayoutMetrics.prefersCompactLayout(for: wideSize))
-        #expect(
-            PenPaletteLayoutMetrics.defaultDockOffset(for: narrowSize).width
-            < PenPaletteLayoutMetrics.defaultDockOffset(for: wideSize).width
-        )
+        #expect(PenPaletteLayoutMetrics.defaultDockOffset(for: narrowSize) == CGSize(width: 8, height: 8))
+        #expect(PenPaletteLayoutMetrics.defaultDockOffset(for: wideSize) == CGSize(width: 8, height: 8))
     }
 
     @Test func paletteColorCountDefaultsMatchIPadScreenClasses() throws {
@@ -3619,6 +3617,25 @@ struct BeanNotesTests {
         #expect(PenPaletteLayoutMetrics.encodedCommittedOffset(CGSize(width: CGFloat.infinity, height: 3)) == "0.0,3.0")
         #expect(PenPaletteLayoutMetrics.decodedCommittedOffset(from: "bad") == nil)
         #expect(PenPaletteLayoutMetrics.decodedCommittedOffset(from: "1,nan") == nil)
+    }
+
+    @Test func penPaletteCommittedPositionRestoresAcrossDockSizes() throws {
+        let position = CGSize(width: 412.5, height: 238.25)
+        let encoded = PenPaletteLayoutMetrics.encodedCommittedPosition(position)
+        let decoded = try #require(PenPaletteLayoutMetrics.decodedCommittedPosition(from: encoded))
+        let restoredOffset = PenPaletteLayoutMetrics.committedOffset(
+            for: decoded,
+            dockOffset: CGSize(width: 8, height: 8)
+        )
+        let restoredPosition = PenPaletteLayoutMetrics.position(
+            for: restoredOffset,
+            dockOffset: CGSize(width: 8, height: 8)
+        )
+
+        #expect(abs(restoredOffset.width - 404.5) < 0.001)
+        #expect(abs(restoredOffset.height - 230.25) < 0.001)
+        #expect(abs(restoredPosition.width - position.width) < 0.001)
+        #expect(abs(restoredPosition.height - position.height) < 0.001)
     }
 
     @Test func attachmentImageRasterBudgetBalancesSharpnessAndMemory() {
