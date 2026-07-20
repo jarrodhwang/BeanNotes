@@ -876,6 +876,7 @@ struct PenPaletteView: View {
                             .stroke(.blue, lineWidth: 2)
                     }
                 }
+                .palettePrimaryHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(widthLabel(for: width)) point stroke")
@@ -910,6 +911,7 @@ struct PenPaletteView: View {
                             .stroke(.blue, lineWidth: 2)
                     }
                 }
+                .palettePrimaryHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(widthLabel(for: width)) point eraser")
