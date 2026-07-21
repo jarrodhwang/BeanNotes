@@ -38,7 +38,7 @@ notes,handwriting,sketch,ipad,pencil,study,planner,pdf,documents,draw,notebook,o
 
 These are not present in the repository and must be replaced with live, publicly accessible pages before submission:
 
-- Support URL: **OWNER ACTION REQUIRED — add the Bean Notes support page URL**
+- Support URL: https://jarrodhwang.github.io/BeanNotes/support.html
 - Marketing URL: **OWNER ACTION REQUIRED — add the Bean Notes product page URL, or leave blank if optional**
 
 ## App Review Information
@@ -61,7 +61,7 @@ Automatically release this version after App Review.
 
 ## Submission checklist
 
-- [ ] Replace the Support URL placeholder with a live support page.
+- [x] Add the live Support URL: https://jarrodhwang.github.io/BeanNotes/support.html.
 - [ ] Add a Marketing URL if desired.
 - [ ] Confirm the app icon, screenshots, age rating, and privacy answers in App Store Connect.
 - [ ] Archive the app in Xcode and upload the matching 1.0 (build 1) build using Xcode or Transporter; after processing, select it in the Builds section before submitting for review.
