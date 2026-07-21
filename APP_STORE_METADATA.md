@@ -64,5 +64,5 @@ Automatically release this version after App Review.
 - [ ] Replace the Support URL placeholder with a live support page.
 - [ ] Add a Marketing URL if desired.
 - [ ] Confirm the app icon, screenshots, age rating, and privacy answers in App Store Connect.
-- [ ] Upload the matching 1.0 (build 1) archive.
+- [ ] Archive the app in Xcode and upload the matching 1.0 (build 1) build using Xcode or Transporter; after processing, select it in the Builds section before submitting for review.
 - [ ] Confirm the App Store category is appropriate; the project currently declares Education.
