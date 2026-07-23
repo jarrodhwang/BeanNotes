@@ -60,18 +60,16 @@ struct AttachmentPickerView: View {
                     await loadPhotoItem(newValue)
                 }
             }
-            .fileImporter(
-                isPresented: $isShowingFileImporter,
-                allowedContentTypes: ImportExportService.supportedContentTypes,
-                allowsMultipleSelection: true
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    importFiles(urls)
-                    dismiss()
-                case .failure(let error):
-                    errorMessage = error.localizedDescription
-                }
+            .sheet(isPresented: $isShowingFileImporter) {
+                DocumentImportPicker(
+                    allowedContentTypes: ImportExportService.supportedContentTypes,
+                    allowsMultipleSelection: true,
+                    onPick: { urls in
+                        importFiles(urls)
+                        dismiss()
+                    },
+                    onCancel: {}
+                )
             }
         }
     }

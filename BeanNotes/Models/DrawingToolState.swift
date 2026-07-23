@@ -408,7 +408,7 @@ enum PenPaletteMode: String, CaseIterable, Identifiable {
 
 enum DrawingInputMode: String, CaseIterable, Identifiable {
     static let storageKey = "drawingInputMode"
-    static let defaultMode: DrawingInputMode = .pencilOnly
+    static let defaultMode: DrawingInputMode = .anyInput
 
     case pencilOnly
     case anyInput

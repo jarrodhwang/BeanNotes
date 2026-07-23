@@ -371,21 +371,19 @@ struct LibraryView: View {
         .sheet(item: $exportSharePayload) { payload in
             ActivityView(activityItems: payload.urls)
         }
-        .fileImporter(
-            isPresented: $isShowingDocumentImporter,
-            allowedContentTypes: ImportExportService.supportedContentTypes,
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                importTask?.cancel()
-                importTask = Task { @MainActor in
-                    await importDocumentsAsNotes(urls)
-                    importTask = nil
-                }
-            case .failure(let error):
-                errorMessage = error.localizedDescription
-            }
+        .sheet(isPresented: $isShowingDocumentImporter) {
+            DocumentImportPicker(
+                allowedContentTypes: ImportExportService.supportedContentTypes,
+                allowsMultipleSelection: true,
+                onPick: { urls in
+                    importTask?.cancel()
+                    importTask = Task { @MainActor in
+                        await importDocumentsAsNotes(urls)
+                        importTask = nil
+                    }
+                },
+                onCancel: {}
+            )
         }
         .alert("Delete Folder?", isPresented: Binding(
             get: { folderPendingDeletion != nil },

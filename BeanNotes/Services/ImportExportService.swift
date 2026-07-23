@@ -338,25 +338,9 @@ enum ImportExportError: LocalizedError {
 
 @MainActor
 struct ImportExportService {
-    static let wordDocument = UTType(filenameExtension: "docx") ?? .data
-    static let legacyWordDocument = UTType(filenameExtension: "doc") ?? .data
-    static let powerpoint = UTType(filenameExtension: "ppt") ?? .data
-    static let powerpointXML = UTType(filenameExtension: "pptx") ?? .data
-    static let commaSeparatedText = UTType(filenameExtension: "csv") ?? .commaSeparatedText
-
-    static let supportedContentTypes: [UTType] = [
-        .pdf,
-        .image,
-        .png,
-        .jpeg,
-        wordDocument,
-        legacyWordDocument,
-        commaSeparatedText,
-        powerpoint,
-        powerpointXML,
-        .plainText,
-        .data
-    ]
+    /// The importer stages and preserves arbitrary files, so filtering the
+    /// system picker would incorrectly hide valid local provider locations.
+    static let supportedContentTypes: [UTType] = [.item]
 
     var storage = LocalStorageService()
     var drawingStorage = DrawingStorageService()

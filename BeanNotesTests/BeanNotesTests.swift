@@ -2185,11 +2185,15 @@ struct BeanNotesTests {
     }
 
     @Test func drawingInputModeMapsToPencilKitPolicies() {
-        #expect(DrawingInputMode.defaultMode == .pencilOnly)
+        #expect(DrawingInputMode.defaultMode == .anyInput)
         #expect(DrawingInputMode.allCases.map(\.label) == ["Pencil Only", "Pencil or Finger"])
         #expect(DrawingInputMode.allCases.map(\.systemImage) == ["hand.raised", "scribble"])
         #expect(DrawingInputMode.pencilOnly.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.pencilOnly.rawValue)
         #expect(DrawingInputMode.anyInput.drawingPolicy.rawValue == PKCanvasViewDrawingPolicy.anyInput.rawValue)
+    }
+
+    @Test func documentImportIncludesAllFileProviderItems() {
+        #expect(ImportExportService.supportedContentTypes == [.item])
     }
 
     @Test func nativeDrawingScaleUsesCurrentResolutionWithoutOversizedHeadroom() {

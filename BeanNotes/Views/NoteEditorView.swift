@@ -403,12 +403,14 @@ struct NoteEditorView: View {
                 }
             )
         }
-        .fileImporter(
-            isPresented: $isShowingVersionFileImporter,
-            allowedContentTypes: [.pdf, .image],
-            allowsMultipleSelection: false,
-            onCompletion: handleVersionFileImporterResult(_:)
-        )
+        .sheet(isPresented: $isShowingVersionFileImporter) {
+            DocumentImportPicker(
+                allowedContentTypes: [.pdf, .image],
+                allowsMultipleSelection: false,
+                onPick: handleVersionFileSelection(_:),
+                onCancel: reopenDocumentVersionManagerAfterImport
+            )
+        }
         .alert(attachmentDeletionTitle, isPresented: Binding(
             get: { attachmentPendingDeletion != nil },
             set: { if !$0 { attachmentPendingDeletion = nil } }
@@ -2173,33 +2175,22 @@ struct NoteEditorView: View {
         }
     }
 
-    private func handleVersionFileImporterResult(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let sourceURL = urls.first else {
-                reopenDocumentVersionManagerAfterImport()
-                return
-            }
+    private func handleVersionFileSelection(_ urls: [URL]) {
+        guard let sourceURL = urls.first else {
+            reopenDocumentVersionManagerAfterImport()
+            return
+        }
 
-            importTask?.cancel()
-            importTask = Task { @MainActor in
-                let outcome = await importDocumentVersion(from: sourceURL)
-                importTask = nil
+        importTask?.cancel()
+        importTask = Task { @MainActor in
+            let outcome = await importDocumentVersion(from: sourceURL)
+            importTask = nil
 
-                switch outcome {
-                case .imported, .cancelled:
-                    reopenDocumentVersionManagerAfterImport()
-                case .failed:
-                    shouldReopenDocumentVersionsAfterImport = false
-                }
-            }
-        case .failure(let error):
-            let cocoaError = error as NSError
-            if cocoaError.domain == NSCocoaErrorDomain, cocoaError.code == NSUserCancelledError {
+            switch outcome {
+            case .imported, .cancelled:
                 reopenDocumentVersionManagerAfterImport()
-            } else {
+            case .failed:
                 shouldReopenDocumentVersionsAfterImport = false
-                errorMessage = "BeanNotes could not open the document picker. \(error.localizedDescription)"
             }
         }
     }
