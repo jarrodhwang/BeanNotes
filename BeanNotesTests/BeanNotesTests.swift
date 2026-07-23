@@ -1366,6 +1366,36 @@ struct BeanNotesTests {
         #expect(snapshot.totalFileCount == 4)
     }
 
+    @Test func localStorageAtomicallyReplacesExistingPreviewData() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAtomicPreview-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let first = try storage.saveData(
+            Data(repeating: 1, count: 11),
+            fileName: "Preview.jpg",
+            contentType: .jpeg,
+            to: .thumbnails,
+            replacingExisting: true
+        )
+        let replacement = Data(repeating: 2, count: 17)
+        let second = try storage.saveData(
+            replacement,
+            fileName: "Preview.jpg",
+            contentType: .jpeg,
+            to: .thumbnails,
+            replacingExisting: true
+        )
+
+        #expect(first.relativePath == second.relativePath)
+        #expect(try Data(contentsOf: storage.url(forRelativePath: second.relativePath)) == replacement)
+        #expect(try storage.storageUsageSnapshot().usage(for: .thumbnails)?.fileCount == 1)
+        #expect(try storage.storageUsageSnapshot().usage(for: .thumbnails)?.byteCount == 17)
+    }
+
     @Test func localStorageExcludesRegenerableThumbnailsFromDeviceBackup() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesThumbnailBackup-\(UUID().uuidString)", isDirectory: true)

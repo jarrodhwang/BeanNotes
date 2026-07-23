@@ -7250,17 +7250,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             rootURL: URL,
             drawingFileName: String
         ) throws -> Data {
-            let drawingsURL = rootURL.appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
-            try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
-            let data = drawing.dataRepresentation()
-            try data.write(to: drawingsURL.appendingPathComponent(drawingFileName), options: [.atomic])
-            DrawingStorageService.cache(
+            try DrawingStorageService.writeDrawing(
                 drawing,
-                fileName: drawingFileName,
                 rootURL: rootURL,
-                approximateBytes: data.count
+                drawingFileName: drawingFileName
             )
-            return data
         }
 
         private func reportDrawingSaveSuccess(

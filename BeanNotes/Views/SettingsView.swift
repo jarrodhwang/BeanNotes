@@ -609,19 +609,29 @@ struct SettingsView: View {
 
         isLoadingStorageUsage = true
         storageErrorMessage = nil
+        defer { isLoadingStorageUsage = false }
 
         let rootURL = LocalStorageService().rootURL
 
         do {
-            let snapshot = try await Task.detached(priority: .utility) {
-                try LocalStorageService(rootURL: rootURL).storageUsageSnapshot()
-            }.value
+            let snapshot = try await withThrowingTaskGroup(of: LocalStorageUsageSnapshot.self) { group in
+                group.addTask(priority: .utility) {
+                    try LocalStorageService(rootURL: rootURL).storageUsageSnapshot()
+                }
+                defer { group.cancelAll() }
+                guard let snapshot = try await group.next() else {
+                    throw CancellationError()
+                }
+                return snapshot
+            }
             storageUsage = snapshot
+        } catch is CancellationError {
+            // The view may disappear while the file walk is in progress. Its next
+            // appearance starts a fresh calculation instead of leaving a spinner or
+            // presenting cancellation as a storage failure.
         } catch {
             storageErrorMessage = error.localizedDescription
         }
-
-        isLoadingStorageUsage = false
     }
 
     @MainActor

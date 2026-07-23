@@ -510,14 +510,13 @@ struct ThumbnailService {
         fileName: String,
         rootURL: URL
     ) throws -> PKDrawing {
-        let drawingURL = rootURL
-            .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
-            .appendingPathComponent(fileName)
-
-        do {
-            return try PKDrawing(data: Data(contentsOf: drawingURL))
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        switch DrawingStorageService.loadDrawingResult(fileName: fileName, rootURL: rootURL) {
+        case let .loaded(drawing):
+            return drawing
+        case .missing:
             return PKDrawing()
+        case let .unavailable(error):
+            throw error
         }
     }
 

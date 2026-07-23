@@ -65,6 +65,16 @@ struct DrawingStorageService {
         label: "com.snowfox.BeanNotes.drawing-prefetch",
         qos: .utility
     )
+    private static let drawingFileAccessQueueKey = DispatchSpecificKey<Void>()
+    private static let drawingFileAccessQueue: DispatchQueue = {
+        let queue = DispatchQueue(
+            label: "com.snowfox.BeanNotes.drawing-file-access",
+            qos: .utility,
+            attributes: .concurrent
+        )
+        queue.setSpecific(key: drawingFileAccessQueueKey, value: ())
+        return queue
+    }()
     private static let prefetchLock = NSLock()
     private static var prefetchStates: [String: PrefetchState] = [:]
 
@@ -78,31 +88,24 @@ struct DrawingStorageService {
     }
 
     func loadDrawingResult(for page: NotePage) -> LoadResult {
+        Self.loadDrawingResult(
+            fileName: page.drawingFileName,
+            rootURL: storage.rootURL
+        )
+    }
+
+    nonisolated static func loadDrawingResult(fileName: String, rootURL: URL) -> LoadResult {
         Self.ensureMemoryWarningObservation()
-        let cacheKey = Self.cacheKey(rootURL: storage.rootURL, fileName: page.drawingFileName)
+        let cacheKey = Self.cacheKey(rootURL: rootURL, fileName: fileName)
         if let cached = Self.drawingCache.object(forKey: cacheKey) {
             return .loaded(cached.drawing)
         }
 
-        do {
-            // Reads do not need to create the drawings directory. This avoids a
-            // filesystem mutation and directory check on every cold page load.
-            let url = storage.rootURL
-                .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
-                .appendingPathComponent(page.drawingFileName)
-            let data = try Data(contentsOf: url)
-            let drawing = try PKDrawing(data: data)
-            Self.cache(
-                drawing,
-                fileName: page.drawingFileName,
-                rootURL: storage.rootURL,
-                approximateBytes: data.count
-            )
-            return .loaded(drawing)
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            return .missing
-        } catch {
-            return .unavailable(DrawingLoadError(underlyingError: error))
+        return Self.withDrawingFileRead {
+            if let cached = Self.drawingCache.object(forKey: cacheKey) {
+                return .loaded(cached.drawing)
+            }
+            return Self.loadDrawingFromDisk(fileName: fileName, rootURL: rootURL)
         }
     }
 
@@ -113,11 +116,38 @@ struct DrawingStorageService {
     }
 
     func save(_ drawing: PKDrawing, for page: NotePage) throws {
-        let url = try drawingURL(for: page)
-        let data = drawing.dataRepresentation()
-        try data.write(to: url, options: [.atomic])
-        Self.cache(drawing, fileName: page.drawingFileName, rootURL: storage.rootURL, approximateBytes: data.count)
+        _ = try Self.writeDrawing(
+            drawing,
+            rootURL: storage.rootURL,
+            drawingFileName: page.drawingFileName
+        )
         page.touch()
+    }
+
+    nonisolated static func writeDrawing(
+        _ drawing: PKDrawing,
+        rootURL: URL,
+        drawingFileName: String
+    ) throws -> Data {
+        try withDrawingFileWrite {
+            let drawingsURL = rootURL.appendingPathComponent(
+                StorageDirectory.drawings.rawValue,
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
+            let data = drawing.dataRepresentation()
+            try data.write(
+                to: drawingsURL.appendingPathComponent(drawingFileName),
+                options: [.atomic]
+            )
+            cache(
+                drawing,
+                fileName: drawingFileName,
+                rootURL: rootURL,
+                approximateBytes: data.count
+            )
+            return data
+        }
     }
 
     static func cache(_ drawing: PKDrawing, fileName: String, rootURL: URL, approximateBytes: Int? = nil) {
@@ -173,16 +203,7 @@ struct DrawingStorageService {
 
         prefetchQueue.async {
             autoreleasepool {
-                let url = rootURL
-                    .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
-                    .appendingPathComponent(fileName)
-                let prefetchedDrawing: (drawing: PKDrawing, approximateBytes: Int)? = {
-                    guard let data = try? Data(contentsOf: url),
-                          let drawing = try? PKDrawing(data: data) else {
-                        return nil
-                    }
-                    return (drawing, data.count)
-                }()
+                _ = loadDrawingResult(fileName: fileName, rootURL: rootURL)
 
                 prefetchLock.lock()
                 guard let currentState = prefetchStates[stringKey],
@@ -190,20 +211,7 @@ struct DrawingStorageService {
                     prefetchLock.unlock()
                     return
                 }
-                let shouldCache = currentState.cacheVersion == prefetchState.cacheVersion
-                    && drawingCache.object(forKey: key) == nil
                 prefetchStates[stringKey] = nil
-                // A missing, temporarily unreadable, or corrupt file is not the same
-                // thing as a valid blank drawing. Caching a synthetic empty drawing
-                // prevents later loads from retrying disk and can turn a transient
-                // storage failure into permanent data loss when the canvas flushes.
-                if shouldCache, let prefetchedDrawing {
-                    drawingCache.setObject(
-                        CachedDrawing(prefetchedDrawing.drawing),
-                        forKey: key,
-                        cost: max(prefetchedDrawing.approximateBytes, 1)
-                    )
-                }
                 prefetchLock.unlock()
             }
         }
@@ -217,6 +225,43 @@ struct DrawingStorageService {
 
     private static func cacheKey(rootURL: URL, fileName: String) -> NSString {
         "\(rootURL.standardizedFileURL.path)/\(StorageDirectory.drawings.rawValue)/\(fileName)" as NSString
+    }
+
+    nonisolated private static func loadDrawingFromDisk(fileName: String, rootURL: URL) -> LoadResult {
+        do {
+            // Reads do not need to create the drawings directory. This avoids a
+            // filesystem mutation and directory check on every cold page load.
+            let url = rootURL
+                .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
+                .appendingPathComponent(fileName)
+            let data = try Data(contentsOf: url)
+            let drawing = try PKDrawing(data: data)
+            cache(
+                drawing,
+                fileName: fileName,
+                rootURL: rootURL,
+                approximateBytes: data.count
+            )
+            return .loaded(drawing)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return .missing
+        } catch {
+            return .unavailable(DrawingLoadError(underlyingError: error))
+        }
+    }
+
+    nonisolated private static func withDrawingFileRead<T>(_ operation: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: drawingFileAccessQueueKey) != nil {
+            return try operation()
+        }
+        return try drawingFileAccessQueue.sync(execute: operation)
+    }
+
+    nonisolated private static func withDrawingFileWrite<T>(_ operation: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: drawingFileAccessQueueKey) != nil {
+            return try operation()
+        }
+        return try drawingFileAccessQueue.sync(flags: .barrier, execute: operation)
     }
 
     private static func ensureMemoryWarningObservation() {

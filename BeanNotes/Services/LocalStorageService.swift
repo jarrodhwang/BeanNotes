@@ -430,16 +430,15 @@ struct LocalStorageService {
         fileName: String,
         contentType: UTType,
         to directory: StorageDirectory,
-        replacingExisting: Bool
+        replacingExisting _: Bool
     ) throws -> StoredFile {
         let directoryURL = try directoryURL(for: directory)
         let sanitizedName = fileName.sanitizedFileName
         let destinationURL = directoryURL.appendingPathComponent(sanitizedName)
 
-        if replacingExisting, fileManager.fileExists(atPath: destinationURL.path) {
-            try fileManager.removeItem(at: destinationURL)
-        }
-
+        // Atomic writes replace an existing file themselves. Removing it first leaves
+        // a visible gap for preview readers and can make an otherwise valid preview
+        // briefly appear missing while it is being refreshed.
         try data.write(to: destinationURL, options: [.atomic])
 
         return StoredFile(
@@ -495,9 +494,11 @@ struct LocalStorageService {
     }
 
     nonisolated func storageUsageSnapshot() throws -> LocalStorageUsageSnapshot {
+        try Task.checkCancellation()
         try prepareDirectories()
 
         let directories = try StorageDirectory.allCases.map { directory in
+            try Task.checkCancellation()
             let usage = try directoryUsage(at: directoryURL(for: directory))
             return LocalStorageDirectoryUsage(
                 directory: directory,
@@ -614,7 +615,7 @@ struct LocalStorageService {
         guard let enumerator = fileManager.enumerator(
             at: directoryURL,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-            options: [.skipsPackageDescendants]
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else {
             return (0, 0)
         }
@@ -623,7 +624,13 @@ struct LocalStorageService {
         var fileCount = 0
 
         for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            try Task.checkCancellation()
+            // Autosave and thumbnail refreshes can atomically replace a file after it
+            // has been enumerated. Storage usage is informational, so skip that one
+            // transient entry rather than failing the whole calculation.
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]) else {
+                continue
+            }
             guard values.isRegularFile == true else { continue }
 
             fileCount += 1

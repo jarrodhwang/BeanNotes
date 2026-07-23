@@ -2390,7 +2390,6 @@ private struct NoteCardView: View {
     var thumbnailRefreshVersion: Int
 
     @State private var thumbnailImage: UIImage?
-    @State private var errorMessage: String?
     @State private var thumbnailLoadTask: Task<Void, Never>?
     @State private var thumbnailLoadRequestID: UUID?
 
@@ -2497,19 +2496,10 @@ private struct NoteCardView: View {
             loadThumbnail(forceRefresh: true)
         }
         .onChange(of: thumbnailRefreshVersion) { _, _ in
-            thumbnailImage = nil
             loadThumbnail()
         }
         .onDisappear {
             cancelThumbnailLoad()
-        }
-        .alert("BeanNotes", isPresented: Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
         }
     }
 
@@ -2637,8 +2627,9 @@ private struct NoteCardView: View {
                 return
             } catch {
                 guard thumbnailLoadRequestID == requestID else { return }
-                thumbnailImage = nil
-                errorMessage = "BeanNotes could not save the note preview. \(error.localizedDescription)"
+                // A preview is derived data. Keep the prior image (or the page
+                // fallback) when a concurrent autosave temporarily prevents a render;
+                // the next refresh will retry without interrupting the note library.
             }
         }
     }
