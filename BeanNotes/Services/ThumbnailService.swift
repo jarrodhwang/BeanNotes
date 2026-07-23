@@ -274,7 +274,7 @@ struct ThumbnailService {
               resolvedShowsArtwork == NoteBackground.showsArtwork(for: resolvedTheme),
               snapshot.contentRevision == NotePageRenderSnapshot.contentRevision(for: page) else {
             if page.thumbnailFileName != stored.relativePath {
-                try? storage.removeFile(relativePath: stored.relativePath)
+                _ = try? storage.removeFile(relativePath: stored.relativePath)
             }
             throw CancellationError()
         }
@@ -324,7 +324,7 @@ struct ThumbnailService {
         page.thumbnailFileName = relativePath
 
         guard let previousPath, previousPath != relativePath else { return }
-        try? storage.removeFile(relativePath: previousPath)
+        _ = try? storage.removeFile(relativePath: previousPath)
     }
 
     nonisolated static func renderThumbnailImage(

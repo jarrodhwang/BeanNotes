@@ -371,7 +371,7 @@ struct LibraryView: View {
         .sheet(item: $exportSharePayload) { payload in
             ActivityView(activityItems: payload.urls)
         }
-        .sheet(isPresented: $isShowingDocumentImporter) {
+        .fullScreenCover(isPresented: $isShowingDocumentImporter) {
             DocumentImportPicker(
                 allowedContentTypes: ImportExportService.supportedContentTypes,
                 allowsMultipleSelection: true,

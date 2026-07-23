@@ -209,6 +209,16 @@ struct LocalStorageExportCleanupReport: Equatable, Sendable {
     var removedByteCount: Int64 = 0
     var failedFileCount = 0
 
+    nonisolated init(
+        removedFileCount: Int = 0,
+        removedByteCount: Int64 = 0,
+        failedFileCount: Int = 0
+    ) {
+        self.removedFileCount = removedFileCount
+        self.removedByteCount = removedByteCount
+        self.failedFileCount = failedFileCount
+    }
+
     var hasFailures: Bool {
         failedFileCount > 0
     }
@@ -289,6 +299,7 @@ enum LocalStorageError: LocalizedError {
     case missingDocumentsDirectory
     case fileMissing(URL)
     case invalidRelativePath(String)
+    case storageScanTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -298,6 +309,8 @@ enum LocalStorageError: LocalizedError {
             "The file could not be found: \(url.lastPathComponent)"
         case .invalidRelativePath(let path):
             "The file path is not inside BeanNotes storage: \(path)"
+        case .storageScanTimedOut:
+            "Storage calculation took too long. Your notes remain available; try again after current saves finish."
         }
     }
 }
@@ -493,13 +506,17 @@ struct LocalStorageService {
         return report
     }
 
-    nonisolated func storageUsageSnapshot() throws -> LocalStorageUsageSnapshot {
+    nonisolated func storageUsageSnapshot(maximumDuration: TimeInterval = 12) throws -> LocalStorageUsageSnapshot {
         try Task.checkCancellation()
         try prepareDirectories()
+        let deadline = Date().addingTimeInterval(max(maximumDuration, 0))
 
         let directories = try StorageDirectory.allCases.map { directory in
             try Task.checkCancellation()
-            let usage = try directoryUsage(at: directoryURL(for: directory))
+            guard Date() <= deadline else {
+                throw LocalStorageError.storageScanTimedOut
+            }
+            let usage = try directoryUsage(at: directoryURL(for: directory), deadline: deadline)
             return LocalStorageDirectoryUsage(
                 directory: directory,
                 byteCount: usage.byteCount,
@@ -573,7 +590,10 @@ struct LocalStorageService {
             .appendingPathComponent("folders.json")
     }
 
-    private func relativePathComponents(for fileURL: URL, invalidPathDescription: String) throws -> [String] {
+    nonisolated private func relativePathComponents(
+        for fileURL: URL,
+        invalidPathDescription: String
+    ) throws -> [String] {
         let rootComponents = rootURL.standardizedFileURL.pathComponents
         let fileComponents = fileURL.standardizedFileURL.pathComponents
 
@@ -611,7 +631,10 @@ struct LocalStorageService {
         })
     }
 
-    private func directoryUsage(at directoryURL: URL) throws -> (byteCount: Int64, fileCount: Int) {
+    nonisolated private func directoryUsage(
+        at directoryURL: URL,
+        deadline: Date
+    ) throws -> (byteCount: Int64, fileCount: Int) {
         guard let enumerator = fileManager.enumerator(
             at: directoryURL,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
@@ -625,6 +648,9 @@ struct LocalStorageService {
 
         for case let url as URL in enumerator {
             try Task.checkCancellation()
+            guard Date() <= deadline else {
+                throw LocalStorageError.storageScanTimedOut
+            }
             // Autosave and thumbnail refreshes can atomically replace a file after it
             // has been enumerated. Storage usage is informational, so skip that one
             // transient entry rather than failing the whole calculation.

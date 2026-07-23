@@ -24,6 +24,14 @@ struct DocumentImportPicker: UIViewControllerRepresentable {
         )
         picker.allowsMultipleSelection = allowsMultipleSelection
         picker.delegate = context.coordinator
+        picker.shouldShowFileExtensions = true
+
+        // Do not restore a stale or unavailable third-party provider location after
+        // Xcode reinstalls the app. The local Documents directory is always a valid
+        // starting point and users can still navigate to every Files provider.
+        picker.directoryURL = FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)
+            .first
         return picker
     }
 

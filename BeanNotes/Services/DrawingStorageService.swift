@@ -47,7 +47,7 @@ struct DrawingStorageService {
 
     var storage = LocalStorageService()
 
-    private static let memoryWarningObserver = NotificationCenter.default.addObserver(
+    nonisolated(unsafe) private static let memoryWarningObserver = NotificationCenter.default.addObserver(
         forName: UIApplication.didReceiveMemoryWarningNotification,
         object: nil,
         queue: nil
@@ -55,28 +55,18 @@ struct DrawingStorageService {
         clearCache()
     }
 
-    private static let drawingCache: NSCache<NSString, CachedDrawing> = {
+    nonisolated(unsafe) private static let drawingCache: NSCache<NSString, CachedDrawing> = {
         let cache = NSCache<NSString, CachedDrawing>()
         cache.countLimit = 24
         cache.totalCostLimit = 32 * 1024 * 1024
         return cache
     }()
-    private static let prefetchQueue = DispatchQueue(
+    nonisolated private static let prefetchQueue = DispatchQueue(
         label: "com.snowfox.BeanNotes.drawing-prefetch",
         qos: .utility
     )
-    private static let drawingFileAccessQueueKey = DispatchSpecificKey<Void>()
-    private static let drawingFileAccessQueue: DispatchQueue = {
-        let queue = DispatchQueue(
-            label: "com.snowfox.BeanNotes.drawing-file-access",
-            qos: .utility,
-            attributes: .concurrent
-        )
-        queue.setSpecific(key: drawingFileAccessQueueKey, value: ())
-        return queue
-    }()
-    private static let prefetchLock = NSLock()
-    private static var prefetchStates: [String: PrefetchState] = [:]
+    nonisolated private static let prefetchLock = NSLock()
+    nonisolated(unsafe) private static var prefetchStates: [String: PrefetchState] = [:]
 
     func drawingURL(for page: NotePage) throws -> URL {
         try storage.directoryURL(for: .drawings)
@@ -101,15 +91,10 @@ struct DrawingStorageService {
             return .loaded(cached.drawing)
         }
 
-        return Self.withDrawingFileRead {
-            if let cached = Self.drawingCache.object(forKey: cacheKey) {
-                return .loaded(cached.drawing)
-            }
-            return Self.loadDrawingFromDisk(fileName: fileName, rootURL: rootURL)
-        }
+        return Self.loadDrawingFromDisk(fileName: fileName, rootURL: rootURL)
     }
 
-    static func cachedDrawing(fileName: String, rootURL: URL) -> PKDrawing? {
+    nonisolated static func cachedDrawing(fileName: String, rootURL: URL) -> PKDrawing? {
         ensureMemoryWarningObservation()
         let cacheKey = Self.cacheKey(rootURL: rootURL, fileName: fileName)
         return drawingCache.object(forKey: cacheKey)?.drawing
@@ -129,28 +114,33 @@ struct DrawingStorageService {
         rootURL: URL,
         drawingFileName: String
     ) throws -> Data {
-        try withDrawingFileWrite {
-            let drawingsURL = rootURL.appendingPathComponent(
-                StorageDirectory.drawings.rawValue,
-                isDirectory: true
-            )
-            try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
-            let data = drawing.dataRepresentation()
-            try data.write(
-                to: drawingsURL.appendingPathComponent(drawingFileName),
-                options: [.atomic]
-            )
-            cache(
-                drawing,
-                fileName: drawingFileName,
-                rootURL: rootURL,
-                approximateBytes: data.count
-            )
-            return data
-        }
+        let drawingsURL = rootURL.appendingPathComponent(
+            StorageDirectory.drawings.rawValue,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
+        let data = drawing.dataRepresentation()
+        // Atomic replacement lets readers observe either the old complete drawing
+        // or the new one, without globally blocking canvas and thumbnail loads.
+        try data.write(
+            to: drawingsURL.appendingPathComponent(drawingFileName),
+            options: [.atomic]
+        )
+        cache(
+            drawing,
+            fileName: drawingFileName,
+            rootURL: rootURL,
+            approximateBytes: data.count
+        )
+        return data
     }
 
-    static func cache(_ drawing: PKDrawing, fileName: String, rootURL: URL, approximateBytes: Int? = nil) {
+    nonisolated static func cache(
+        _ drawing: PKDrawing,
+        fileName: String,
+        rootURL: URL,
+        approximateBytes: Int? = nil
+    ) {
         ensureMemoryWarningObservation()
         let key = cacheKey(rootURL: rootURL, fileName: fileName)
         let cost = max(approximateBytes ?? 1, 1)
@@ -168,7 +158,7 @@ struct DrawingStorageService {
         prefetchLock.unlock()
     }
 
-    static func removeCachedDrawing(fileName: String, rootURL: URL) {
+    nonisolated static func removeCachedDrawing(fileName: String, rootURL: URL) {
         let key = cacheKey(rootURL: rootURL, fileName: fileName)
         prefetchLock.lock()
         if var state = prefetchStates[key as String] {
@@ -179,14 +169,14 @@ struct DrawingStorageService {
         prefetchLock.unlock()
     }
 
-    static func clearCache() {
+    nonisolated static func clearCache() {
         prefetchLock.lock()
         prefetchStates.removeAll()
         drawingCache.removeAllObjects()
         prefetchLock.unlock()
     }
 
-    static func prefetchDrawing(fileName: String, rootURL: URL) {
+    nonisolated static func prefetchDrawing(fileName: String, rootURL: URL) {
         ensureMemoryWarningObservation()
         let key = cacheKey(rootURL: rootURL, fileName: fileName)
         guard drawingCache.object(forKey: key) == nil else { return }
@@ -218,12 +208,12 @@ struct DrawingStorageService {
     }
 
 #if DEBUG
-    static func waitForPendingPrefetchesForTesting() {
+    nonisolated static func waitForPendingPrefetchesForTesting() {
         prefetchQueue.sync {}
     }
 #endif
 
-    private static func cacheKey(rootURL: URL, fileName: String) -> NSString {
+    nonisolated private static func cacheKey(rootURL: URL, fileName: String) -> NSString {
         "\(rootURL.standardizedFileURL.path)/\(StorageDirectory.drawings.rawValue)/\(fileName)" as NSString
     }
 
@@ -250,21 +240,7 @@ struct DrawingStorageService {
         }
     }
 
-    nonisolated private static func withDrawingFileRead<T>(_ operation: () throws -> T) rethrows -> T {
-        if DispatchQueue.getSpecific(key: drawingFileAccessQueueKey) != nil {
-            return try operation()
-        }
-        return try drawingFileAccessQueue.sync(execute: operation)
-    }
-
-    nonisolated private static func withDrawingFileWrite<T>(_ operation: () throws -> T) rethrows -> T {
-        if DispatchQueue.getSpecific(key: drawingFileAccessQueueKey) != nil {
-            return try operation()
-        }
-        return try drawingFileAccessQueue.sync(flags: .barrier, execute: operation)
-    }
-
-    private static func ensureMemoryWarningObservation() {
+    nonisolated private static func ensureMemoryWarningObservation() {
         _ = memoryWarningObserver
     }
 }
@@ -272,7 +248,7 @@ struct DrawingStorageService {
 private final class CachedDrawing {
     let drawing: PKDrawing
 
-    init(_ drawing: PKDrawing) {
+    nonisolated init(_ drawing: PKDrawing) {
         self.drawing = drawing
     }
 }

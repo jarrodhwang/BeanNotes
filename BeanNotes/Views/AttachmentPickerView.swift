@@ -60,7 +60,7 @@ struct AttachmentPickerView: View {
                     await loadPhotoItem(newValue)
                 }
             }
-            .sheet(isPresented: $isShowingFileImporter) {
+            .fullScreenCover(isPresented: $isShowingFileImporter) {
                 DocumentImportPicker(
                     allowedContentTypes: ImportExportService.supportedContentTypes,
                     allowsMultipleSelection: true,

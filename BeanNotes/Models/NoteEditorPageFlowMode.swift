@@ -27,7 +27,7 @@ enum NoteEditorPageLayoutMode: String, CaseIterable, Identifiable {
         case .singlePage:
             "Keep each page visually separate while scrolling through the note."
         case .scroll:
-            "Use one continuous drawing canvas and extend it with the add-space button."
+            "Scroll through lazily loaded pages and extend the note with the add button."
         }
     }
 
@@ -36,7 +36,7 @@ enum NoteEditorPageLayoutMode: String, CaseIterable, Identifiable {
         case .singlePage:
             .separated
         case .scroll:
-            .seamless
+            .continuous
         }
     }
 }

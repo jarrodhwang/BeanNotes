@@ -403,7 +403,7 @@ struct NoteEditorView: View {
                 }
             )
         }
-        .sheet(isPresented: $isShowingVersionFileImporter) {
+        .fullScreenCover(isPresented: $isShowingVersionFileImporter) {
             DocumentImportPicker(
                 allowedContentTypes: [.pdf, .image],
                 allowsMultipleSelection: false,

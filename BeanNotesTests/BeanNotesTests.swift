@@ -1410,9 +1410,9 @@ struct BeanNotesTests {
         #expect(values.isExcludedFromBackup == true)
     }
 
-    @Test func modelContainerArchivesAllStoreSidecarsIntoUniqueDirectory() throws {
+    @Test func modelContainerRetriesWithoutMovingStoreSidecars() throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("BeanNotesStoreArchive-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("BeanNotesStoreRetry-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
         }
@@ -1425,23 +1425,30 @@ struct BeanNotesTests {
             try Data("sidecar-\(index)".utf8).write(to: sidecarURL)
         }
 
-        let firstArchiveURL = try #require(
-            BeanNotesModelContainer.archivePersistentStore(at: storeURL, fileManager: fileManager)
+        struct ExpectedFailure: Error {}
+        var attempts = 0
+        var waits: [TimeInterval] = []
+        let result: Result<Int, Error> = BeanNotesModelContainer.loadWithRetries(
+            retryDelays: [0.1, 0.2],
+            wait: { waits.append($0) },
+            load: {
+                attempts += 1
+                throw ExpectedFailure()
+            }
         )
 
-        for (index, sidecarURL) in BeanNotesModelContainer.persistentStoreSidecarURLs(for: storeURL).enumerated() {
-            #expect(!fileManager.fileExists(atPath: sidecarURL.path))
-            let archivedURL = firstArchiveURL.appendingPathComponent(sidecarURL.lastPathComponent)
-            #expect(try Data(contentsOf: archivedURL) == Data("sidecar-\(index)".utf8))
+        guard case .failure = result else {
+            Issue.record("Expected store loading to fail after all retries.")
+            return
         }
 
-        try Data("retry".utf8).write(to: storeURL)
-        let secondArchiveURL = try #require(
-            BeanNotesModelContainer.archivePersistentStore(at: storeURL, fileManager: fileManager)
-        )
+        #expect(attempts == 3)
+        #expect(waits == [0.1, 0.2])
 
-        #expect(firstArchiveURL != secondArchiveURL)
-        #expect(fileManager.fileExists(atPath: secondArchiveURL.appendingPathComponent(storeURL.lastPathComponent).path))
+        for (index, sidecarURL) in BeanNotesModelContainer.persistentStoreSidecarURLs(for: storeURL).enumerated() {
+            #expect(fileManager.fileExists(atPath: sidecarURL.path))
+            #expect(try Data(contentsOf: sidecarURL) == Data("sidecar-\(index)".utf8))
+        }
     }
 
     @Test func localStorageRemovesOnlyOldExports() throws {
@@ -2128,7 +2135,7 @@ struct BeanNotesTests {
     @Test func paginationSettingsMapToEditorFlowModes() {
         #expect(NoteEditorPageLayoutMode.allCases.map(\.label) == ["One Page", "Scrollable"])
         #expect(NoteEditorPageLayoutMode.singlePage.pageFlowMode == .separated)
-        #expect(NoteEditorPageLayoutMode.scroll.pageFlowMode == .seamless)
+        #expect(NoteEditorPageLayoutMode.scroll.pageFlowMode == .continuous)
         #expect(NoteEditorPageFlowMode.singlePage.migratedLayoutMode == .singlePage)
         #expect(NoteEditorPageFlowMode.continuous.migratedLayoutMode == .scroll)
         #expect(NoteEditorPageFlowMode.infinite.migratedLayoutMode == .scroll)

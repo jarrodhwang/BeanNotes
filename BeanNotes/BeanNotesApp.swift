@@ -5,27 +5,58 @@
 //  Created by Jarrod on 2026-07-02.
 //
 
-import SwiftUI
+import Foundation
 import SwiftData
+import SwiftUI
 
 @main
 struct BeanNotesApp: App {
-    var sharedModelContainer = BeanNotesModelContainer.make()
+    @State private var sharedModelContainer: ModelContainer?
+    @State private var modelContainerErrorDescription: String?
 
     init() {
         LocalNotificationService.shared.configureForegroundPresentation()
+
+        switch BeanNotesModelContainer.make() {
+        case .success(let container):
+            _sharedModelContainer = State(initialValue: container)
+            _modelContainerErrorDescription = State(initialValue: nil)
+        case .failure(let error):
+            _sharedModelContainer = State(initialValue: nil)
+            _modelContainerErrorDescription = State(initialValue: error.localizedDescription)
+        }
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            if let sharedModelContainer {
+                ContentView()
+                    .modelContainer(sharedModelContainer)
+            } else {
+                ModelContainerUnavailableView(
+                    errorDescription: modelContainerErrorDescription,
+                    retry: reloadModelContainer
+                )
+            }
         }
-        .modelContainer(sharedModelContainer)
+    }
+
+    private func reloadModelContainer() {
+        switch BeanNotesModelContainer.make() {
+        case .success(let container):
+            sharedModelContainer = container
+            modelContainerErrorDescription = nil
+        case .failure(let error):
+            sharedModelContainer = nil
+            modelContainerErrorDescription = error.localizedDescription
+        }
     }
 }
 
 enum BeanNotesModelContainer {
-    static func make() -> ModelContainer {
+    private static let storeOpenRetryDelays: [TimeInterval] = [0.15, 0.35]
+
+    static func make() -> Result<ModelContainer, Error> {
         BeanNotesLaunchConfiguration.prepareIfNeeded(persistentStoreURL: persistentStoreURL())
 
         let schema = Schema([
@@ -35,19 +66,18 @@ enum BeanNotesModelContainer {
             Attachment.self
         ])
 
-        do {
-            return try ModelContainer(for: schema, configurations: [configuration(for: schema)])
-        } catch {
-            NSLog("BeanNotes SwiftData store failed to open: \(error)")
-            archivePersistentStore(at: persistentStoreURL())
-
-            do {
-                return try ModelContainer(for: schema, configurations: [configuration(for: schema)])
-            } catch {
-                NSLog("BeanNotes persistent store recovery failed; opening temporary in-memory store: \(error)")
-                return inMemoryFallbackContainer(for: schema)
+        let result: Result<ModelContainer, Error> = loadWithRetries(
+            retryDelays: storeOpenRetryDelays,
+            load: {
+                try ModelContainer(for: schema, configurations: [configuration(for: schema)])
             }
+        )
+        if case .failure(let error) = result {
+            // A temporary lock or protected-data delay must never move the user's
+            // database aside or replace the library with an empty in-memory store.
+            NSLog("BeanNotes SwiftData store is temporarily unavailable; preserving it for retry: \(error)")
         }
+        return result
     }
 
     private static func configuration(for schema: Schema) -> ModelConfiguration {
@@ -70,47 +100,22 @@ enum BeanNotesModelContainer {
         return directoryURL.appendingPathComponent("BeanNotes.store")
     }
 
-    @discardableResult
-    static func archivePersistentStore(
-        at storeURL: URL,
-        fileManager: FileManager = .default
-    ) -> URL? {
-        let recoveredStoresURL = storeURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("RecoveredStores", isDirectory: true)
-        let archiveDirectory = recoveredStoresURL
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-
-        do {
-            try fileManager.createDirectory(at: archiveDirectory, withIntermediateDirectories: true)
-        } catch {
-            NSLog("BeanNotes could not create failed SwiftData store archive: \(error)")
-            return nil
-        }
-
-        for url in persistentStoreSidecarURLs(for: storeURL) where fileManager.fileExists(atPath: url.path) {
+    static func loadWithRetries<T>(
+        retryDelays: [TimeInterval],
+        wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+        load: () throws -> T
+    ) -> Result<T, Error> {
+        for attempt in 0...retryDelays.count {
             do {
-                try fileManager.moveItem(
-                    at: url,
-                    to: archiveDirectory.appendingPathComponent(url.lastPathComponent)
-                )
+                return .success(try load())
             } catch {
-                NSLog("BeanNotes could not archive failed SwiftData store sidecar \(url.lastPathComponent): \(error)")
+                guard attempt < retryDelays.count else {
+                    return .failure(error)
+                }
+                wait(max(retryDelays[attempt], 0))
             }
         }
-
-        return archiveDirectory
-    }
-
-    private static func inMemoryFallbackContainer(for schema: Schema) -> ModelContainer {
-        do {
-            return try ModelContainer(
-                for: schema,
-                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
-            )
-        } catch {
-            fatalError("BeanNotes could not create a SwiftData container: \(error)")
-        }
+        fatalError("BeanNotes store retry loop completed without a result.")
     }
 
     static func persistentStoreSidecarURLs(for storeURL: URL) -> [URL] {
@@ -119,6 +124,33 @@ enum BeanNotesModelContainer {
             URL(fileURLWithPath: "\(storeURL.path)-shm"),
             URL(fileURLWithPath: "\(storeURL.path)-wal")
         ]
+    }
+}
+
+private struct ModelContainerUnavailableView: View {
+    var errorDescription: String?
+    var retry: () -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Notes Storage Unavailable", systemImage: "externaldrive.badge.exclamationmark")
+        } description: {
+            Text(
+                "BeanNotes kept your existing library unchanged. Unlock the iPad if needed, then try opening it again."
+            )
+        } actions: {
+            Button("Try Again", systemImage: "arrow.clockwise", action: retry)
+                .buttonStyle(.borderedProminent)
+
+            if let errorDescription, !errorDescription.isEmpty {
+                Text(errorDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding()
     }
 }
 
