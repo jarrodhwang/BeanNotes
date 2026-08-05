@@ -8660,7 +8660,13 @@ struct BeanNotesTests {
         let signatureAt34Points = toolState.pkToolSignature
         toolState.applyEraserWidth(42)
         #expect(toolState.pkToolSignature != signatureAt34Points)
-        fixture.coordinator.applyCustomToolIfNeeded()
+        // This focused fixture has no document container, so re-registering models
+        // the visible-canvas tool refresh that the production container performs.
+        fixture.coordinator.register(
+            canvasView: fixture.pageView.canvasView,
+            page: page,
+            pageView: fixture.pageView
+        )
         let resizedLocation = CGPoint(x: 220, y: 220)
         fixture.pageView.handleEraserInteraction(.began(resizedLocation))
         #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 42, height: 42))

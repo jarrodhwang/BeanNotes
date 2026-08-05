@@ -600,7 +600,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var pendingTraversalVisiblePageID: UUID?
         private var lastPublishedVisiblePageID: UUID?
         private var isDrawingInteractionActive = false
-        private var defersPDFRenderingForDrawing = false
+        private var keepsPDFVectorSurfaceDuringDrawing = false
         private var pdfRenderingResumeWorkItem: DispatchWorkItem?
         private var pdfRenderingResumeGeneration: UInt = 0
         private var defersPDFRenderingAfterTraversal = false
@@ -677,7 +677,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         var isPDFVectorRenderingProtectedForDrawing: Bool {
-            defersPDFRenderingForDrawing
+            keepsPDFVectorSurfaceDuringDrawing
         }
 
         var isPDFRenderingDeferredAfterTraversal: Bool {
@@ -2643,8 +2643,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pdfRenderingResumeGeneration &+= 1
                 pdfRenderingResumeWorkItem?.cancel()
                 pdfRenderingResumeWorkItem = nil
-                if !defersPDFRenderingForDrawing {
-                    defersPDFRenderingForDrawing = true
+                if !keepsPDFVectorSurfaceDuringDrawing {
+                    keepsPDFVectorSurfaceDuringDrawing = true
                     if let activePageView {
                         // Restore the touched PDF's vector surface immediately, but
                         // move the bounded materialized-page walk off PencilKit's
@@ -2665,7 +2665,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             // PencilKit reports a begin/end pair for each stroke. Keep the drawing
             // interaction state stable across short pen lifts so resource work cannot
             // repeatedly restart between letters and contend with the next live stroke.
-            guard defersPDFRenderingForDrawing,
+            guard keepsPDFVectorSurfaceDuringDrawing,
                   pdfRenderingResumeWorkItem == nil else { return }
             pdfRenderingResumeGeneration &+= 1
             let resumeGeneration = pdfRenderingResumeGeneration
@@ -2674,7 +2674,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                       self.pdfRenderingResumeGeneration == resumeGeneration else { return }
                 self.pdfRenderingResumeWorkItem = nil
                 guard !self.isDrawingInteractionActive else { return }
-                self.defersPDFRenderingForDrawing = false
+                self.keepsPDFVectorSurfaceDuringDrawing = false
                 self.publishPDFRenderingState()
             }
             pdfRenderingResumeWorkItem = workItem
@@ -2688,8 +2688,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             pdfRenderingResumeGeneration &+= 1
             pdfRenderingResumeWorkItem?.cancel()
             pdfRenderingResumeWorkItem = nil
-            guard defersPDFRenderingForDrawing else { return }
-            defersPDFRenderingForDrawing = false
+            guard keepsPDFVectorSurfaceDuringDrawing else { return }
+            keepsPDFVectorSurfaceDuringDrawing = false
             publishPDFRenderingState()
         }
 
@@ -2698,7 +2698,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private var effectivePDFDrawingProtectionActive: Bool {
-            defersPDFRenderingForDrawing
+            keepsPDFVectorSurfaceDuringDrawing
         }
 
         private func beginPostTraversalPDFDeferral() {
@@ -2838,7 +2838,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 updatesRenderScale: false,
                 prunesTraversalResources: true
             )
-            if defersPDFRenderingForDrawing {
+            if keepsPDFVectorSurfaceDuringDrawing {
                 cancelPostTraversalPDFDeferral()
             } else {
                 beginPostTraversalPDFDeferral()
@@ -6026,9 +6026,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             updateFixedScaleIfNeeded()
         }
 
-        /// Cache the already-rendered PDF subtree while an outer scroll/zoom or a
-        /// PencilKit stroke is active. The page remains visible, but PDFKit no longer
-        /// competes to retile unchanged vector content on every interaction frame.
+        /// Cache the already-rendered PDF subtree only during outer navigation. The
+        /// page remains visible, but PDFKit no longer competes to retile unchanged
+        /// content on every scroll/zoom frame. Live drawing explicitly disables this
+        /// cache so ink is always shown over PDFKit's stable vector surface.
         /// A bounded scale keeps the transient cache from multiplying memory at deep
         /// zoom levels; PDFKit resumes its sharp vector rendering after settlement.
         func setInteractionRenderingDeferred(_ deferred: Bool, rasterScale: CGFloat) {
