@@ -711,9 +711,6 @@ struct PenPaletteView: View {
         return Button {
             performSelectionFeedback()
             toolState.selectEraserMode(mode)
-            if mode == .object {
-                isShowingCustomEraserWidth = false
-            }
             if mode != .rub {
                 isShowingRubEraserAngle = false
             }
@@ -944,6 +941,9 @@ struct PenPaletteView: View {
     }
 
     private var collapsedEraserSummary: String {
+        if toolState.eraserMode == .object {
+            return "Object · \(activeEraserSizeText) pt · whole stroke"
+        }
         if toolState.eraserMode == .rub {
             return "Rub · \(toolState.rubEraserShape.label) · \(activeEraserSizeText) pt · \(rubEraserAngleText)°"
         }
@@ -951,6 +951,9 @@ struct PenPaletteView: View {
     }
 
     private var collapsedEraserAccessibilityLabel: String {
+        if toolState.eraserMode == .object {
+            return "Object eraser, \(activeEraserSizeText) points, whole stroke"
+        }
         if toolState.eraserMode == .rub {
             return "Rub eraser, \(toolState.rubEraserShape.label), \(activeEraserSizeText) points, \(rubEraserAngleText) degrees"
         }

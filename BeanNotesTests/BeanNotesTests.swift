@@ -60,6 +60,22 @@ struct BeanNotesTests {
         return PKDrawing(strokes: [stroke])
     }
 
+    private func waitForSignal(_ semaphore: DispatchSemaphore) async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(
+                    returning: semaphore.wait(timeout: .now() + 5) == .success
+                )
+            }
+        }
+    }
+
+    private func waitForDrawingPrefetches() async {
+        await Task.detached {
+            DrawingStorageService.waitForPendingPrefetchesForTesting()
+        }.value
+    }
+
     private func attachPDFVersion(
         named name: String,
         storedBaseName: String,
@@ -1783,10 +1799,130 @@ struct BeanNotesTests {
         #expect(abs(warningLoad.bounds.midX - cachedDrawing.bounds.midX) > 20)
     }
 
+    @Test func missingDrawingCacheIsInvalidatedBySuccessfulWrite() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesMissingDrawingCache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let drawingStorage = DrawingStorageService(storage: LocalStorageService(rootURL: rootURL))
+        let page = NotePage(pageOrder: 0, drawingFileName: "new-page.drawing")
+
+        guard case .missing = drawingStorage.loadDrawingResult(for: page) else {
+            Issue.record("A new page without ink should be recorded as missing.")
+            return
+        }
+        #expect(DrawingStorageService.isKnownMissingForTesting(
+            fileName: page.drawingFileName,
+            rootURL: rootURL
+        ))
+
+        let expectedDrawing = makeTestDrawing(color: .systemIndigo, xOffset: 48)
+        try drawingStorage.save(expectedDrawing, for: page)
+
+        #expect(!DrawingStorageService.isKnownMissingForTesting(
+            fileName: page.drawingFileName,
+            rootURL: rootURL
+        ))
+        guard case let .loaded(loadedDrawing, _) = drawingStorage.loadDrawingResult(for: page) else {
+            Issue.record("A successful write must supersede the cached missing result.")
+            return
+        }
+        #expect(loadedDrawing.dataRepresentation() == expectedDrawing.dataRepresentation())
+    }
+
+    @Test func drawingLoadResultCarriesTheExactStoredArchiveBytes() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingArchiveBytes-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let drawingStorage = DrawingStorageService(storage: LocalStorageService(rootURL: rootURL))
+        let page = NotePage(pageOrder: 0, drawingFileName: "archive-bytes.drawing")
+        let expectedDrawing = makeTestDrawing(color: .systemPurple, xOffset: 36)
+
+        try drawingStorage.save(expectedDrawing, for: page)
+        let storedArchiveData = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        DrawingStorageService.clearCache()
+
+        guard case let .loaded(loadedDrawing, archiveData) = drawingStorage.loadDrawingResult(for: page) else {
+            Issue.record("A valid drawing file should return its decoded drawing and source archive.")
+            return
+        }
+        #expect(archiveData == storedArchiveData)
+        #expect(loadedDrawing.strokes.count == expectedDrawing.strokes.count)
+    }
+
+    @Test func scopedPrefetchCancellationPreventsPublicationAndKeepsOrdinaryLoadAvailable() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCancelledPrefetch-\(UUID().uuidString)", isDirectory: true)
+        let reachedPublicationBarrier = DispatchSemaphore(value: 0)
+        let allowPrefetchToFinish = DispatchSemaphore(value: 0)
+        defer {
+            allowPrefetchToFinish.signal()
+            DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+            DrawingStorageService.waitForPendingPrefetchesForTesting()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let drawingStorage = DrawingStorageService(storage: LocalStorageService(rootURL: rootURL))
+        let page = NotePage(pageOrder: 0, drawingFileName: "cancelled-prefetch.drawing")
+        let pageFileName = page.drawingFileName
+        let expectedDrawing = makeTestDrawing(color: .systemTeal, xOffset: 28)
+        try drawingStorage.save(expectedDrawing, for: page)
+        let storedArchiveData = try Data(contentsOf: drawingStorage.drawingURL(for: page))
+        DrawingStorageService.clearCache()
+
+        DrawingStorageService.setDiskLoadPublicationHookForTesting { fileName in
+            guard fileName == pageFileName else { return }
+            reachedPublicationBarrier.signal()
+            allowPrefetchToFinish.wait()
+        }
+        let scopeID = UUID()
+        DrawingStorageService.prefetchDrawings(
+            fileNames: [pageFileName],
+            rootURL: rootURL,
+            scopeID: scopeID
+        )
+        guard await waitForSignal(reachedPublicationBarrier) else {
+            Issue.record("The scoped prefetch did not reach its publication barrier.")
+            return
+        }
+
+        DrawingStorageService.cancelPrefetches(scopeID: scopeID)
+        allowPrefetchToFinish.signal()
+        await waitForDrawingPrefetches()
+        DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+
+        #expect(DrawingStorageService.cachedDrawing(
+            fileName: pageFileName,
+            rootURL: rootURL
+        ) == nil)
+        guard case let .loaded(loadedDrawing, archiveData) = drawingStorage.loadDrawingResult(for: page) else {
+            Issue.record("Cancellation must not prevent a later ordinary drawing load.")
+            return
+        }
+        #expect(loadedDrawing.strokes.count == expectedDrawing.strokes.count)
+        #expect(archiveData == storedArchiveData)
+    }
+
     @Test func drawingPrefetchCannotReplaceNewerCachedInk() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesDrawingPrefetchRace-\(UUID().uuidString)", isDirectory: true)
+        let decodedDrawing = DispatchSemaphore(value: 0)
+        let allowPublication = DispatchSemaphore(value: 0)
         defer {
+            allowPublication.signal()
+            DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+            DrawingStorageService.waitForPendingPrefetchesForTesting()
             DrawingStorageService.clearCache()
             try? FileManager.default.removeItem(at: rootURL)
         }
@@ -1795,18 +1931,326 @@ struct BeanNotesTests {
         let storage = LocalStorageService(rootURL: rootURL)
         let drawingStorage = DrawingStorageService(storage: storage)
         let page = NotePage(pageOrder: 0, drawingFileName: "prefetch-race.drawing")
+        let pageFileName = page.drawingFileName
         let diskDrawing = makeTestDrawing(color: .systemBlue, xOffset: 0)
         let liveDrawing = makeTestDrawing(color: .systemRed, xOffset: 64)
         try drawingStorage.save(diskDrawing, for: page)
         DrawingStorageService.clearCache()
 
-        DrawingStorageService.prefetchDrawing(fileName: page.drawingFileName, rootURL: rootURL)
-        DrawingStorageService.cache(liveDrawing, fileName: page.drawingFileName, rootURL: rootURL)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        DrawingStorageService.setDiskLoadPublicationHookForTesting { fileName in
+            guard fileName == pageFileName else { return }
+            decodedDrawing.signal()
+            allowPublication.wait()
+        }
+        DrawingStorageService.prefetchDrawing(fileName: pageFileName, rootURL: rootURL)
+        guard await waitForSignal(decodedDrawing) else {
+            Issue.record("The drawing prefetch did not reach its publication barrier.")
+            return
+        }
+        DrawingStorageService.cache(liveDrawing, fileName: pageFileName, rootURL: rootURL)
+        allowPublication.signal()
+        await waitForDrawingPrefetches()
+        DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
 
         let loadedDrawing = drawingStorage.loadDrawing(for: page)
         #expect(abs(loadedDrawing.bounds.midX - liveDrawing.bounds.midX) < 0.5)
         #expect(abs(loadedDrawing.bounds.midX - diskDrawing.bounds.midX) > 20)
+    }
+
+    @Test func ordinaryDrawingLoadCannotReturnInkSupersededDuringDecode() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingLoadRace-\(UUID().uuidString)", isDirectory: true)
+        let decodedDrawing = DispatchSemaphore(value: 0)
+        let allowPublication = DispatchSemaphore(value: 0)
+        defer {
+            allowPublication.signal()
+            DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let pageFileName = "ordinary-load-race.drawing"
+        let diskDrawing = makeTestDrawing(color: .systemBlue, xOffset: 0)
+        let liveDrawing = makeTestDrawing(color: .systemRed, xOffset: 64)
+        _ = try DrawingStorageService.writeDrawing(
+            diskDrawing,
+            rootURL: rootURL,
+            drawingFileName: pageFileName
+        )
+        DrawingStorageService.clearCache()
+
+        DrawingStorageService.setDiskLoadPublicationHookForTesting { fileName in
+            guard fileName == pageFileName else { return }
+            decodedDrawing.signal()
+            allowPublication.wait()
+        }
+        let returnedData = try await withThrowingTaskGroup(
+            of: Data.self,
+            returning: Data.self
+        ) { group in
+            group.addTask {
+                DrawingStorageService.loadDrawingResult(
+                    fileName: pageFileName,
+                    rootURL: rootURL
+                ).drawing.dataRepresentation()
+            }
+            defer { allowPublication.signal() }
+
+            if !(await waitForSignal(decodedDrawing)) {
+                Issue.record("The ordinary drawing load did not reach its publication barrier.")
+            }
+
+            _ = try DrawingStorageService.writeDrawing(
+                liveDrawing,
+                rootURL: rootURL,
+                drawingFileName: pageFileName
+            )
+            allowPublication.signal()
+            guard let data = try await group.next() else {
+                Issue.record("The ordinary drawing load task returned no result.")
+                return Data()
+            }
+            return data
+        }
+        DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+
+        #expect(returnedData == liveDrawing.dataRepresentation())
+        #expect(returnedData != diskDrawing.dataRepresentation())
+    }
+
+    @Test func drawingLoadRetryExhaustionPrefersConcurrentWrite() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingRetryBudget-\(UUID().uuidString)", isDirectory: true)
+        let decodedDrawing = DispatchSemaphore(value: 0)
+        let allowPublication = DispatchSemaphore(value: 0)
+        defer {
+            for _ in 0..<8 {
+                allowPublication.signal()
+            }
+            DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let pageFileName = "retry-budget-race.drawing"
+        let diskDrawing = makeTestDrawing(color: .systemBlue, xOffset: 0)
+        let liveDrawing = makeTestDrawing(color: .systemRed, xOffset: 64)
+        _ = try DrawingStorageService.writeDrawing(
+            diskDrawing,
+            rootURL: rootURL,
+            drawingFileName: pageFileName
+        )
+        DrawingStorageService.clearCache()
+        DrawingStorageService.setDiskLoadPublicationHookForTesting { fileName in
+            guard fileName == pageFileName else { return }
+            decodedDrawing.signal()
+            allowPublication.wait()
+        }
+
+        let returnedData = try await withThrowingTaskGroup(
+            of: Data.self,
+            returning: Data.self
+        ) { group in
+            group.addTask {
+                DrawingStorageService.loadDrawingResult(
+                    fileName: pageFileName,
+                    rootURL: rootURL
+                ).drawing.dataRepresentation()
+            }
+            defer {
+                for _ in 0..<8 {
+                    allowPublication.signal()
+                }
+            }
+
+            for _ in 0..<3 {
+                if !(await waitForSignal(decodedDrawing)) {
+                    Issue.record("A versioned drawing retry did not reach its decode barrier.")
+                }
+                DrawingStorageService.removeCachedDrawing(
+                    fileName: pageFileName,
+                    rootURL: rootURL
+                )
+                allowPublication.signal()
+            }
+
+            if !(await waitForSignal(decodedDrawing)) {
+                Issue.record("The bounded fallback did not reach its decode barrier.")
+            }
+            _ = try DrawingStorageService.writeDrawing(
+                liveDrawing,
+                rootURL: rootURL,
+                drawingFileName: pageFileName
+            )
+            allowPublication.signal()
+
+            guard let data = try await group.next() else {
+                Issue.record("The bounded drawing load task returned no result.")
+                return Data()
+            }
+            return data
+        }
+        DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+
+        #expect(returnedData == liveDrawing.dataRepresentation())
+        #expect(returnedData != diskDrawing.dataRepresentation())
+    }
+
+    @Test func drawingPrefetchBacklogIsBoundedAndCoalesced() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingPrefetchBound-\(UUID().uuidString)", isDirectory: true)
+        let decodedDrawing = DispatchSemaphore(value: 0)
+        let allowPublication = DispatchSemaphore(value: 0)
+        defer {
+            allowPublication.signal()
+            DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+            DrawingStorageService.waitForPendingPrefetchesForTesting()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let activeFileName = "active-prefetch.drawing"
+        _ = try DrawingStorageService.writeDrawing(
+            makeTestDrawing(color: .systemBlue, xOffset: 0),
+            rootURL: rootURL,
+            drawingFileName: activeFileName
+        )
+        DrawingStorageService.clearCache()
+        DrawingStorageService.setDiskLoadPublicationHookForTesting { fileName in
+            guard fileName == activeFileName else { return }
+            decodedDrawing.signal()
+            allowPublication.wait()
+        }
+
+        DrawingStorageService.prefetchDrawing(fileName: activeFileName, rootURL: rootURL)
+        guard await waitForSignal(decodedDrawing) else {
+            Issue.record("The active prefetch did not reach its publication barrier.")
+            return
+        }
+
+        let firstScopeID = UUID()
+        let secondScopeID = UUID()
+        let requestedFileNames = (0..<100).map { "first-scope-prefetch-\($0).drawing" }
+        DrawingStorageService.prefetchDrawings(
+            fileNames: requestedFileNames,
+            rootURL: rootURL,
+            scopeID: firstScopeID
+        )
+        let queuedFileNames = DrawingStorageService.queuedPrefetchFileNamesForTesting()
+        let maximumPendingCount = DrawingStorageService.maximumPendingPrefetchCountForTesting
+        #expect(queuedFileNames.count == maximumPendingCount)
+        #expect(queuedFileNames == Array(requestedFileNames.prefix(maximumPendingCount)))
+
+        let secondScopeFileNames = (0..<100).map { "second-scope-prefetch-\($0).drawing" }
+        DrawingStorageService.prefetchDrawings(
+            fileNames: secondScopeFileNames,
+            rootURL: rootURL,
+            scopeID: secondScopeID
+        )
+        let fairlyQueuedFileNames = DrawingStorageService.queuedPrefetchFileNamesForTesting()
+        let expectedFairOrder = (0..<(maximumPendingCount / 2)).flatMap { index in
+            [requestedFileNames[index], secondScopeFileNames[index]]
+        }
+        #expect(fairlyQueuedFileNames == expectedFairOrder)
+
+        DrawingStorageService.prefetchDrawings(
+            fileNames: [],
+            rootURL: rootURL,
+            scopeID: firstScopeID
+        )
+        #expect(
+            DrawingStorageService.queuedPrefetchFileNamesForTesting()
+                == Array(secondScopeFileNames.prefix(maximumPendingCount / 2))
+        )
+        DrawingStorageService.cancelPrefetches(scopeID: secondScopeID)
+        #expect(DrawingStorageService.queuedPrefetchFileNamesForTesting().isEmpty)
+
+        allowPublication.signal()
+        await waitForDrawingPrefetches()
+        DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+    }
+
+    @Test func drawingPrefetchFairnessSurvivesActiveScopeRefresh() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingPrefetchFairness-\(UUID().uuidString)", isDirectory: true)
+        let firstStarted = DispatchSemaphore(value: 0)
+        let secondStarted = DispatchSemaphore(value: 0)
+        let allowFirst = DispatchSemaphore(value: 0)
+        let allowSecond = DispatchSemaphore(value: 0)
+        let allowFirstNext = DispatchSemaphore(value: 0)
+        defer {
+            allowFirst.signal()
+            allowSecond.signal()
+            allowFirstNext.signal()
+            DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
+            DrawingStorageService.waitForPendingPrefetchesForTesting()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let firstScopeID = UUID()
+        let secondScopeID = UUID()
+        let firstFileName = "first-scope-active.drawing"
+        let firstNextFileName = "first-scope-next.drawing"
+        let secondFileName = "second-scope-visible.drawing"
+        let storedDrawing = makeTestDrawing(color: .systemBlue, xOffset: 0)
+        for fileName in [firstFileName, firstNextFileName, secondFileName] {
+            _ = try DrawingStorageService.writeDrawing(
+                storedDrawing,
+                rootURL: rootURL,
+                drawingFileName: fileName
+            )
+        }
+        DrawingStorageService.clearCache()
+        DrawingStorageService.setDiskLoadPublicationHookForTesting { fileName in
+            switch fileName {
+            case firstFileName:
+                firstStarted.signal()
+                allowFirst.wait()
+            case secondFileName:
+                secondStarted.signal()
+                allowSecond.wait()
+            case firstNextFileName:
+                allowFirstNext.wait()
+            default:
+                break
+            }
+        }
+
+        DrawingStorageService.prefetchDrawings(
+            fileNames: [firstFileName, firstNextFileName],
+            rootURL: rootURL,
+            scopeID: firstScopeID
+        )
+        guard await waitForSignal(firstStarted) else {
+            Issue.record("The first scoped prefetch did not start.")
+            return
+        }
+        DrawingStorageService.prefetchDrawings(
+            fileNames: [secondFileName],
+            rootURL: rootURL,
+            scopeID: secondScopeID
+        )
+        // Simulate the active canvas publishing another 60 Hz viewport refresh while
+        // its first decode is still running. That refresh must not jump ahead of the
+        // other canvas's already-queued visible request.
+        DrawingStorageService.prefetchDrawings(
+            fileNames: [firstFileName, firstNextFileName],
+            rootURL: rootURL,
+            scopeID: firstScopeID
+        )
+
+        allowFirst.signal()
+        let secondScopeAdvanced = await waitForSignal(secondStarted)
+        #expect(secondScopeAdvanced)
+        allowSecond.signal()
+        allowFirstNext.signal()
+        await waitForDrawingPrefetches()
+        DrawingStorageService.setDiskLoadPublicationHookForTesting(nil)
     }
 
     @Test func failedDrawingPrefetchDoesNotPoisonLaterDiskLoad() throws {
@@ -2256,7 +2700,7 @@ struct BeanNotesTests {
 
         pageView.setCaptureInteractionEnabled(false)
         #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
-        #expect(pageView.allowsPageActionLongPress)
+        #expect(!pageView.allowsPageActionLongPress)
     }
 
     @Test func selectingCaptureToolShowsAndRemovesPageSelectionOverlay() throws {
@@ -2585,6 +3029,414 @@ struct BeanNotesTests {
         #expect(pagePoint == CGPoint(x: 125, y: 220))
     }
 
+    @Test @MainActor func viewportResourceRefreshUsesScrollHysteresis() {
+        let original = CGRect(x: 0, y: 0, width: 400, height: 800)
+
+        #expect(!DrawingCanvasView.CanvasContainerView.requiresViewportResourceRefresh(
+            previousRect: original,
+            currentRect: original.offsetBy(dx: 0, dy: 80),
+            previousZoomScale: 1,
+            currentZoomScale: 1,
+            directionChanged: false
+        ))
+        #expect(DrawingCanvasView.CanvasContainerView.requiresViewportResourceRefresh(
+            previousRect: original,
+            currentRect: original.offsetBy(dx: 0, dy: 180),
+            previousZoomScale: 1,
+            currentZoomScale: 1,
+            directionChanged: false
+        ))
+        #expect(DrawingCanvasView.CanvasContainerView.requiresViewportResourceRefresh(
+            previousRect: original,
+            currentRect: original,
+            previousZoomScale: 1,
+            currentZoomScale: 1.02,
+            directionChanged: false
+        ))
+        #expect(!DrawingCanvasView.CanvasContainerView.requiresViewportResourceRefresh(
+            previousRect: original,
+            currentRect: original,
+            previousZoomScale: 1,
+            currentZoomScale: 1,
+            directionChanged: true
+        ))
+        #expect(DrawingCanvasView.CanvasContainerView.requiresViewportResourceRefresh(
+            previousRect: original,
+            currentRect: original.offsetBy(dx: 0, dy: 100),
+            previousZoomScale: 1,
+            currentZoomScale: 1,
+            directionChanged: true
+        ))
+    }
+
+    @Test @MainActor func userZoomNearFitSurvivesVerticalScrollAndLayout() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesStableScrollZoom-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = [
+            NotePage(pageOrder: 0, drawingFileName: "stable-scroll-zoom-1.drawing"),
+            NotePage(pageOrder: 1, drawingFileName: "stable-scroll-zoom-2.drawing")
+        ]
+        let parent = makeDrawingCanvasView(
+            page: pages[0],
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 500)
+        )
+        coordinator.containerView = container
+        defer { DrawingCanvasView.dismantleUIView(container, coordinator: coordinator) }
+
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .continuous,
+            inputMode: .anyInput,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        #expect(container.scrollView.panGestureRecognizer.minimumNumberOfTouches == 2)
+        #expect(container.scrollView.pinchGestureRecognizer?.isEnabled == true)
+
+        let fitScale = container.scrollView.zoomScale
+        // This is inside the former implicit 4.5% fit-snap range. User zoom must now
+        // remain exact because fit-to-page is an explicit command.
+        let userScale = fitScale * 1.02
+        container.scrollViewWillBeginZooming(container.scrollView, with: container.contentView)
+        container.scrollView.setZoomScale(userScale, animated: false)
+        let visibilityRefreshCountDuringZoom = container.viewportVisibilityRefreshCount
+        container.scrollViewDidZoom(container.scrollView)
+        container.flushScheduledViewportRefreshForTesting()
+        #expect(container.viewportVisibilityRefreshCount == visibilityRefreshCountDuringZoom + 1)
+        let refreshCountBeforeZoomSettlement = container.viewportResourceRefreshCount
+        container.scrollViewDidEndZooming(
+            container.scrollView,
+            with: container.contentView,
+            atScale: userScale
+        )
+        #expect(abs(container.scrollView.zoomScale - userScale) < 0.001)
+        #expect(container.viewportResourceRefreshCount == refreshCountBeforeZoomSettlement)
+        #expect(container.isDocumentTraversalActive)
+        try await Task.sleep(for: .milliseconds(180))
+        #expect(container.viewportResourceRefreshCount == refreshCountBeforeZoomSettlement + 1)
+        #expect(!container.isDocumentTraversalActive)
+
+        let pageFramesBeforeTraversal = container.contentView.subviews
+            .compactMap { ($0 as? DrawingCanvasView.PageCanvasView)?.frame }
+            .sorted { $0.minY < $1.minY }
+        let contentInsetBeforeTraversal = container.scrollView.contentInset
+        let minimumScaleBeforeTraversal = container.scrollView.minimumZoomScale
+        let maximumScaleBeforeTraversal = container.scrollView.maximumZoomScale
+        let contentSizeBeforeTraversal = container.scrollView.contentSize
+
+        let availableVerticalScroll = max(
+            container.scrollView.contentSize.height - container.scrollView.bounds.height,
+            0
+        )
+        #expect(availableVerticalScroll > 0)
+        container.scrollViewWillBeginDragging(container.scrollView)
+        container.scrollView.setContentOffset(
+            CGPoint(
+                x: container.scrollView.contentOffset.x,
+                y: min(120, availableVerticalScroll)
+            ),
+            animated: false
+        )
+        container.scrollViewDidScroll(container.scrollView)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        #expect(abs(container.scrollView.zoomScale - userScale) < 0.001)
+        #expect(container.scrollView.minimumZoomScale == minimumScaleBeforeTraversal)
+        #expect(container.scrollView.maximumZoomScale == maximumScaleBeforeTraversal)
+        #expect(container.scrollView.contentSize == contentSizeBeforeTraversal)
+        #expect(container.scrollView.contentInset == contentInsetBeforeTraversal)
+        let pageFramesDuringTraversal = container.contentView.subviews
+            .compactMap { ($0 as? DrawingCanvasView.PageCanvasView)?.frame }
+            .sorted { $0.minY < $1.minY }
+        #expect(pageFramesDuringTraversal == pageFramesBeforeTraversal)
+        let offsetBeforeSettlement = container.scrollView.contentOffset
+        let contentSizeBeforeSettlement = container.scrollView.contentSize
+        let minimumScaleBeforeSettlement = container.scrollView.minimumZoomScale
+        let maximumScaleBeforeSettlement = container.scrollView.maximumZoomScale
+        container.scrollViewDidEndDragging(container.scrollView, willDecelerate: false)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        #expect(abs(container.scrollView.zoomScale - userScale) < 0.001)
+        #expect(container.scrollView.contentOffset == offsetBeforeSettlement)
+        #expect(container.scrollView.contentSize == contentSizeBeforeSettlement)
+        #expect(container.scrollView.minimumZoomScale == minimumScaleBeforeSettlement)
+        #expect(container.scrollView.maximumZoomScale == maximumScaleBeforeSettlement)
+    }
+
+    @Test @MainActor func zoomAndFastScrollSettlementRequestFinalOrdinaryImageRasterTier() async throws {
+        let modelContext = try makeInMemoryModelContext()
+        defer { _ = modelContext }
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesZoomImageTier-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let sourceImage = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32)).image { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
+        let storedImage = try storage.saveData(
+            try #require(sourceImage.pngData()),
+            preferredName: "zoom-tier.png",
+            contentType: .png,
+            to: .imports
+        )
+        let imageURL = storage.url(forRelativePath: storedImage.relativePath)
+        defer { ImageMemoryCache.shared.removeImages(for: imageURL) }
+
+        let attachmentSize = CGSize(width: 800, height: 600)
+        func makeAttachment() -> BeanNotes.Attachment {
+            Attachment(
+                kind: .image,
+                displayName: "Zoom tier",
+                originalFileName: "zoom-tier.png",
+                storedFileName: storedImage.relativePath,
+                contentTypeIdentifier: UTType.png.identifier,
+                fileExtension: "png",
+                x: 0,
+                y: 0,
+                width: attachmentSize.width,
+                height: attachmentSize.height,
+                isLocked: true,
+                rendersBehindDrawing: true
+            )
+        }
+        let pages = (0..<8).map { index in
+            NotePage(
+                pageOrder: index,
+                drawingFileName: "zoom-image-tier-\(index).drawing",
+                width: 1_024,
+                height: 1_366
+            )
+        }
+        let page = pages[0]
+        let trailingPage = pages[7]
+        for page in pages {
+            modelContext.insert(page)
+        }
+        let firstAttachment = makeAttachment()
+        let trailingAttachment = makeAttachment()
+        modelContext.insert(firstAttachment)
+        modelContext.insert(trailingAttachment)
+        page.attachments.append(firstAttachment)
+        trailingPage.attachments.append(trailingAttachment)
+        try modelContext.save()
+
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let parent = makeDrawingCanvasView(
+            page: page,
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 500)
+        )
+        coordinator.containerView = container
+        defer { DrawingCanvasView.dismantleUIView(container, coordinator: coordinator) }
+
+        let quality = DrawingRenderQuality.ultraFine
+        container.configure(
+            pages: pages,
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: quality,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let pageView = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .first { $0.page?.id == page.id })
+        let imageContainer = try #require(pageView.behindImageContainerView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentImageContainerView }
+            .first)
+        let initialBudget = try #require(imageContainer.rasterBudgetMaxPixelSize)
+
+        let targetZoomScale = min(4, container.scrollView.maximumZoomScale)
+        container.scrollViewWillBeginZooming(container.scrollView, with: container.contentView)
+        container.scrollView.setZoomScale(targetZoomScale, animated: false)
+        container.scrollViewDidEndZooming(
+            container.scrollView,
+            with: container.contentView,
+            atScale: targetZoomScale
+        )
+        #expect(container.isDocumentTraversalActive)
+        try await Task.sleep(for: .milliseconds(180))
+
+        let screenScale = container.window?.screen.scale ?? UIScreen.main.scale
+        let expectedImageScale = min(
+            max(targetZoomScale, 1) * screenScale,
+            screenScale * quality.imageScaleMultiplier
+        )
+        let expectedBudget = AttachmentImageRasterBudget(
+            attachmentSize: attachmentSize,
+            renderScale: expectedImageScale
+        ).maxPixelSize
+        #expect(!container.isDocumentTraversalActive)
+        #expect(abs(container.scrollView.zoomScale - targetZoomScale) < 0.001)
+        #expect(abs(imageContainer.contentScaleFactor - expectedImageScale) < 0.001)
+        #expect(expectedBudget > initialBudget)
+        try await waitForRasterBudget(expectedBudget, in: imageContainer)
+
+        // The trailing page starts outside the materialized window. A fast jump can
+        // create it only in the final prune pass, after the global scale is already
+        // settled; it must still receive that high-resolution scale immediately.
+        #expect(!container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .contains { $0.page?.id == trailingPage.id })
+        let bottomOffsetY = max(
+            container.scrollView.contentSize.height
+                - container.scrollView.bounds.height
+                + container.scrollView.adjustedContentInset.bottom,
+            0
+        )
+        container.scrollViewWillBeginDragging(container.scrollView)
+        container.scrollView.setContentOffset(
+            CGPoint(x: container.scrollView.contentOffset.x, y: bottomOffsetY),
+            animated: false
+        )
+        container.scrollViewDidScroll(container.scrollView)
+        container.scrollViewDidEndDragging(container.scrollView, willDecelerate: false)
+
+        let trailingPageView = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .first { $0.page?.id == trailingPage.id })
+        let trailingImageContainer = try #require(trailingPageView.behindImageContainerView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentImageContainerView }
+            .first)
+        #expect(abs(trailingImageContainer.contentScaleFactor - expectedImageScale) < 0.001)
+        try await waitForRasterBudget(expectedBudget, in: trailingImageContainer)
+    }
+
+    @Test @MainActor func dirtyPageSurvivesFinalTraversalPruneUntilSaveCompletes() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDirtyTraversal-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = (0..<8).map {
+            NotePage(pageOrder: $0, drawingFileName: "dirty-traversal-\($0).drawing")
+        }
+        let firstPage = pages[0]
+        let lastPage = try #require(pages.last)
+        let parent = makeDrawingCanvasView(
+            page: firstPage,
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 500)
+        )
+        coordinator.containerView = container
+        defer { DrawingCanvasView.dismantleUIView(container, coordinator: coordinator) }
+
+        container.configure(
+            pages: pages,
+            selectedPageID: lastPage.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.layoutIfNeeded()
+        let initiallyMaterializedPageIDs = Set(
+            container.contentView.subviews.compactMap {
+                ($0 as? DrawingCanvasView.PageCanvasView)?.page?.id
+            }
+        )
+        let cleanInitiallyMaterializedPageIDs = initiallyMaterializedPageIDs
+            .subtracting([firstPage.id, lastPage.id])
+        #expect(initiallyMaterializedPageIDs.contains(firstPage.id))
+        #expect(!cleanInitiallyMaterializedPageIDs.isEmpty)
+
+        coordinator.dirtyPageIDs.insert(firstPage.id)
+        let bottomOffsetY = max(
+            container.scrollView.contentSize.height
+                - container.scrollView.bounds.height
+                + container.scrollView.adjustedContentInset.bottom,
+            0
+        )
+        container.scrollViewWillBeginDragging(container.scrollView)
+        container.scrollView.setContentOffset(
+            CGPoint(x: container.scrollView.contentOffset.x, y: bottomOffsetY),
+            animated: false
+        )
+        container.scrollViewDidScroll(container.scrollView)
+        container.scrollViewDidEndDragging(container.scrollView, willDecelerate: false)
+
+        let materializedPageIDsAfterTraversal = Set(
+            container.contentView.subviews.compactMap {
+                ($0 as? DrawingCanvasView.PageCanvasView)?.page?.id
+            }
+        )
+        let retiredCleanPageCount = cleanInitiallyMaterializedPageIDs.filter {
+            !materializedPageIDsAfterTraversal.contains($0)
+        }.count
+        #expect(materializedPageIDsAfterTraversal.contains(firstPage.id))
+        #expect(retiredCleanPageCount > 0)
+
+        coordinator.dirtyPageIDs.remove(firstPage.id)
+    }
+
+    @Test @MainActor func largePageCanvasStartsWithBoundedNativeDrawingSurface() throws {
+        let pageSize = CGSize(width: 1_024, height: CGFloat(NotePage.maximumPageDimension))
+        let fixture = try makePageCanvasFixture(name: "BoundedNativeSurface", pageSize: pageSize)
+        defer { fixture.cleanup() }
+
+        #expect(fixture.pageView.canvasView.contentSize == pageSize)
+        #expect(fixture.pageView.canvasView.bounds.size == CGSize(width: 1_024, height: 2_048))
+        #expect(fixture.pageView.drawingViewportView.frame.size == CGSize(width: 1_024, height: 2_048))
+
+        let trailingViewport = CGRect(
+            x: 0,
+            y: pageSize.height - 300,
+            width: pageSize.width,
+            height: 300
+        )
+        fixture.pageView.updateNativeDrawingViewport(
+            visiblePageRect: trailingViewport,
+            overscan: 0,
+            nativeZoomScale: 1,
+            force: true
+        )
+        #expect(fixture.pageView.drawingViewportView.frame == trailingViewport)
+        #expect(fixture.pageView.canvasView.contentOffset == trailingViewport.origin)
+        #expect(fixture.pageView.canvasView.contentSize == pageSize)
+    }
+
     @Test @MainActor func nativeDrawingViewportStaysStableDuringLiveInk() throws {
         let fixture = try makePageCanvasFixture(name: "StableLiveInk")
         defer { fixture.cleanup() }
@@ -2889,7 +3741,8 @@ struct BeanNotesTests {
 
         pageView.applyInputMode(.anyInput)
         #expect(!pageView.consumesBlankCanvasTaps)
-        #expect(pageView.allowsPageActionLongPress)
+        #expect(!pageView.allowsPageActionLongPress)
+        #expect(pageView.pageActionLongPressGesture?.isEnabled == false)
         #expect(pageView.canvasView.drawingGestureRecognizer.isEnabled)
 
         pageView.canvasView.tool = PKLassoTool()
@@ -3691,7 +4544,6 @@ struct BeanNotesTests {
             attachmentSize: CGSize(width: 320, height: 220),
             renderScale: 4
         )
-
         #expect(baseBudget.maxPixelSize == 1_024)
         #expect(zoomedBudget.maxPixelSize == 2_560)
         #expect(cappedBudget.maxPixelSize == 6_144)
@@ -4933,6 +5785,63 @@ struct BeanNotesTests {
         }
     }
 
+    @Test @MainActor func PDFCoveredPageBackgroundAvoidsLargeBackingBitmap() {
+        let backgroundView = DrawingCanvasView.PageBackgroundUIView(
+            frame: CGRect(x: 0, y: 0, width: 1_024, height: 12_000)
+        )
+        #expect(backgroundView.usesSolidColorRendering)
+        #expect(backgroundView.contentMode == .scaleToFill)
+        #expect(backgroundView.subviews.isEmpty)
+
+        backgroundView.background = NoteBackground(style: .grid, colorHex: "#FFFFFF")
+        backgroundView.refreshRenderingMode()
+        #expect(!backgroundView.usesSolidColorRendering)
+        #expect(backgroundView.contentMode == .redraw)
+        #expect(backgroundView.subviews.count == 1)
+
+        backgroundView.isCoveredByOpaquePDF = true
+        backgroundView.refreshRenderingMode()
+        #expect(backgroundView.usesSolidColorRendering)
+        #expect(backgroundView.contentMode == .scaleToFill)
+        #expect(backgroundView.layer.contents == nil)
+        #expect(backgroundView.subviews.isEmpty)
+
+        backgroundView.updateRenderScale(6)
+        #expect(backgroundView.layer.contents == nil)
+
+        backgroundView.isCoveredByOpaquePDF = false
+        backgroundView.refreshRenderingMode()
+        #expect(!backgroundView.usesSolidColorRendering)
+        #expect(backgroundView.contentMode == .redraw)
+        #expect(backgroundView.subviews.count == 1)
+    }
+
+    @Test @MainActor func opaquePDFCoverageTracksPageResize() {
+        let pageSize = CGSize(width: 612, height: 792)
+        let attachment = Attachment(
+            kind: .image,
+            displayName: "Imported page",
+            originalFileName: "page.jpg",
+            storedFileName: "Imports/page.jpg",
+            contentTypeIdentifier: UTType.jpeg.identifier,
+            fileExtension: "jpg",
+            x: 0,
+            y: 0,
+            width: pageSize.width,
+            height: pageSize.height,
+            isLocked: true,
+            rendersBehindDrawing: true,
+            vectorSourceStoredFileName: "Imports/document.pdf",
+            vectorSourcePageIndex: 0
+        )
+
+        #expect(DrawingCanvasPDFCoverage.fullyCoversPage([attachment], pageSize: pageSize))
+        #expect(!DrawingCanvasPDFCoverage.fullyCoversPage(
+            [attachment],
+            pageSize: CGSize(width: pageSize.width + 120, height: pageSize.height + 120)
+        ))
+    }
+
     @Test func beanPaperArtworkSelectionIsDeterministicPerPage() throws {
         let firstPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000004"))
         let secondPageID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000"))
@@ -5239,9 +6148,11 @@ struct BeanNotesTests {
 
         imageContainer.setImageLoadingEnabled(true)
         try await waitForRasterImage(in: imageContainer)
+        #expect(imageContainer.isRasterBackingPresentedForTesting)
 
         imageContainer.setImageLoadingEnabled(false)
         #expect(!imageContainer.isRasterImageLoaded)
+        #expect(!imageContainer.isRasterBackingPresentedForTesting)
     }
 
     @Test @MainActor func attachmentImageContainerRetriesAfterTransientDecodeFailure() async throws {
@@ -6141,7 +7052,7 @@ struct BeanNotesTests {
         coordinator.unregister(canvasView: canvasView, page: page)
     }
 
-    @Test func livePencilStrokePublishesSavingStateBeforePencilLifts() async throws {
+    @Test func livePencilStrokeDefersModelCallbacksUntilPencilLifts() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesLiveSavingState-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: rootURL) }
@@ -6165,13 +7076,20 @@ struct BeanNotesTests {
         coordinator.register(canvasView: canvasView, page: page)
         coordinator.canvasViewDidBeginUsingTool(canvasView)
         coordinator.canvasViewDrawingDidChange(canvasView)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        coordinator.canvasViewDrawingDidChange(canvasView)
+        await Task.yield()
+
+        #expect(saveStartedCount == 0)
+        #expect(changedPageIDs.isEmpty)
+        #expect(coordinator.pendingSaves[page.id] == nil)
+
+        coordinator.canvasViewDidEndUsingTool(canvasView)
         await Task.yield()
 
         #expect(saveStartedCount == 1)
         #expect(changedPageIDs == [page.id])
-        #expect(coordinator.pendingSaves[page.id] == nil)
-
-        coordinator.canvasViewDidEndUsingTool(canvasView)
+        #expect(coordinator.pendingSaves[page.id] != nil)
         coordinator.unregister(canvasView: canvasView, page: page)
     }
 
@@ -6700,7 +7618,7 @@ struct BeanNotesTests {
         DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
     }
 
-    @Test @MainActor func documentTraversalStaysActiveThroughDecelerationAndZoom() {
+    @Test @MainActor func documentTraversalStaysActiveThroughDecelerationAndZoom() async throws {
         let container = DrawingCanvasView.CanvasContainerView()
 
         #expect(!container.scrollView.alwaysBounceHorizontal)
@@ -6722,6 +7640,8 @@ struct BeanNotesTests {
         #expect(container.isDocumentTraversalActive)
 
         container.scrollViewDidEndZooming(container.scrollView, with: nil, atScale: 1)
+        #expect(container.isDocumentTraversalActive)
+        try await Task.sleep(for: .milliseconds(180))
         #expect(!container.isDocumentTraversalActive)
 
         container.scrollViewWillBeginDragging(container.scrollView)
@@ -6730,8 +7650,163 @@ struct BeanNotesTests {
 
         container.setDrawingInteractionActive(true)
         #expect(container.isLiveDrawingInteractionActive)
+        #expect(container.isPDFVectorRenderingProtectedForDrawing)
         container.setDrawingInteractionActive(false)
         #expect(!container.isLiveDrawingInteractionActive)
+        #expect(container.isPDFVectorRenderingProtectedForDrawing)
+
+        try await Task.sleep(for: .milliseconds(100))
+        container.setDrawingInteractionActive(true)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(container.isLiveDrawingInteractionActive)
+        #expect(container.isPDFVectorRenderingProtectedForDrawing)
+
+        container.setDrawingInteractionActive(false)
+        let resumeDeadline = ContinuousClock.now + .seconds(2)
+        while container.isPDFVectorRenderingProtectedForDrawing,
+              ContinuousClock.now < resumeDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!container.isLiveDrawingInteractionActive)
+        #expect(!container.isPDFVectorRenderingProtectedForDrawing)
+
+        container.setDrawingInteractionActive(true)
+        container.setDrawingInteractionActive(false)
+        #expect(container.isPDFVectorRenderingProtectedForDrawing)
+        container.cancelPendingRenderingWork()
+        #expect(!container.isLiveDrawingInteractionActive)
+        #expect(!container.isPDFVectorRenderingProtectedForDrawing)
+    }
+
+    @Test @MainActor func zoomSettlementWaitsForImmediateDrawingStrokeToEnd() async throws {
+        let container = DrawingCanvasView.CanvasContainerView()
+
+        container.scrollViewWillBeginZooming(container.scrollView, with: nil)
+        container.scrollViewDidEndZooming(container.scrollView, with: nil, atScale: 1)
+        container.setDrawingInteractionActive(true)
+
+        try await Task.sleep(for: .milliseconds(180))
+        #expect(container.isDocumentTraversalActive)
+        #expect(container.isLiveDrawingInteractionActive)
+
+        container.setDrawingInteractionActive(false)
+        try await Task.sleep(for: .milliseconds(180))
+        #expect(!container.isDocumentTraversalActive)
+        #expect(!container.isLiveDrawingInteractionActive)
+    }
+
+    @Test @MainActor func scrollingBatchesPagePublicationAndSkipsTinyWindowRefreshes() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesScrollBatch-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = (0..<4).map { index in
+            NotePage(
+                pageOrder: index,
+                drawingFileName: "scroll-batch-\(index).drawing",
+                width: 612,
+                height: 792
+            )
+        }
+        let parent = makeDrawingCanvasView(
+            page: pages[0],
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 500)
+        )
+        coordinator.containerView = container
+        defer { DrawingCanvasView.dismantleUIView(container, coordinator: coordinator) }
+
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        var publishedPageIDs: [UUID] = []
+        container.visiblePageChanged = { publishedPageIDs.append($0) }
+        let initialRefreshCount = container.viewportResourceRefreshCount
+        let initialVisibilityRefreshCount = container.viewportVisibilityRefreshCount
+        let startOffset = container.scrollView.contentOffset
+
+        container.scrollViewWillBeginDragging(container.scrollView)
+        for sample in 1...20 {
+            container.scrollView.setContentOffset(
+                CGPoint(x: startOffset.x, y: startOffset.y + CGFloat(sample)),
+                animated: false
+            )
+            container.scrollViewDidScroll(container.scrollView)
+            container.flushScheduledViewportRefreshForTesting()
+        }
+
+        #expect(container.viewportResourceRefreshCount == initialRefreshCount)
+        // Cheap visibility follows each display tick even while expensive page-window
+        // work remains behind the 22% scroll hysteresis.
+        #expect(container.viewportVisibilityRefreshCount == initialVisibilityRefreshCount + 20)
+        #expect(publishedPageIDs.isEmpty)
+
+        let finalOffsetY = max(
+            container.scrollView.contentSize.height - container.scrollView.bounds.height,
+            0
+        )
+        let refreshCountBeforeLargeJump = container.viewportResourceRefreshCount
+        container.scrollView.setContentOffset(
+            CGPoint(x: startOffset.x, y: finalOffsetY),
+            animated: false
+        )
+        container.scrollViewDidScroll(container.scrollView)
+        container.flushScheduledViewportRefreshForTesting()
+
+        #expect(container.viewportResourceRefreshCount == refreshCountBeforeLargeJump + 1)
+        #expect(publishedPageIDs.isEmpty)
+        #expect(container.currentSelectedPageID == pages.last?.id)
+
+        // A drag that transitions into momentum must not publish at finger-up. The
+        // final visible page is emitted once, after deceleration actually settles.
+        container.scrollViewDidEndDragging(container.scrollView, willDecelerate: true)
+        #expect(publishedPageIDs.isEmpty)
+        container.scrollViewDidEndDecelerating(container.scrollView)
+        #expect(publishedPageIDs == [pages.last?.id].compactMap { $0 })
+
+        // Crossing away from the already-published page and returning within the same
+        // gesture should not emit a redundant selection update at settlement.
+        container.scrollViewWillBeginDragging(container.scrollView)
+        container.scrollView.setContentOffset(startOffset, animated: false)
+        container.scrollViewDidScroll(container.scrollView)
+        #expect(publishedPageIDs.count == 1)
+        container.scrollView.setContentOffset(
+            CGPoint(x: startOffset.x, y: finalOffsetY),
+            animated: false
+        )
+        container.scrollViewDidScroll(container.scrollView)
+        container.scrollViewDidEndDragging(container.scrollView, willDecelerate: false)
+        #expect(publishedPageIDs == [pages.last?.id].compactMap { $0 })
+
+        // A programmatic selection superseding an in-flight traversal must clear the
+        // queued page. Otherwise the stale page can overwrite the requested target as
+        // soon as the user's gesture reports its final callback.
+        container.scrollViewWillBeginDragging(container.scrollView)
+        container.scrollView.setContentOffset(startOffset, animated: false)
+        container.scrollViewDidScroll(container.scrollView)
+        container.prepareForProgrammaticScroll(to: pages[1].id)
+        container.synchronizeSelectedPageID(pages[1].id)
+        container.scrollViewDidEndDragging(container.scrollView, willDecelerate: false)
+        #expect(publishedPageIDs == [pages.last?.id].compactMap { $0 })
     }
 
     private struct PageCanvasFixture {
@@ -6748,13 +7823,21 @@ struct BeanNotesTests {
         }
     }
 
-    private func makePageCanvasFixture(name: String) throws -> PageCanvasFixture {
+    private func makePageCanvasFixture(
+        name: String,
+        pageSize: CGSize = CGSize(width: 612, height: 792)
+    ) throws -> PageCanvasFixture {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotes\(name)-\(UUID().uuidString)", isDirectory: true)
         let storage = LocalStorageService(rootURL: rootURL)
         try storage.prepareDirectories()
         let drawingStorage = DrawingStorageService(storage: storage)
-        let page = NotePage(pageOrder: 0, drawingFileName: "\(name).drawing", width: 612, height: 792)
+        let page = NotePage(
+            pageOrder: 0,
+            drawingFileName: "\(name).drawing",
+            width: pageSize.width,
+            height: pageSize.height
+        )
         let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
         let coordinator = DrawingCanvasView.Coordinator(parent: parent)
         let pageView = DrawingCanvasView.PageCanvasView()
@@ -6830,6 +7913,7 @@ struct BeanNotesTests {
     private func writeMinimalPDF(
         to url: URL,
         mediaBox: CGRect,
+        cropBox: CGRect? = nil,
         rotationAngle: Int
     ) throws {
         let stream = "BT /F1 24 Tf 72 720 Td (Rotated Page) Tj ET\n"
@@ -6841,11 +7925,25 @@ struct BeanNotesTests {
         ]
             .map { String(format: "%.0f", $0) }
             .joined(separator: " ")
+        let cropBoxEntry: String
+        if let cropBox {
+            let cropBoxText = [
+                cropBox.minX,
+                cropBox.minY,
+                cropBox.maxX,
+                cropBox.maxY
+            ]
+                .map { String(format: "%.0f", $0) }
+                .joined(separator: " ")
+            cropBoxEntry = " /CropBox [\(cropBoxText)]"
+        } else {
+            cropBoxEntry = ""
+        }
         let objects = [
             "<< /Type /Catalog /Pages 2 0 R >>",
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             """
-            << /Type /Page /Parent 2 0 R /MediaBox [\(mediaBoxText)] /Rotate \(rotationAngle) /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+            << /Type /Page /Parent 2 0 R /MediaBox [\(mediaBoxText)]\(cropBoxEntry) /Rotate \(rotationAngle) /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
             """,
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
             """
@@ -6897,6 +7995,24 @@ struct BeanNotesTests {
         }
 
         #expect(imageContainer.isRasterImageLoaded)
+    }
+
+    @MainActor private func waitForRasterBudget(
+        _ expectedBudget: Int,
+        in imageContainer: DrawingCanvasView.AttachmentImageContainerView,
+        timeoutNanoseconds: UInt64 = 5_000_000_000
+    ) async throws {
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(timeoutNanoseconds))
+
+        while ContinuousClock.now < deadline {
+            if imageContainer.rasterBudgetMaxPixelSize == expectedBudget {
+                return
+            }
+
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(imageContainer.rasterBudgetMaxPixelSize == expectedBudget)
     }
 
     private func waitForCachedImageVariant(
@@ -7493,6 +8609,64 @@ struct BeanNotesTests {
         #expect(fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
     }
 
+    @Test @MainActor func objectEraserRegistrationUsesSelectedScopeAndBoundaryInput() throws {
+        let fixture = try makePageCanvasFixture(name: "ScopedObjectEraser")
+        defer { fixture.cleanup() }
+        let page = try #require(fixture.pageView.page)
+        let boundaryStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 119),
+            to: CGPoint(x: 180, y: 119),
+            width: 4
+        )
+        let outsideStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 119.2),
+            to: CGPoint(x: 180, y: 119.2),
+            width: 4
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(
+            strokes: [boundaryStroke, outsideStroke]
+        )
+        let toolState = fixture.coordinator.parent.toolState
+        toolState.selectEraserMode(.object)
+        toolState.applyEraserWidth(34)
+        fixture.coordinator.register(
+            canvasView: fixture.pageView.canvasView,
+            page: page,
+            pageView: fixture.pageView
+        )
+
+        let eraser = try #require(fixture.pageView.canvasView.tool as? PKEraserTool)
+        #expect(eraser.eraserType == .vector)
+        #expect(fixture.pageView.isUsingCustomObjectEraser)
+        #expect(!fixture.pageView.isUsingCustomRubEraser)
+        #expect(!fixture.pageView.canvasView.drawingGestureRecognizer.isEnabled)
+        #expect(fixture.pageView.eraserScopeView.isHidden)
+        #expect(fixture.pageView.objectEraserLiveEvaluationCount == 0)
+
+        let location = CGPoint(x: 100, y: 100)
+        fixture.pageView.handleEraserInteraction(.began(location))
+        #expect(!fixture.pageView.eraserScopeView.isHidden)
+        #expect(fixture.pageView.eraserScopeView.center == location)
+        #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 34, height: 34))
+        #expect(fixture.pageView.objectEraserLiveEvaluationCount == 1)
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
+        #expect(
+            fixture.pageView.canvasView.drawing.strokes.first?.renderBounds
+                == outsideStroke.renderBounds
+        )
+        fixture.pageView.handleEraserInteraction(.ended(location))
+        #expect(fixture.pageView.eraserScopeView.isHidden)
+
+        let signatureAt34Points = toolState.pkToolSignature
+        toolState.applyEraserWidth(42)
+        #expect(toolState.pkToolSignature != signatureAt34Points)
+        fixture.coordinator.applyCustomToolIfNeeded()
+        let resizedLocation = CGPoint(x: 220, y: 220)
+        fixture.pageView.handleEraserInteraction(.began(resizedLocation))
+        #expect(fixture.pageView.eraserScopeView.bounds.size == CGSize(width: 42, height: 42))
+        fixture.pageView.handleEraserInteraction(.ended(resizedLocation))
+    }
+
     @Test @MainActor func pixelEraserUsesNativePencilKitInput() throws {
         let fixture = try makePageCanvasFixture(name: "NativePixelEraser")
         defer { fixture.cleanup() }
@@ -7674,6 +8848,43 @@ struct BeanNotesTests {
             diameter: 20
         )
         #expect(sweptHit == IndexSet(integer: 2))
+    }
+
+    @Test @MainActor func objectEraserSessionReusesPreparedStrokeGeometry() {
+        let touchedStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 100),
+            to: CGPoint(x: 180, y: 100),
+            width: 4
+        )
+        let distantStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 300),
+            to: CGPoint(x: 180, y: 300),
+            width: 4
+        )
+        var session = DrawingCanvasView.ObjectEraserHitTester.Session(
+            strokes: [touchedStroke, distantStroke],
+            diameter: 32
+        )
+
+        let firstHit = session.intersectedStrokeIndexes(
+            eraserPath: [CGPoint(x: 80, y: 116)]
+        )
+        #expect(firstHit == IndexSet(integer: 0))
+        #expect(session.lastBroadPhaseCandidateCount == 1)
+        #expect(session.preparedStrokeCount == 1)
+
+        let secondHit = session.intersectedStrokeIndexes(
+            eraserPath: [CGPoint(x: 120, y: 116)]
+        )
+        #expect(secondHit == IndexSet(integer: 0))
+        #expect(session.preparedStrokeCount == 1)
+
+        let excludedHit = session.intersectedStrokeIndexes(
+            eraserPath: [CGPoint(x: 140, y: 116)],
+            excluding: IndexSet(integer: 0)
+        )
+        #expect(excludedHit.isEmpty)
+        #expect(session.preparedStrokeCount == 1)
     }
 
     @Test @MainActor func objectEraserIncludesTheLargestAffineStrokeScale() {
@@ -7906,10 +9117,16 @@ struct BeanNotesTests {
         #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
     }
 
-    @Test @MainActor func objectEraserBuffersSlowSinglePointEvents() throws {
-        let fixture = try makePageCanvasFixture(name: "BufferedObjectEraser")
+    @Test @MainActor func objectEraserFlushesSubthresholdBoundaryMoveBeforeLift() async throws {
+        let fixture = try makePageCanvasFixture(name: "PromptBoundaryObjectEraser")
         defer { fixture.cleanup() }
 
+        let boundaryStroke = makeTestStroke(
+            from: CGPoint(x: 20, y: 121.2),
+            to: CGPoint(x: 180, y: 121.2),
+            width: 2
+        )
+        fixture.pageView.canvasView.drawing = PKDrawing(strokes: [boundaryStroke])
         fixture.pageView.setEraserPreviewEnabled(
             true,
             diameter: 40,
@@ -7917,19 +9134,22 @@ struct BeanNotesTests {
         )
         fixture.pageView.handleEraserInteraction(.began(CGPoint(x: 100, y: 100)))
         #expect(fixture.pageView.objectEraserLiveEvaluationCount == 1)
+        #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
 
-        for x in 101...109 {
-            fixture.pageView.handleEraserInteraction(
-                .moved(CGPoint(x: CGFloat(x), y: 100))
-            )
+        // This 0.3-point move is far below the 10-point distance batch, but it makes
+        // the displayed 40-point circle touch the stroke. It must erase on the next
+        // main-loop turn rather than waiting for more travel or pencil/finger lift.
+        fixture.pageView.handleEraserInteraction(.moved(CGPoint(x: 100, y: 100.3)))
+        let eraseDeadline = ContinuousClock.now + .seconds(1)
+        while !fixture.pageView.canvasView.drawing.strokes.isEmpty,
+              ContinuousClock.now < eraseDeadline {
+            try await Task.sleep(for: .milliseconds(5))
         }
-        #expect(fixture.pageView.objectEraserLiveEvaluationCount == 1)
-
-        fixture.pageView.handleEraserInteraction(.moved(CGPoint(x: 110, y: 100)))
         #expect(fixture.pageView.objectEraserLiveEvaluationCount == 2)
+        #expect(fixture.pageView.canvasView.drawing.strokes.isEmpty)
 
         fixture.pageView.handleEraserInteraction(.endedBatch([
-            CGPoint(x: 110, y: 100)
+            CGPoint(x: 100, y: 100.3)
         ]))
     }
 
@@ -9078,103 +10298,185 @@ struct BeanNotesTests {
         #expect(imported.pages[2].height > imported.pages[0].height)
         #expect(imported.pages[2].height == NotePage.maximumPageDimension)
 
+        let receiptPage = imported.pages[2]
+        let receiptAttachment = try #require(receiptPage.lockedImageAttachments.first)
+        let receiptRaster = try #require(UIImage(contentsOfFile: storage.url(
+            forRelativePath: receiptAttachment.storedFileName
+        ).path))
+        let receiptRasterAspect = receiptRaster.size.width / receiptRaster.size.height
+        let receiptLogicalAspect = receiptPage.pageSize.width / receiptPage.pageSize.height
+        // The stored JPEG is export/thumbnail material only. The live editor presents
+        // the original vector PDF and never uses this differently shaped fallback.
+        #expect(abs(receiptRasterAspect - receiptLogicalAspect) > 0.01)
+
         let firstPage = try #require(imported.pages.first)
         let lockedImage = try #require(firstPage.lockedImageAttachments.first)
         let rasterURL = storage.url(forRelativePath: lockedImage.storedFileName)
         #expect(FileManager.default.fileExists(atPath: rasterURL.path))
         let rasterImage = try #require(UIImage(contentsOfFile: rasterURL.path))
-        #expect(max(rasterImage.size.width, rasterImage.size.height) <= 1_280)
+        #expect(max(rasterImage.size.width, rasterImage.size.height) <= 1_200)
+        #expect(max(rasterImage.size.width, rasterImage.size.height) >= 1_175)
         #expect(rasterImage.size.width > 900)
         let vectorSource = try #require(lockedImage.vectorSourceStoredFileName)
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: vectorSource).path))
 
-        let tiledPage = DrawingCanvasView.PDFPageTiledView(frame: CGRect(x: 0, y: 0, width: 612, height: 792))
-        tiledPage.configure(url: storage.url(forRelativePath: vectorSource), pageIndex: 0)
-        let tiledLayer = try #require(tiledPage.layer as? CATiledLayer)
-        #expect(tiledLayer.levelsOfDetail == 4)
-        #expect(tiledLayer.levelsOfDetailBias == 4)
-        let stableContentsScale = tiledPage.layer.contentsScale
-        tiledPage.updateRenderScale(12)
-        #expect(tiledPage.layer.contentsScale == stableContentsScale)
-        #expect(DrawingCanvasView.ImmediatePDFTiledLayer.fadeDuration() == 0)
-        let idleTiledPage = DrawingCanvasView.PDFPageTiledView(frame: .zero)
-        idleTiledPage.configure(url: storage.url(forRelativePath: vectorSource), pageIndex: 0)
-        let initialInvalidationCount = idleTiledPage.displayInvalidationCount
-        idleTiledPage.setRenderingSuspended(true)
-        idleTiledPage.setRenderingSuspended(false)
-        #expect(idleTiledPage.displayInvalidationCount == initialInvalidationCount)
-
-        idleTiledPage.setRenderingSuspended(true)
-        idleTiledPage.configure(url: storage.url(forRelativePath: vectorSource), pageIndex: 1)
-        #expect(idleTiledPage.displayInvalidationCount == initialInvalidationCount)
-        idleTiledPage.setRenderingSuspended(false)
-        #expect(idleTiledPage.displayInvalidationCount == initialInvalidationCount + 1)
-
-        let configuredInvalidationCount = idleTiledPage.displayInvalidationCount
-        for _ in 0..<25 {
-            idleTiledPage.setRenderingSuspended(true)
-            idleTiledPage.setRenderingSuspended(false)
+        // Model a legacy PDF preview whose baked geometry no longer matches its
+        // original vector page. Runtime interaction rendering must derive its bounded
+        // fallback from the PDF itself instead of exposing this stale image.
+        let stalePreview = UIGraphicsImageRenderer(size: rasterImage.size).image { context in
+            UIColor.magenta.setFill()
+            context.fill(CGRect(origin: .zero, size: rasterImage.size))
         }
-        #expect(idleTiledPage.displayInvalidationCount == configuredInvalidationCount)
+        let stalePreviewData = try #require(stalePreview.jpegData(compressionQuality: 0.9))
+        try stalePreviewData.write(to: rasterURL, options: [.atomic])
 
+        let vectorURL = storage.url(forRelativePath: vectorSource)
         let imageContainer = DrawingCanvasView.AttachmentImageContainerView()
-        defer {
-            imageContainer.releaseImage(evictCachedVariants: true)
-        }
+        defer { imageContainer.releaseImage(evictCachedVariants: true) }
         imageContainer.updateRasterScale(2)
+        imageContainer.setViewportVisible(true)
         imageContainer.configure(
             attachment: lockedImage,
             storage: storage,
             pageSize: firstPage.pageSize,
             changed: {}
         )
-        try await waitForRasterImage(in: imageContainer)
+        imageContainer.layoutIfNeeded()
         #expect(imageContainer.hasVectorPDFView)
         #expect(imageContainer.isVectorPDFVisible)
-
-        imageContainer.setDocumentTraversalActive(true)
-        #expect(imageContainer.isVectorPDFVisible)
         #expect(!imageContainer.isVectorPDFRenderingSuspended)
+        #expect(imageContainer.subviews.count == 1)
+        #expect(!imageContainer.isRasterImageLoaded)
+        #expect(!imageContainer.isRasterBackingPresentedForTesting)
+        #expect(imageContainer.rasterBudgetMaxPixelSize == nil)
+        #expect(imageContainer.rasterImageForTesting == nil)
+        #expect(imageContainer.vectorDisplayFrame == imageContainer.bounds)
+        #expect(imageContainer.vectorDocumentURLForTesting == vectorURL.standardizedFileURL)
+        #expect(imageContainer.vectorPageIndexForTesting == 0)
+        let stableVectorScale = try #require(imageContainer.vectorFixedScaleForTesting)
+        #expect(stableVectorScale > 0)
+        let nativeDocumentFrame = try #require(imageContainer.vectorDocumentFrameForTesting)
+        #expect(abs(nativeDocumentFrame.width - imageContainer.bounds.width) < 1)
+        #expect(abs(nativeDocumentFrame.height - imageContainer.bounds.height) < 1)
 
-        imageContainer.setDocumentTraversalActive(false)
-        #expect(imageContainer.isVectorPDFVisible)
-        #expect(!imageContainer.isVectorPDFRenderingSuspended)
+        let stableContainerFrame = imageContainer.frame
+        let stableContainerBounds = imageContainer.bounds
+        let stableContainerTransform = imageContainer.transform
+        let stableVectorFrame = imageContainer.vectorDisplayFrame
 
         imageContainer.setDrawingInteractionActive(true)
-        #expect(imageContainer.isVectorPDFVisible)
         #expect(!imageContainer.isVectorPDFRenderingSuspended)
 
         imageContainer.setDocumentTraversalActive(true)
+        imageContainer.updateRasterScale(0.2)
+        imageContainer.updateRasterScale(12)
+        imageContainer.layoutIfNeeded()
+        // A traversal may reuse one bounded snapshot, but live pencil/finger ink must
+        // synchronously restore the PDFKit vector surface—even if a pinch is still
+        // settling. No stale import preview is allowed underneath it.
+        #expect(imageContainer.isVectorPDFVisible)
+        #expect(!imageContainer.isVectorPDFRenderingSuspended)
+        #expect(imageContainer.subviews.count == 1)
+        #expect(!imageContainer.isRasterImageLoaded)
+        #expect(imageContainer.frame == stableContainerFrame)
+        #expect(imageContainer.bounds == stableContainerBounds)
+        #expect(imageContainer.transform == stableContainerTransform)
+        #expect(imageContainer.vectorDisplayFrame == stableVectorFrame)
+        #expect(imageContainer.vectorFixedScaleForTesting == stableVectorScale)
+
         imageContainer.setDrawingInteractionActive(false)
-        #expect(imageContainer.isVectorPDFVisible)
-        #expect(!imageContainer.isVectorPDFRenderingSuspended)
-
+        #expect(imageContainer.isVectorPDFRenderingSuspended)
         imageContainer.setDocumentTraversalActive(false)
-        #expect(imageContainer.isVectorPDFVisible)
         #expect(!imageContainer.isVectorPDFRenderingSuspended)
 
-        let deferredVectorContainer = DrawingCanvasView.AttachmentImageContainerView()
-        deferredVectorContainer.setDocumentTraversalActive(true)
-        deferredVectorContainer.configure(
+        // Viewport callbacks keep the same native PDFView mounted and visible, so
+        // crossing a visibility boundary cannot introduce a blank or preview frame.
+        imageContainer.setViewportVisible(false)
+        #expect(imageContainer.isVectorPDFVisible)
+        #expect(!imageContainer.isRasterBackingPresentedForTesting)
+        imageContainer.setViewportVisible(true)
+        #expect(imageContainer.isVectorPDFVisible)
+        #expect(imageContainer.vectorFixedScaleForTesting == stableVectorScale)
+
+        // Reusing the container changes the PDFKit document directly; no old bitmap can
+        // remain underneath the replacement vector page.
+        let redPDFURL = rootURL.appendingPathComponent("Vector-Red.pdf")
+        let bluePDFURL = rootURL.appendingPathComponent("Vector-Blue.pdf")
+        for (url, color) in [(redPDFURL, UIColor.red), (bluePDFURL, UIColor.blue)] {
+            let colorRenderer = UIGraphicsPDFRenderer(
+                bounds: CGRect(x: 0, y: 0, width: 128, height: 128)
+            )
+            try colorRenderer.writePDF(to: url) { rendererContext in
+                rendererContext.beginPage()
+                rendererContext.cgContext.setFillColor(color.cgColor)
+                rendererContext.cgContext.fill(CGRect(x: 0, y: 0, width: 128, height: 128))
+            }
+        }
+
+        let reusedContainer = DrawingCanvasView.AttachmentImageContainerView()
+        defer { reusedContainer.releaseImage(evictCachedVariants: true) }
+        reusedContainer.setViewportVisible(true)
+        reusedContainer.configure(
             attachment: lockedImage,
+            storage: storage,
+            pageSize: firstPage.pageSize,
+            vectorSourceURL: redPDFURL,
+            vectorPageIndex: 0,
+            changed: {}
+        )
+        #expect(reusedContainer.vectorDocumentURLForTesting == redPDFURL.standardizedFileURL)
+        #expect(reusedContainer.isVectorPDFVisible)
+        #expect(!reusedContainer.isRasterImageLoaded)
+        reusedContainer.configure(
+            attachment: lockedImage,
+            storage: storage,
+            pageSize: firstPage.pageSize,
+            vectorSourceURL: bluePDFURL,
+            vectorPageIndex: 0,
+            changed: {}
+        )
+        #expect(reusedContainer.vectorDocumentURLForTesting == bluePDFURL.standardizedFileURL)
+        #expect(reusedContainer.subviews.count == 1)
+        #expect(!reusedContainer.isRasterImageLoaded)
+
+        let ordinaryReuseAttachment = Attachment(
+            kind: .image,
+            displayName: "Legacy Preview as Image",
+            originalFileName: "legacy-preview.jpg",
+            storedFileName: lockedImage.storedFileName,
+            contentTypeIdentifier: UTType.jpeg.identifier,
+            fileExtension: "jpg",
+            width: lockedImage.width,
+            height: lockedImage.height
+        )
+        reusedContainer.configure(
+            attachment: ordinaryReuseAttachment,
             storage: storage,
             pageSize: firstPage.pageSize,
             changed: {}
         )
-        #expect(deferredVectorContainer.hasVectorPDFView)
-        #expect(deferredVectorContainer.isVectorPDFVisible)
-        deferredVectorContainer.setDocumentTraversalActive(false)
-        #expect(deferredVectorContainer.hasVectorPDFView)
-        #expect(deferredVectorContainer.isVectorPDFVisible)
-        deferredVectorContainer.releaseImage(evictCachedVariants: true)
+        #expect(!reusedContainer.hasVectorPDFView)
+        #expect(!reusedContainer.isRasterImageLoaded)
+        try await waitForRasterImage(in: reusedContainer)
+        let ordinaryRaster = try #require(reusedContainer.rasterImageForTesting)
+        let ordinaryPixel = try #require(rgbaPixel(
+            in: ordinaryRaster,
+            at: CGPoint(x: ordinaryRaster.size.width / 2, y: ordinaryRaster.size.height / 2)
+        ))
+        #expect(ordinaryPixel[0] > 180 && ordinaryPixel[1] < 100 && ordinaryPixel[2] > 180)
+        #expect(reusedContainer.isRasterBackingPresentedForTesting)
 
         imageContainer.setImageLoadingEnabled(false)
-        #expect(!imageContainer.hasVectorPDFView)
+        #expect(imageContainer.hasVectorPDFView)
         #expect(!imageContainer.isVectorPDFVisible)
+        #expect(!imageContainer.isRasterBackingPresentedForTesting)
 
         imageContainer.setImageLoadingEnabled(true)
         #expect(imageContainer.hasVectorPDFView)
         #expect(imageContainer.isVectorPDFVisible)
+        #expect(!imageContainer.isRasterBackingPresentedForTesting)
+        #expect(!imageContainer.isRasterImageLoaded)
+        #expect(imageContainer.subviews.count == 1)
     }
 
     @Test @MainActor func stagedDocumentVersionImportPreservesPagesAndDrawingsAndCreatesLatestVersion() async throws {
@@ -9391,6 +10693,7 @@ struct BeanNotesTests {
         try writeMinimalPDF(
             to: pdfURL,
             mediaBox: CGRect(x: 0, y: 0, width: 612, height: 792),
+            cropBox: CGRect(x: 50, y: 80, width: 400, height: 600),
             rotationAngle: 90
         )
 
@@ -9406,9 +10709,37 @@ struct BeanNotesTests {
         let importedPageImage = try #require(UIImage(contentsOfFile: imageURL.path))
 
         #expect(page.width > page.height)
+        #expect(abs(page.width / page.height - 1.5) < 0.01)
         #expect(lockedImage.width == page.width)
         #expect(lockedImage.height == page.height)
         #expect(importedPageImage.size.width > importedPageImage.size.height)
+        #expect(abs(importedPageImage.size.width / importedPageImage.size.height - 1.5) < 0.01)
+
+        let nativePageView = DrawingCanvasView.NativePDFPageView(
+            frame: CGRect(origin: .zero, size: page.pageSize)
+        )
+        #expect(nativePageView.configure(url: pdfURL, pageIndex: 0))
+        nativePageView.layoutIfNeeded()
+        #expect(nativePageView.displayBox == .cropBox)
+        #expect(abs(nativePageView.fixedScaleForTesting - page.pageSize.width / 600) < 0.01)
+        let cropDocumentFrame = try #require(nativePageView.documentFrameInViewForTesting)
+        #expect(abs(cropDocumentFrame.width - nativePageView.bounds.width) < 1)
+        #expect(abs(cropDocumentFrame.height - nativePageView.bounds.height) < 1)
+        nativePageView.releaseDocument()
+
+        // Notes imported by an older build can have MediaBox-based geometry. Keep
+        // those canvases filled with the same native PDFView instead of shrinking the
+        // CropBox into a differently proportioned saved frame.
+        let legacyPageView = DrawingCanvasView.NativePDFPageView(
+            frame: CGRect(x: 0, y: 0, width: 792, height: 612)
+        )
+        #expect(legacyPageView.configure(url: pdfURL, pageIndex: 0))
+        legacyPageView.layoutIfNeeded()
+        #expect(legacyPageView.displayBox == .mediaBox)
+        let mediaDocumentFrame = try #require(legacyPageView.documentFrameInViewForTesting)
+        #expect(abs(mediaDocumentFrame.width - legacyPageView.bounds.width) < 1)
+        #expect(abs(mediaDocumentFrame.height - legacyPageView.bounds.height) < 1)
+        legacyPageView.releaseDocument()
     }
 
     @Test @MainActor func pdfPreviewDismantleCancelsLoadAndClearsDocument() async throws {
@@ -9501,6 +10832,139 @@ struct BeanNotesTests {
         for relativePath in storedPaths {
             #expect(!FileManager.default.fileExists(atPath: storage.url(forRelativePath: relativePath).path))
         }
+    }
+
+    @Test @MainActor func directPageImportRollsBackOwnedFilesWhenPDFValidationFails() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesInvalidPDFRollback-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        )
+        try storage.prepareDirectories()
+        let invalidPDFURL = rootURL.appendingPathComponent("Broken.pdf")
+        // The signature passes the cheap preflight, so this exercises rollback
+        // after the malformed local copy fails Core Graphics validation.
+        try Data("%PDF-1.4\nnot a valid PDF".utf8).write(to: invalidPDFURL, options: [.atomic])
+        let note = NoteDocument(title: "Broken")
+
+        do {
+            _ = try await service.importDocumentPages(
+                from: invalidPDFURL,
+                into: note,
+                startingAt: 0
+            )
+            Issue.record("An invalid PDF should fail validation.")
+        } catch ImportExportError.unsupportedDocument {
+            // Expected.
+        }
+
+        let importsDirectory = try storage.directoryURL(for: .imports)
+        let importedContents = try FileManager.default.contentsOfDirectory(
+            at: importsDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(importedContents.isEmpty)
+        #expect(note.pages.isEmpty)
+    }
+
+    @Test @MainActor func PDFPreflightRejectsInvalidSignatureBeforeStagingCopy() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPDFPreflight-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        )
+        try storage.prepareDirectories()
+
+        let invalidPDFURL = rootURL.appendingPathComponent("Spoofed.pdf")
+        try Data(repeating: 0x41, count: 16 * 1_024).write(to: invalidPDFURL, options: [.atomic])
+        let staging = storage.beginImportStagingTransaction()
+        let note = NoteDocument(title: "Spoofed")
+
+        do {
+            _ = try await service.importDocumentPages(
+                from: invalidPDFURL,
+                into: note,
+                startingAt: 0,
+                staging: staging
+            )
+            Issue.record("An extension-spoofed PDF should fail preflight.")
+        } catch ImportExportError.unsupportedDocument {
+            // Expected.
+        }
+
+        #expect(staging.stagedFileNames().isEmpty)
+        #expect(note.pages.isEmpty)
+        staging.rollback()
+    }
+
+    @Test @MainActor func directPDFImportCommitsOwnedFilesBeforeReturning() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDirectPDFCommit-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(storage: storage, drawingStorage: drawingStorage)
+        )
+        try storage.prepareDirectories()
+
+        let pdfURL = rootURL.appendingPathComponent("Committed Import.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: pdfURL) { context in
+            context.beginPage()
+            "Page 1".draw(
+                at: CGPoint(x: 72, y: 72),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24)]
+            )
+        }
+
+        let context = try makeInMemoryModelContext()
+        let originalDate = Date(timeIntervalSince1970: 1_000)
+        let note = NoteDocument(title: "Existing", updatedAt: originalDate)
+        context.insert(note)
+        try context.save()
+
+        let imported = try await service.importDocumentPages(
+            from: pdfURL,
+            into: note,
+            startingAt: 1
+        )
+        try context.save()
+
+        #expect(imported.pages.count == 1)
+        #expect(imported.attachments.count == 2)
+        #expect(note.pages.map(\.id) == imported.pages.map(\.id))
+        #expect(note.updatedAt > originalDate)
+        #expect(imported.attachments.allSatisfy {
+            FileManager.default.fileExists(atPath: storage.url(forRelativePath: $0.storedFileName).path)
+        })
+        let importsDirectory = try storage.directoryURL(for: .imports)
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: importsDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(!contents.contains { $0.lastPathComponent == ".Pending" })
     }
 
     @Test @MainActor func cancelingDirectPDFImportRemovesStagedFiles() async throws {

@@ -59,6 +59,14 @@ final class BeanNotesUITests: XCTestCase {
         app.buttons["Eraser"].tap()
         XCTAssertTrue(app.buttons["eraser-size-0"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Custom eraser size"].waitForExistence(timeout: 8))
+        let objectEraserButton = app.buttons["Object eraser"]
+        XCTAssertTrue(objectEraserButton.waitForExistence(timeout: 8))
+        objectEraserButton.tap()
+        XCTAssertTrue(app.buttons["eraser-size-0"].waitForExistence(timeout: 8))
+        let largestObjectScope = app.buttons["eraser-size-3"]
+        XCTAssertTrue(largestObjectScope.waitForExistence(timeout: 8))
+        largestObjectScope.tap()
+        XCTAssertEqual(app.buttons["Custom eraser size"].value as? String, "42 points")
         XCTAssertFalse(app.buttons["Rub Eraser eraser"].exists)
         XCTAssertFalse(app.buttons["Zoom in"].exists)
         XCTAssertFalse(app.buttons["Zoom out"].exists)

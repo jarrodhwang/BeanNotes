@@ -1207,16 +1207,16 @@ final class DrawingToolState: ObservableObject {
         case .eraser:
             switch eraserMode {
             case .pixel:
-                // PageCanvasView owns the exact circular boundary so sizes below PencilKit's
-                // native minimum and the on-canvas scope remain consistent. This tool is a
-                // placeholder while the native drawing recognizer is disabled.
+                // Keep bitmap erasing on PencilKit's native input path; the palette
+                // preview uses the same clamped width for predictable feedback.
                 PKEraserTool(
                     .fixedWidthBitmap,
                     width: Self.nativeBitmapEraserWidth(for: eraserWidth)
                 )
             case .object:
-                // PencilKit's vector eraser has no configurable native width. PageCanvasView
-                // supplies the adjustable whole-stroke hit testing for this mode instead.
+                // PageCanvasView owns the selectable circular boundary and exact
+                // whole-stroke hit testing. This vector tool is only a placeholder
+                // while the native drawing recognizer is disabled for Object mode.
                 PKEraserTool(.vector)
             case .rub:
                 PKEraserTool(.vector)

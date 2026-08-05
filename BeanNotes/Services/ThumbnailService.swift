@@ -189,7 +189,7 @@ struct ThumbnailService {
         )
         let drawing: PKDrawing
         switch drawingStorage.loadDrawingResult(for: page) {
-        case let .loaded(loadedDrawing):
+        case let .loaded(loadedDrawing, _):
             drawing = loadedDrawing
         case .missing:
             drawing = PKDrawing()
@@ -511,7 +511,7 @@ struct ThumbnailService {
         rootURL: URL
     ) throws -> PKDrawing {
         switch DrawingStorageService.loadDrawingResult(fileName: fileName, rootURL: rootURL) {
-        case let .loaded(drawing):
+        case let .loaded(drawing, _):
             return drawing
         case .missing:
             return PKDrawing()

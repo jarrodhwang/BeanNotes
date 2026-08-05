@@ -341,6 +341,7 @@ struct ImportExportService {
     /// The importer stages and preserves arbitrary files, so filtering the
     /// system picker would incorrectly hide valid local provider locations.
     static let supportedContentTypes: [UTType] = [.item]
+    nonisolated private static let maximumPDFImportFallbackDimension: CGFloat = 1_200
 
     var storage = LocalStorageService()
     var drawingStorage = DrawingStorageService()
@@ -452,7 +453,7 @@ struct ImportExportService {
                 staging: staging
             )
             try Task.checkCancellation()
-            let imported = try makeLockedImagePage(
+            let imported = makeLockedImagePage(
                 sourceSize: storedImage.sourceSize,
                 storedImage: storedImage.storedImage,
                 originalFileName: storedImage.originalFileName,
@@ -486,32 +487,60 @@ struct ImportExportService {
         progress: ImportExportProgressHandler? = nil
     ) async throws -> ImportedDocumentPages {
         try Task.checkCancellation()
+        let ownedStaging = staging == nil ? storage.beginImportStagingTransaction() : nil
+        let activeStaging = staging ?? ownedStaging
+        let commitOwnedStagingBeforeApplying: (() throws -> Void)? = ownedStaging.map { transaction in
+            { try transaction.commit() }
+        }
         let contentType = UTType(filenameExtension: sourceURL.pathExtension) ?? .data
         let kind = attachmentKind(for: contentType, fileExtension: sourceURL.pathExtension)
 
-        switch kind {
-        case .pdf:
-            return try await importPDFPages(
-                from: sourceURL,
-                into: note,
-                startingAt: startOrder,
-                staging: staging,
-                progress: progress
-            )
-        case .image:
-            progress?(nil, "Importing image...")
-            await Task.yield()
-            try Task.checkCancellation()
-            return try await importImageDocumentPage(from: sourceURL, into: note, pageOrder: startOrder, staging: staging)
-        case .codeSnippet, .docx, .csv, .presentation, .other:
-            return try await importPreviewableDocumentPage(
-                from: sourceURL,
-                kind: kind,
-                into: note,
-                pageOrder: startOrder,
-                staging: staging,
-                progress: progress
-            )
+        do {
+            let imported: ImportedDocumentPages
+            switch kind {
+            case .pdf:
+                imported = try await importPDFPages(
+                    from: sourceURL,
+                    into: note,
+                    startingAt: startOrder,
+                    staging: activeStaging,
+                    commitBeforeApplying: commitOwnedStagingBeforeApplying,
+                    progress: progress
+                )
+            case .image:
+                progress?(nil, "Importing image...")
+                await Task.yield()
+                try Task.checkCancellation()
+                imported = try await importImageDocumentPage(
+                    from: sourceURL,
+                    into: note,
+                    pageOrder: startOrder,
+                    staging: activeStaging,
+                    commitBeforeApplying: commitOwnedStagingBeforeApplying
+                )
+            case .codeSnippet, .docx, .csv, .presentation, .other:
+                imported = try await importPreviewableDocumentPage(
+                    from: sourceURL,
+                    kind: kind,
+                    into: note,
+                    pageOrder: startOrder,
+                    staging: activeStaging,
+                    commitBeforeApplying: commitOwnedStagingBeforeApplying,
+                    progress: progress
+                )
+            }
+
+            // A caller-owned staging transaction still has a wider model rollback
+            // available, so preserve late cancellation. An owned transaction commits
+            // immediately before its short synchronous model apply; after that commit
+            // point the completed import is returned even if cancellation arrives.
+            if ownedStaging == nil {
+                try Task.checkCancellation()
+            }
+            return imported
+        } catch {
+            ownedStaging?.rollback()
+            throw error
         }
     }
 
@@ -1557,6 +1586,7 @@ struct ImportExportService {
         into note: NoteDocument,
         startingAt startOrder: Int,
         staging: ImportStagingTransaction?,
+        commitBeforeApplying: (() throws -> Void)?,
         progress: ImportExportProgressHandler?
     ) async throws -> ImportedDocumentPages {
         let result = try await Self.importPDFPagesInBackground(
@@ -1567,11 +1597,18 @@ struct ImportExportService {
             progress: progress
         )
         try Task.checkCancellation()
+        guard !result.pages.isEmpty else {
+            throw ImportExportError.unsupportedDocument
+        }
+        try commitBeforeApplying?()
+        let checksCancellationDuringApply = commitBeforeApplying == nil
         var importedPages: [NotePage] = []
         var importedAttachments: [Attachment] = []
 
         for pageFile in result.pages {
-            try Task.checkCancellation()
+            if checksCancellationDuringApply {
+                try Task.checkCancellation()
+            }
             let notePage = NotePage(
                 pageOrder: pageFile.pageOrder,
                 background: .plain(),
@@ -1601,10 +1638,7 @@ struct ImportExportService {
             importedAttachments.append(pageImageAttachment)
         }
 
-        guard let firstPage = importedPages.first else {
-            throw ImportExportError.unsupportedDocument
-        }
-
+        let firstPage = importedPages[0]
         let originalAttachment = Attachment(
             kind: .pdf,
             displayName: result.baseName,
@@ -1627,6 +1661,7 @@ struct ImportExportService {
         into note: NoteDocument,
         pageOrder: Int,
         staging: ImportStagingTransaction?,
+        commitBeforeApplying: (() throws -> Void)?,
         progress: ImportExportProgressHandler?
     ) async throws -> ImportedDocumentPages {
         progress?(0.1, "Copying original file...")
@@ -1640,6 +1675,7 @@ struct ImportExportService {
             progress: progress
         )
         try Task.checkCancellation()
+        try commitBeforeApplying?()
 
         let page = NotePage(
             pageOrder: pageOrder,
@@ -1686,7 +1722,8 @@ struct ImportExportService {
         from sourceURL: URL,
         into note: NoteDocument,
         pageOrder: Int,
-        staging: ImportStagingTransaction?
+        staging: ImportStagingTransaction?,
+        commitBeforeApplying: (() throws -> Void)?
     ) async throws -> ImportedDocumentPages {
         let result = try await Self.storeImageFileInBackground(
             from: sourceURL,
@@ -1694,8 +1731,9 @@ struct ImportExportService {
             staging: staging
         )
         try Task.checkCancellation()
+        try commitBeforeApplying?()
 
-        return try makeLockedImagePage(
+        return makeLockedImagePage(
             sourceSize: result.sourceSize,
             storedImage: result.storedImage,
             originalFileName: result.originalFileName,
@@ -1723,7 +1761,7 @@ struct ImportExportService {
             to: .imports
         )
 
-        return try makeLockedImagePage(
+        return makeLockedImagePage(
             sourceSize: image.size,
             storedImage: storedImage,
             originalFileName: sanitizedOriginal,
@@ -1740,7 +1778,7 @@ struct ImportExportService {
         displayName: String,
         into note: NoteDocument,
         pageOrder: Int
-    ) throws -> ImportedDocumentPages {
+    ) -> ImportedDocumentPages {
         let pageSize = Self.normalizedImagePageSize(for: sourceSize)
         let page = NotePage(
             pageOrder: pageOrder,
@@ -1826,21 +1864,37 @@ struct ImportExportService {
     ) async throws -> PDFImportWorkerResult {
         try Task.checkCancellation()
         let worker = Task.detached(priority: .userInitiated) { () async throws -> PDFImportWorkerResult in
-            let isScoped = sourceURL.startAccessingSecurityScopedResource()
-            defer {
-                if isScoped {
-                    sourceURL.stopAccessingSecurityScopedResource()
-                }
+            let baseName = sourceURL.deletingPathExtension().lastPathComponent
+            // Reject directories and extension-spoofed inputs after reading only a
+            // small prefix. This prevents a huge invalid item from being copied into
+            // staging before Core Graphics gets a chance to validate it.
+            try validatePDFSourceBeforeCopy(sourceURL)
+            try Task.checkCancellation()
+            // Copy the provider item once while its security scope is active, then
+            // validate and render only BeanNotes' local copy. This avoids random
+            // provider-backed reads and a redundant remote PDF parse.
+            let originalStored = try autoreleasepool { () throws -> StoredFile in
+                try Task.checkCancellation()
+                let storedFile = try copyImportFile(
+                    from: sourceURL,
+                    rootURL: rootURL,
+                    staging: staging
+                )
+                try Task.checkCancellation()
+                return storedFile
             }
 
-            guard let document = CGPDFDocument(sourceURL as CFURL), document.numberOfPages > 0 else {
+            try Task.checkCancellation()
+            let localPDFURL = actualURL(
+                for: originalStored,
+                rootURL: rootURL,
+                staging: staging
+            )
+            guard let document = CGPDFDocument(localPDFURL as CFURL),
+                  document.numberOfPages > 0 else {
                 throw ImportExportError.unsupportedDocument
             }
 
-            try Task.checkCancellation()
-            let baseName = sourceURL.deletingPathExtension().lastPathComponent
-            let originalStored = try copyImportFile(from: sourceURL, rootURL: rootURL, staging: staging)
-            try Task.checkCancellation()
             var pages: [ImportedPageImageFile] = []
             let total = document.numberOfPages
 
@@ -1903,6 +1957,28 @@ struct ImportExportService {
             try await worker.value
         } onCancel: {
             worker.cancel()
+        }
+    }
+
+    nonisolated private static func validatePDFSourceBeforeCopy(_ sourceURL: URL) throws {
+        let isScoped = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if isScoped {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let values = try sourceURL.resourceValues(forKeys: [.isRegularFileKey])
+        guard values.isRegularFile != false else {
+            throw ImportExportError.unsupportedDocument
+        }
+
+        let handle = try FileHandle(forReadingFrom: sourceURL)
+        defer { try? handle.close() }
+        let headerWindow = try handle.read(upToCount: 1_024) ?? Data()
+        let signature = Data("%PDF-".utf8)
+        guard headerWindow.range(of: signature) != nil else {
+            throw ImportExportError.unsupportedDocument
         }
     }
 
@@ -2337,22 +2413,33 @@ struct ImportExportService {
 
     nonisolated private static func boundedPDFRasterSize(for sourceSize: CGSize) -> CGSize {
         let safeSize = safePDFPageSize(sourceSize)
-        let scale = 1_280 / max(safeSize.width, safeSize.height)
+        let maximumDimension = maximumPDFImportFallbackDimension
+        let scale = maximumDimension / max(safeSize.width, safeSize.height)
         return CGSize(
-            width: min(1_280, max(1, (safeSize.width * scale).rounded())),
-            height: min(1_280, max(1, (safeSize.height * scale).rounded()))
+            width: min(maximumDimension, max(1, (safeSize.width * scale).rounded())),
+            height: min(maximumDimension, max(1, (safeSize.height * scale).rounded()))
         )
     }
 
     nonisolated private static func displayedPDFPageSize(for page: CGPDFPage) -> CGSize {
-        let mediaBoxSize = page.getBoxRect(.mediaBox).size
+        let pageBoxSize = page.getBoxRect(preferredDisplayBox(for: page)).size
         let rotation = ((page.rotationAngle % 360) + 360) % 360
 
         if rotation == 90 || rotation == 270 {
-            return CGSize(width: mediaBoxSize.height, height: mediaBoxSize.width)
+            return CGSize(width: pageBoxSize.height, height: pageBoxSize.width)
         }
 
-        return mediaBoxSize
+        return pageBoxSize
+    }
+
+    nonisolated private static func preferredDisplayBox(for page: CGPDFPage) -> CGPDFBox {
+        let cropBox = page.getBoxRect(.cropBox)
+        return cropBox.width.isFinite
+            && cropBox.height.isFinite
+            && cropBox.width > 0
+            && cropBox.height > 0
+            ? .cropBox
+            : .mediaBox
     }
 
     nonisolated private static func normalizedImagePageSize(for sourceSize: CGSize) -> CGSize {
@@ -2471,7 +2558,7 @@ struct ImportExportService {
         context.saveGState()
         context.concatenate(
             page.getDrawingTransform(
-                .mediaBox,
+                preferredDisplayBox(for: page),
                 rect: renderRect,
                 rotate: 0,
                 preserveAspectRatio: true
