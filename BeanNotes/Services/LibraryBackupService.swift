@@ -7,14 +7,14 @@ import Foundation
 
 typealias LibraryBackupProgressHandler = @MainActor @Sendable (_ fraction: Double?, _ message: String) -> Void
 
-struct LibraryBackupResult: Identifiable, Sendable {
+nonisolated struct LibraryBackupResult: Identifiable, Sendable {
     var id = UUID()
     var url: URL
     var fileCount: Int
     var byteCount: Int64
 }
 
-enum LibraryBackupError: LocalizedError {
+nonisolated enum LibraryBackupError: LocalizedError {
     case archiveTooLarge
     case tooManyArchiveEntries
     case invalidArchiveEntryPath(String)
@@ -31,7 +31,7 @@ enum LibraryBackupError: LocalizedError {
     }
 }
 
-struct LibraryBackupManifest: Codable, Equatable, Sendable {
+nonisolated struct LibraryBackupManifest: Codable, Equatable, Sendable {
     var formatVersion: Int
     var appName: String
     var archiveExtension: String
@@ -79,6 +79,7 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
         var archivedAt: Date?
         var notes: [NoteSnapshot]
 
+        @MainActor
         init(folder: NotebookFolder) {
             self.id = folder.id
             self.name = folder.name
@@ -99,6 +100,7 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
         var updatedAt: Date
         var pages: [PageSnapshot]
 
+        @MainActor
         init(note: NoteDocument) {
             self.id = note.id
             self.title = note.title
@@ -125,6 +127,7 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
         var updatedAt: Date
         var attachments: [AttachmentSnapshot]
 
+        @MainActor
         init(page: NotePage) {
             self.id = page.id
             self.pageOrder = page.pageOrder
@@ -175,9 +178,12 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
         var codeSnippetFontRaw: String?
         var codeSnippetFontSize: Double?
         var codeSnippetBackgroundRaw: String?
+        var codeSnippetSyntaxThemeRaw: String?
+        var codeSnippetPreviewVersion: Int?
         var createdAt: Date
         var updatedAt: Date
 
+        @MainActor
         init(attachment: Attachment) {
             self.id = attachment.id
             self.kindRaw = attachment.kindRaw
@@ -204,6 +210,8 @@ struct LibraryBackupManifest: Codable, Equatable, Sendable {
             self.codeSnippetFontRaw = attachment.codeSnippetFontRaw
             self.codeSnippetFontSize = attachment.codeSnippetFontSize
             self.codeSnippetBackgroundRaw = attachment.codeSnippetBackgroundRaw
+            self.codeSnippetSyntaxThemeRaw = attachment.codeSnippetSyntaxThemeRaw
+            self.codeSnippetPreviewVersion = attachment.codeSnippetPreviewVersion
             self.createdAt = attachment.createdAt
             self.updatedAt = attachment.updatedAt
         }
@@ -225,18 +233,15 @@ struct LibraryBackupService {
         let manifest = LibraryBackupManifest(folders: folders)
         let rootURL = storage.rootURL
         let preferredFileName = Self.backupFileName(createdAt: manifest.createdAt)
-        let worker = Task.detached(priority: .utility) {
+        return try await StorageOperationRunner.run(
+            timeout: 180,
+            timeoutError: LocalStorageError.storageOperationTimedOut("Library backup")
+        ) {
             try await LibraryBackupArchiveWorker(
                 rootURL: rootURL,
                 preferredFileName: preferredFileName
             )
             .createArchive(manifest: manifest, progress: progress)
-        }
-
-        return try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
         }
     }
 
@@ -249,15 +254,15 @@ struct LibraryBackupService {
     }
 }
 
-private struct LibraryBackupFileEntry: Sendable {
+nonisolated private struct LibraryBackupFileEntry: Sendable {
     var sourceURL: URL
     var archivePath: String
 }
 
-private struct LibraryBackupArchiveWorker: Sendable {
+nonisolated private struct LibraryBackupArchiveWorker: Sendable {
     var rootURL: URL
     var preferredFileName: String
-    var fileManager = FileManager.default
+    private var fileManager: FileManager { .default }
 
     func createArchive(
         manifest: LibraryBackupManifest,
@@ -281,7 +286,17 @@ private struct LibraryBackupArchiveWorker: Sendable {
 
         try fileManager.createDirectory(at: temporaryDirectoryURL, withIntermediateDirectories: true)
         defer {
-            try? fileManager.removeItem(at: temporaryDirectoryURL)
+            do {
+                try fileManager.removeItem(at: temporaryDirectoryURL)
+            } catch {
+                LocalStorageService.logStorageFailure(
+                    operation: "backup_temporary_cleanup",
+                    relativePath: temporaryDirectoryURL.lastPathComponent,
+                    rootURL: rootURL,
+                    itemURL: temporaryDirectoryURL,
+                    error: error
+                )
+            }
         }
 
         await progress?(0.12, "Writing backup archive...")
@@ -314,7 +329,9 @@ private struct LibraryBackupArchiveWorker: Sendable {
 
         do {
             try Task.checkCancellation()
-            let byteCount = Int64((try? backupURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            let byteCount = Int64(
+                try backupURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            )
 
             await progress?(1, "Backup ready to share.")
             try Task.checkCancellation()
@@ -325,7 +342,17 @@ private struct LibraryBackupArchiveWorker: Sendable {
                 byteCount: byteCount
             )
         } catch {
-            try? fileManager.removeItem(at: backupURL)
+            do {
+                _ = try storage.removeFile(relativePath: storedFile.relativePath)
+            } catch let cleanupError {
+                LocalStorageService.logStorageFailure(
+                    operation: "backup_cancellation_cleanup",
+                    relativePath: storedFile.relativePath,
+                    rootURL: rootURL,
+                    itemURL: backupURL,
+                    error: cleanupError
+                )
+            }
             throw error
         }
     }
@@ -374,7 +401,7 @@ private struct LibraryBackupArchiveWorker: Sendable {
     }
 }
 
-private struct BeanNotesZipCentralDirectoryEntry {
+nonisolated private struct BeanNotesZipCentralDirectoryEntry {
     var archivePath: String
     var crc32: UInt32
     var compressedSize: UInt32
@@ -382,7 +409,7 @@ private struct BeanNotesZipCentralDirectoryEntry {
     var localHeaderOffset: UInt32
 }
 
-private final class BeanNotesZipArchiveWriter {
+nonisolated private final class BeanNotesZipArchiveWriter: @unchecked Sendable {
     private let destinationURL: URL
     private let handle: FileHandle
     private var offset: UInt64 = 0
@@ -569,7 +596,7 @@ private final class BeanNotesZipArchiveWriter {
     }
 }
 
-private enum BeanNotesCRC32 {
+nonisolated private enum BeanNotesCRC32 {
     private static let table: [UInt32] = (0..<256).map { value in
         var crc = UInt32(value)
         for _ in 0..<8 {
@@ -623,7 +650,7 @@ private enum BeanNotesCRC32 {
 }
 
 private extension UInt32 {
-    static func checked(_ value: UInt64) throws -> UInt32 {
+    nonisolated static func checked(_ value: UInt64) throws -> UInt32 {
         guard value <= UInt64(UInt32.max) else {
             throw LibraryBackupError.archiveTooLarge
         }

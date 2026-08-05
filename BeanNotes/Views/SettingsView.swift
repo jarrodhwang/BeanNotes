@@ -38,8 +38,14 @@ struct SettingsView: View {
     private var codeSnippetFontSize = CodeSnippetPreferences.defaultFontSize
     @AppStorage(CodeSnippetPreferences.defaultBackgroundStyleKey)
     private var codeSnippetBackgroundRaw = CodeSnippetPreferences.defaultBackgroundStyle.rawValue
-    @AppStorage(CodeSnippetPreferences.handwritingByDefaultKey)
-    private var codeSnippetHandwritingByDefault = CodeSnippetPreferences.defaultHandwritingByDefault
+    @AppStorage(CodeSnippetPreferences.defaultSyntaxThemeKey)
+    private var codeSnippetSyntaxThemeRaw = CodeSnippetPreferences.defaultSyntaxTheme.rawValue
+    @AppStorage(CodeSnippetPreferences.defaultWidthKey)
+    private var codeSnippetDefaultWidth = CodeSnippetPreferences.defaultWidth
+    @AppStorage(CodeSnippetPreferences.defaultHeightKey)
+    private var codeSnippetDefaultHeight = CodeSnippetPreferences.defaultHeight
+    @AppStorage(CodeSnippetPreferences.showsInPencilPaletteKey)
+    private var showsCodeSnippetInPencilPalette = CodeSnippetPreferences.defaultShowsInPencilPalette
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(PaperSize.storageKey) private var paperSizeRaw = PaperSize.defaultPaperSize.rawValue
     @AppStorage(CustomPaperSize.widthStorageKey) private var customPaperWidth = Double(CustomPaperSize.defaultDimensions.width)
@@ -53,6 +59,8 @@ struct SettingsView: View {
     @State private var isLoadingStorageUsage = false
     @State private var isCleaningOldExports = false
     @State private var isConfirmingExportCleanup = false
+    @State private var isConfirmingBackupCleanup = false
+    @State private var cleanupProgressLabel = "exports"
     @State private var storageMessage: String?
     @State private var storageErrorMessage: String?
     @State private var backupSharePayload: SettingsSharePayload?
@@ -119,6 +127,18 @@ struct SettingsView: View {
                 codeSnippetFontSize = normalized
             }
         }
+        .onChange(of: codeSnippetDefaultWidth) { _, newValue in
+            let normalized = CodeSnippetPreferences.normalizedWidth(newValue)
+            if normalized != newValue {
+                codeSnippetDefaultWidth = normalized
+            }
+        }
+        .onChange(of: codeSnippetDefaultHeight) { _, newValue in
+            let normalized = CodeSnippetPreferences.normalizedHeight(newValue)
+            if normalized != newValue {
+                codeSnippetDefaultHeight = normalized
+            }
+        }
         .confirmationDialog(
             "Clean up exports older than \(oldExportAgeDays) days?",
             isPresented: $isConfirmingExportCleanup,
@@ -126,7 +146,20 @@ struct SettingsView: View {
         ) {
             Button("Delete Old Exports", role: .destructive) {
                 Task {
-                    await cleanOldExports()
+                    await cleanOldExports(scope: .renderedExports)
+                }
+            }
+
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Clean up backups older than \(oldExportAgeDays) days?",
+            isPresented: $isConfirmingBackupCleanup,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Old Backups", role: .destructive) {
+                Task {
+                    await cleanOldExports(scope: .backups)
                 }
             }
 
@@ -341,6 +374,9 @@ struct SettingsView: View {
             }
 
             Section("Code Snippets") {
+                Toggle("Show in Pencil Palette", isOn: $showsCodeSnippetInPencilPalette)
+                    .accessibilityIdentifier("settings.codeSnippetPaletteVisibility")
+
                 Picker("Default Language", selection: $codeSnippetLanguageRaw) {
                     ForEach(CodeSnippetLanguage.allCases) { language in
                         Text(language.label).tag(language.rawValue)
@@ -364,17 +400,47 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.codeSnippetFontSize")
 
-                Picker("Default Background", selection: $codeSnippetBackgroundRaw) {
+                Picker("Default Box Appearance", selection: $codeSnippetBackgroundRaw) {
                     ForEach(CodeSnippetBackgroundStyle.allCases) { style in
                         Text(style.label).tag(style.rawValue)
                     }
                 }
                 .accessibilityIdentifier("settings.codeSnippetBackground")
 
-                Toggle("Handwriting to Code by Default", isOn: $codeSnippetHandwritingByDefault)
-                    .accessibilityIdentifier("settings.codeSnippetHandwriting")
+                Picker("Default Syntax Theme", selection: $codeSnippetSyntaxThemeRaw) {
+                    ForEach(CodeSnippetSyntaxTheme.allCases) { theme in
+                        Text(theme.label).tag(theme.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.codeSnippetSyntaxTheme")
 
-                Text("New snippets use these defaults. App Appearance captures the current light or dark tint whenever a preview is saved. The gear button changes the current code box. Apple Pencil handwriting is converted locally and remains available if recognition fails.")
+                Stepper(
+                    value: $codeSnippetDefaultWidth,
+                    in: CodeSnippetPreferences.supportedWidth,
+                    step: 20
+                ) {
+                    LabeledContent(
+                        "Default Width",
+                        value: "\(Int(codeSnippetDefaultWidth.rounded())) pt"
+                    )
+                }
+                .accessibilityIdentifier("settings.codeSnippetDefaultWidth")
+
+                Stepper(
+                    value: $codeSnippetDefaultHeight,
+                    in: CodeSnippetPreferences.supportedHeight,
+                    step: 20
+                ) {
+                    LabeledContent(
+                        "Default Height",
+                        value: "\(Int(codeSnippetDefaultHeight.rounded())) pt"
+                    )
+                }
+                .accessibilityIdentifier("settings.codeSnippetDefaultHeight")
+
+                LabeledContent("Apple Pencil Input", value: "Scribble directly")
+
+                Text("The palette toggle controls the add-code shortcut in the custom pencil palette. New snippets use these defaults. App Appearance follows the selected box appearance and the app's light or dark tint. Named syntax themes include their own editor surface. The gear inside a selected code box changes only that snippet. After selecting a snippet, write directly in its code area with Apple Pencil Scribble or tap again for the keyboard.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -433,12 +499,14 @@ struct SettingsView: View {
                 } label: {
                     Label("Clean Up Old Exports", systemImage: "trash")
                 }
-                .disabled(isLoadingStorageUsage || isCleaningOldExports || (storageUsage?.usage(for: .exports)?.fileCount ?? 0) == 0)
+                // Cleanup must remain available when the informational usage scan
+                // failed; requiring a successful scan made recovery impossible.
+                .disabled(isCleaningOldExports)
 
                 if isCleaningOldExports {
                     HStack(spacing: 12) {
                         ProgressView()
-                        Text("Cleaning exports")
+                        Text("Cleaning \(cleanupProgressLabel)")
                     }
                 }
             }
@@ -454,6 +522,15 @@ struct SettingsView: View {
                 Text("Includes folders, note metadata, drawings, imported files, thumbnails, and exports.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Button(role: .destructive) {
+                    isConfirmingBackupCleanup = true
+                } label: {
+                    Label("Clean Up Old Backups", systemImage: "trash")
+                }
+                .disabled(
+                    isCleaningOldExports
+                )
 
                 if let backupStatusMessage {
                     Text(backupStatusMessage)
@@ -614,17 +691,25 @@ struct SettingsView: View {
         let rootURL = LocalStorageService().rootURL
 
         do {
-            let snapshot = try await withThrowingTaskGroup(of: LocalStorageUsageSnapshot.self) { group in
-                group.addTask(priority: .utility) {
-                    try LocalStorageService(rootURL: rootURL).storageUsageSnapshot()
-                }
-                defer { group.cancelAll() }
-                guard let snapshot = try await group.next() else {
-                    throw CancellationError()
-                }
-                return snapshot
+            let storage = LocalStorageService(rootURL: rootURL)
+            do {
+                _ = try await storage.removeAbandonedImportStagingInBackground(
+                    olderThan: Date().addingTimeInterval(-24 * 60 * 60)
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                LocalStorageService.logStorageFailure(
+                    operation: "staging_maintenance",
+                    relativePath: "Imports/.Pending",
+                    rootURL: rootURL,
+                    itemURL: rootURL
+                        .appendingPathComponent(StorageDirectory.imports.rawValue, isDirectory: true)
+                        .appendingPathComponent(".Pending", isDirectory: true),
+                    error: error
+                )
             }
-            storageUsage = snapshot
+            storageUsage = try await storage.storageUsageSnapshotInBackground()
         } catch is CancellationError {
             // The view may disappear while the file walk is in progress. Its next
             // appearance starts a fresh calculation instead of leaving a spinner or
@@ -635,10 +720,20 @@ struct SettingsView: View {
     }
 
     @MainActor
-    private func cleanOldExports() async {
+    private func cleanOldExports(scope: LocalStorageExportCleanupScope) async {
         guard !isCleaningOldExports else { return }
 
         isCleaningOldExports = true
+        let cleanupNoun: String
+        switch scope {
+        case .renderedExports:
+            cleanupNoun = "exports"
+        case .backups:
+            cleanupNoun = "backups"
+        case .all:
+            cleanupNoun = "files"
+        }
+        cleanupProgressLabel = cleanupNoun
         storageMessage = nil
         storageErrorMessage = nil
 
@@ -650,17 +745,23 @@ struct SettingsView: View {
         ) ?? Date()
 
         do {
-            let report = try await Task.detached(priority: .utility) {
-                try LocalStorageService(rootURL: rootURL).removeExports(olderThan: cutoffDate)
-            }.value
+            let report = try await LocalStorageService(rootURL: rootURL)
+                .removeExportsInBackground(olderThan: cutoffDate, scope: scope)
 
             let removedSize = Self.storageByteFormatter.string(fromByteCount: report.removedByteCount)
             let cleanupErrorMessage = report.hasFailures
-                ? "Some export files could not be removed."
+                ? "Some \(cleanupNoun) could not be removed."
                 : nil
 
             await refreshStorageUsage()
-            storageMessage = "Removed \(report.removedFileCount) \(report.removedFileCount == 1 ? "file" : "files") (\(removedSize))."
+            let removedItemName: String
+            switch scope {
+            case .backups:
+                removedItemName = report.removedFileCount == 1 ? "backup" : "backups"
+            case .renderedExports, .all:
+                removedItemName = report.removedFileCount == 1 ? "file" : "files"
+            }
+            storageMessage = "Removed \(report.removedFileCount) \(removedItemName) (\(removedSize))."
             storageErrorMessage = cleanupErrorMessage
         } catch {
             storageErrorMessage = error.localizedDescription
@@ -709,7 +810,19 @@ struct SettingsView: View {
                 await refreshStorageUsage()
             } catch is CancellationError {
                 if let backupURL {
-                    try? FileManager.default.removeItem(at: backupURL)
+                    let storage = LocalStorageService()
+                    do {
+                        let relativePath = try storage.relativePath(for: backupURL)
+                        _ = try storage.removeFile(relativePath: relativePath)
+                    } catch {
+                        LocalStorageService.logStorageFailure(
+                            operation: "cancelled_backup_cleanup",
+                            relativePath: backupURL.lastPathComponent,
+                            rootURL: storage.rootURL,
+                            itemURL: backupURL,
+                            error: error
+                        )
+                    }
                     await refreshStorageUsage()
                 }
                 backupStatusMessage = "Backup canceled."

@@ -3,6 +3,7 @@
 //  BeanNotes
 //
 
+import Combine
 import PencilKit
 import SwiftUI
 import UIKit
@@ -177,14 +178,14 @@ struct CodeSnippetEditorSheet: View {
                 language: draft.language,
                 font: draft.font,
                 fontSize: draft.fontSize,
-                foregroundColor: codeForegroundColor,
+                palette: syntaxPalette,
                 maximumUTF16Length: Constants.maximumCodeUTF16Length,
                 pasteRequest: pasteRequest,
                 onLengthLimitReached: showLengthLimitNotice
             )
             .frame(maxWidth: .infinity, minHeight: 330)
-            .codeSnippetSurface(style: draft.backgroundStyle)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .codeSnippetSurface(palette: syntaxPalette)
+            .clipShape(RoundedRectangle(cornerRadius: CodeSnippetLayout.cornerRadius, style: .continuous))
 
             if let editorNotice {
                 Label(editorNotice, systemImage: "info.circle")
@@ -226,8 +227,8 @@ struct CodeSnippetEditorSheet: View {
                 inkColor: codeForegroundColor
             )
             .frame(maxWidth: .infinity, minHeight: 330)
-            .codeSnippetSurface(style: draft.backgroundStyle)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .codeSnippetSurface(palette: syntaxPalette)
+            .clipShape(RoundedRectangle(cornerRadius: CodeSnippetLayout.cornerRadius, style: .continuous))
 
             Button {
                 convertHandwritingToCode()
@@ -257,14 +258,11 @@ struct CodeSnippetEditorSheet: View {
     }
 
     private var codeForegroundColor: UIColor {
-        switch draft.backgroundStyle {
-        case .automatic:
-            colorScheme == .dark ? .white : .label
-        case .light:
-            .black
-        case .dark:
-            .white
-        }
+        syntaxPalette.foregroundColor
+    }
+
+    private var syntaxPalette: CodeSnippetSyntaxPalette {
+        draft.syntaxPalette(for: colorScheme == .dark ? .dark : .light)
     }
 
     private func requestPaste() {
@@ -426,7 +424,7 @@ struct CodeSnippetInlineEditor: View {
                         language: draft.language,
                         font: draft.font,
                         fontSize: draft.fontSize,
-                        foregroundColor: foregroundUIColor,
+                        palette: syntaxPalette,
                         maximumUTF16Length: Constants.maximumCodeUTF16Length,
                         pasteRequest: pasteRequest,
                         shouldFocusOnAppear: true,
@@ -467,10 +465,10 @@ struct CodeSnippetInlineEditor: View {
         .foregroundStyle(foregroundColor)
         .background(backgroundColor)
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: CodeSnippetLayout.cornerRadius, style: .continuous)
                 .stroke(foregroundColor.opacity(0.2), lineWidth: 1)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: CodeSnippetLayout.cornerRadius, style: .continuous))
         .alert(
             "Code Snippet",
             isPresented: Binding(
@@ -569,6 +567,20 @@ struct CodeSnippetInlineEditor: View {
                 }
             }
 
+            Section("Syntax Theme") {
+                ForEach(CodeSnippetSyntaxTheme.allCases) { theme in
+                    Button {
+                        draft.syntaxTheme = theme
+                    } label: {
+                        if draft.syntaxTheme == theme {
+                            Label(theme.label, systemImage: "checkmark")
+                        } else {
+                            Text(theme.label)
+                        }
+                    }
+                }
+            }
+
             Section("Font") {
                 ForEach(CodeSnippetFontChoice.allCases) { font in
                     Button {
@@ -600,7 +612,7 @@ struct CodeSnippetInlineEditor: View {
             Image(systemName: "gearshape")
         }
         .accessibilityLabel("Code appearance")
-        .accessibilityHint("Changes the background, font, and font size")
+        .accessibilityHint("Changes the box appearance, syntax theme, font, and font size")
     }
 
     private func inputButton(
@@ -623,24 +635,20 @@ struct CodeSnippetInlineEditor: View {
         .accessibilityAddTraits(draft.preferredInputMode == mode ? .isSelected : [])
     }
 
-    private var resolvesToDark: Bool {
-        switch draft.backgroundStyle {
-        case .automatic: isDarkAppearance
-        case .light: false
-        case .dark: true
-        }
-    }
-
     private var backgroundColor: Color {
-        resolvesToDark ? Color(red: 0.14, green: 0.15, blue: 0.17) : .white
+        Color(uiColor: syntaxPalette.backgroundColor)
     }
 
     private var foregroundColor: Color {
-        resolvesToDark ? .white : .black
+        Color(uiColor: syntaxPalette.foregroundColor)
     }
 
     private var foregroundUIColor: UIColor {
-        resolvesToDark ? .white : .black
+        syntaxPalette.foregroundColor
+    }
+
+    private var syntaxPalette: CodeSnippetSyntaxPalette {
+        draft.syntaxPalette(for: isDarkAppearance ? .dark : .light)
     }
 
     private func convertHandwritingToCode() {
@@ -674,6 +682,141 @@ struct CodeSnippetInlineEditor: View {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+}
+
+/// Lightweight editor mounted directly over a selected snippet on the note canvas.
+/// UITextView supplies both keyboard editing and Apple Pencil Scribble, while the
+/// surrounding UIKit selection overlay owns moving, resizing, and configuration.
+@MainActor
+final class CodeSnippetCanvasEditingState: ObservableObject {
+    @Published var draft: CodeSnippetDraft
+    @Published private(set) var isDarkAppearance: Bool
+
+    init(draft: CodeSnippetDraft, isDarkAppearance: Bool = false) {
+        self.draft = draft
+        self.isDarkAppearance = isDarkAppearance
+    }
+
+    func updateAppearance(isDark: Bool) {
+        guard isDarkAppearance != isDark else { return }
+        isDarkAppearance = isDark
+    }
+}
+
+struct CodeSnippetCanvasEditor: View {
+    @ObservedObject var editingState: CodeSnippetCanvasEditingState
+
+    let onDraftChanged: (CodeSnippetDraft) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: CodeSnippetLayout.headerControlSpacing) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(
+                        width: CodeSnippetLayout.codeIconWidth,
+                        height: CodeSnippetLayout.codeIconSize
+                    )
+                    .foregroundStyle(Color(uiColor: syntaxPalette.headerTextColor))
+
+                Text(editingState.draft.language.label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(Color(uiColor: syntaxPalette.headerTextColor))
+                    .padding(.horizontal, CodeSnippetLayout.languageChipHorizontalPadding)
+                    .frame(
+                        minWidth: CodeSnippetLayout.languageChipMinimumWidth,
+                        minHeight: CodeSnippetLayout.languageChipHeight
+                    )
+                    .background(
+                        Color(uiColor: syntaxPalette.pillColor),
+                        in: Capsule()
+                    )
+                    .overlay {
+                        Capsule()
+                            .stroke(
+                                Color(uiColor: syntaxPalette.pillBorderColor),
+                                lineWidth: 1
+                            )
+                    }
+
+                Spacer(minLength: 4)
+            }
+            .frame(height: CodeSnippetLayout.headerHeight)
+            .padding(.leading, CodeSnippetLayout.headerHorizontalPadding)
+            // The selection overlay draws the real settings affordance here.
+            .padding(.trailing, CodeSnippetLayout.settingsReservedWidth)
+
+            Divider()
+                .frame(height: CodeSnippetLayout.headerSeparatorHeight)
+                .overlay(Color(uiColor: syntaxPalette.separatorColor))
+
+            ZStack(alignment: .topLeading) {
+                CodeSyntaxTextView(
+                    text: $editingState.draft.code,
+                    language: editingState.draft.language,
+                    font: editingState.draft.font,
+                    fontSize: editingState.draft.fontSize,
+                    palette: syntaxPalette,
+                    maximumUTF16Length: CodeSyntaxHighlighter.maximumHighlightedUTF16Length,
+                    pasteRequest: 0,
+                    // The first tap selects the box only. A later tap in this text view
+                    // places the cursor and presents the keyboard in the normal UIKit way.
+                    shouldFocusOnAppear: false,
+                    onLengthLimitReached: {
+                        UIAccessibility.post(
+                            notification: .announcement,
+                            argument: "Code snippets are limited to \(CodeSyntaxHighlighter.maximumHighlightedUTF16Length.formatted()) characters."
+                        )
+                    }
+                )
+                .accessibilityIdentifier("codeSnippet.inline.textEditor")
+
+                if editingState.draft.code.isEmpty {
+                    Text("Tap to type or write with Apple Pencil")
+                        .font(Font(editingState.draft.font.uiFont(
+                            size: CGFloat(editingState.draft.fontSize)
+                        )))
+                        .foregroundStyle(foregroundColor.opacity(0.38))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 17)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+        .foregroundStyle(foregroundColor)
+        .background(backgroundColor)
+        .overlay {
+            RoundedRectangle(cornerRadius: CodeSnippetLayout.cornerRadius, style: .continuous)
+                .stroke(Color(uiColor: syntaxPalette.borderColor), lineWidth: 1)
+        }
+        .clipShape(
+            RoundedRectangle(cornerRadius: CodeSnippetLayout.cornerRadius, style: .continuous)
+        )
+        .onChange(of: editingState.draft) { _, draft in
+            onDraftChanged(draft)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Editable \(editingState.draft.language.label) code snippet")
+        .accessibilityHint("Type with the keyboard or use Apple Pencil Scribble. Drag the header to move and drag an edge to resize.")
+    }
+
+    private var backgroundColor: Color {
+        Color(uiColor: syntaxPalette.backgroundColor)
+    }
+
+    private var foregroundColor: Color {
+        Color(uiColor: syntaxPalette.foregroundColor)
+    }
+
+    private var syntaxPalette: CodeSnippetSyntaxPalette {
+        editingState.draft.syntaxPalette(
+            for: editingState.isDarkAppearance ? .dark : .light
+        )
     }
 }
 
@@ -715,26 +858,37 @@ private struct CodeSnippetConfigurationSheet: View {
                     .accessibilityValue("\(Int(draft.fontSize.rounded())) points")
                 }
 
-                Section("Background") {
-                    Picker("Color", selection: $draft.backgroundStyle) {
+                Section("Box Appearance") {
+                    Picker("Appearance", selection: $draft.backgroundStyle) {
                         ForEach(CodeSnippetBackgroundStyle.allCases) { style in
                             Text(style.label)
                                 .tag(style)
                         }
                     }
 
-                    Text("Code boxes use a solid white background in light mode and solid dark gray in dark mode. App Appearance captures the current appearance when saved.")
+                    Text("App Appearance follows this choice when the syntax theme is adaptive.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Syntax Theme") {
+                    Picker("Theme", selection: $draft.syntaxTheme) {
+                        ForEach(CodeSnippetSyntaxTheme.allCases) { theme in
+                            Text(theme.label)
+                                .tag(theme)
+                        }
+                    }
+
+                    Text("Named themes include their own editor background and token colors.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Section("Preview") {
-                    Text("let answer = 42")
-                        .font(Font(draft.font.uiFont(size: CGFloat(draft.fontSize))))
-                        .foregroundStyle(Color(uiColor: previewForegroundColor))
+                    Text(previewText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
-                        .codeSnippetSurface(style: draft.backgroundStyle)
+                        .codeSnippetSurface(palette: previewPalette)
                 }
             }
             .navigationTitle("Code Appearance")
@@ -751,15 +905,19 @@ private struct CodeSnippetConfigurationSheet: View {
         .presentationDragIndicator(.visible)
     }
 
-    private var previewForegroundColor: UIColor {
-        switch draft.backgroundStyle {
-        case .automatic:
-            colorScheme == .dark ? .white : .label
-        case .light:
-            .black
-        case .dark:
-            .white
-        }
+    private var previewPalette: CodeSnippetSyntaxPalette {
+        draft.syntaxPalette(for: colorScheme == .dark ? .dark : .light)
+    }
+
+    private var previewText: AttributedString {
+        AttributedString(
+            CodeSyntaxHighlighter.attributedString(
+                for: "let answer = 42 // syntax preview",
+                language: .javaScript,
+                font: draft.font.uiFont(size: CGFloat(draft.fontSize)),
+                palette: previewPalette
+            )
+        )
     }
 }
 
@@ -769,7 +927,7 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
     var language: CodeSnippetLanguage
     var font: CodeSnippetFontChoice
     var fontSize: Double
-    var foregroundColor: UIColor
+    var palette: CodeSnippetSyntaxPalette
     var maximumUTF16Length: Int
     var pasteRequest: Int
     var shouldFocusOnAppear = false
@@ -780,10 +938,10 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = CodeSyntaxUITextView()
         textView.delegate = context.coordinator
-        textView.backgroundColor = .clear
-        textView.isOpaque = false
+        textView.backgroundColor = palette.backgroundColor
+        textView.isOpaque = true
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsEditingTextAttributes = false
@@ -796,12 +954,23 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
         textView.smartInsertDeleteType = .no
         textView.keyboardDismissMode = .interactive
         textView.alwaysBounceVertical = true
-        textView.textContainerInset = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        textView.alwaysBounceHorizontal = true
+        textView.showsHorizontalScrollIndicator = true
+        textView.textContainerInset = UIEdgeInsets(
+            top: CodeSnippetLayout.codeTopPadding,
+            left: CodeSnippetLayout.codeHorizontalPadding,
+            bottom: CodeSnippetLayout.codeBottomPadding,
+            right: CodeSnippetLayout.codeHorizontalPadding
+        )
         textView.textContainer.lineFragmentPadding = 0
+        // The flattened preview clips long code lines instead of wrapping them.
+        // Match that policy while selected and let the editor scroll horizontally.
+        textView.enforceNonWrappingTextContainer()
+        textView.textContainer.lineBreakMode = .byClipping
         textView.semanticContentAttribute = .forceLeftToRight
         textView.textAlignment = .left
         textView.accessibilityLabel = "Code editor"
-        textView.accessibilityHint = "Enter, edit, or paste plain-text code"
+        textView.accessibilityHint = "Type, paste, or use Apple Pencil Scribble to edit plain-text code"
 
         context.coordinator.configure(parent: self, textView: textView)
         _ = context.coordinator.replaceTextIfNeeded(in: textView, with: text)
@@ -815,10 +984,12 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: UITextView, context: Context) {
+        (textView as? CodeSyntaxUITextView)?.enforceNonWrappingTextContainer()
         let coordinator = context.coordinator
-        coordinator.configure(parent: self, textView: textView)
-        if coordinator.replaceTextIfNeeded(in: textView, with: text) {
-            coordinator.scheduleHighlighting(for: textView, delay: 0)
+        let configurationChanged = coordinator.configure(parent: self, textView: textView)
+        let textChanged = coordinator.replaceTextIfNeeded(in: textView, with: text)
+        if configurationChanged || textChanged {
+            coordinator.applyHighlighting(to: textView)
         }
 
         guard pasteRequest != coordinator.lastHandledPasteRequest else { return }
@@ -840,49 +1011,90 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
         private var highlightingWorkItem: DispatchWorkItem?
         private var isApplyingProgrammaticText = false
         private var isApplyingHighlighting = false
+        private var highlightingPendingAfterMarkedText = false
         private var configurationSignature = ""
+        private let immediateHighlightMaximumUTF16Length = 12_000
+        private var lastStableText: String
+        private var pendingMarkedEditContext: CodeSnippetMarkedEditContext?
 
         init(parent: CodeSyntaxTextView) {
             self.parent = parent
             self.lastHandledPasteRequest = parent.pasteRequest
+            self.lastStableText = codeSnippetText(
+                parent.text,
+                limitedToUTF16Length: parent.maximumUTF16Length
+            )
         }
 
         deinit {
             highlightingWorkItem?.cancel()
         }
 
-        func configure(parent: CodeSyntaxTextView, textView: UITextView) {
+        @discardableResult
+        func configure(parent: CodeSyntaxTextView, textView: UITextView) -> Bool {
             self.parent = parent
             self.textView = textView
 
+            let nextSignature = [
+                parent.language.rawValue,
+                parent.font.rawValue,
+                String(parent.fontSize),
+                parent.palette.id,
+                parent.palette.foregroundColor.description,
+                parent.palette.backgroundColor.description
+            ].joined(separator: "|")
+            guard configurationSignature != nextSignature else { return false }
+            configurationSignature = nextSignature
+
+            // Do not touch these properties for text-only SwiftUI updates. Updating
+            // `textColor` on every binding publish erases token colors until the
+            // delayed highlighter runs, which is the white/color flicker users saw.
             let resolvedFont = parent.font.uiFont(size: CGFloat(parent.fontSize))
+            let keyboardAppearance: UIKeyboardAppearance = parent.palette.isDark
+                ? .dark
+                : .light
+            let keyboardAppearanceChanged = textView.keyboardAppearance != keyboardAppearance
+            let paragraphStyle = CodeSnippetLayout.codeParagraphStyle(font: resolvedFont)
             textView.font = resolvedFont
-            textView.textColor = parent.foregroundColor
-            textView.tintColor = parent.foregroundColor
+            textView.textColor = parent.palette.foregroundColor
+            textView.tintColor = parent.palette.caretColor
+            textView.backgroundColor = parent.palette.backgroundColor
+            textView.keyboardAppearance = keyboardAppearance
+            textView.overrideUserInterfaceStyle = parent.palette.isDark ? .dark : .light
             textView.typingAttributes = [
                 .font: resolvedFont,
-                .foregroundColor: parent.foregroundColor
+                .foregroundColor: parent.palette.foregroundColor,
+                .paragraphStyle: paragraphStyle
             ]
-
-            let nextSignature = [
-                String(describing: parent.language),
-                parent.font.label,
-                String(parent.fontSize),
-                parent.foregroundColor.description
-            ].joined(separator: "|")
-            if configurationSignature != nextSignature {
-                configurationSignature = nextSignature
-                scheduleHighlighting(for: textView, delay: 0)
+            if keyboardAppearanceChanged, textView.isFirstResponder {
+                textView.reloadInputViews()
             }
+            return true
         }
 
         @discardableResult
         func replaceTextIfNeeded(in textView: UITextView, with proposedText: String) -> Bool {
+            // SwiftUI's binding intentionally trails active CJK/IME composition.
+            // Never replace marked text with that older value during an unrelated
+            // palette/layout update.
+            guard textView.markedTextRange == nil else {
+                if let markedRange = codeSnippetMarkedTextRange(in: textView) {
+                    pendingMarkedEditContext = codeSnippetMarkedEditContext(
+                        currentText: textView.text ?? "",
+                        stableText: lastStableText,
+                        markedRange: markedRange
+                    )
+                }
+                return false
+            }
             let limitedText = codeSnippetText(
                 proposedText,
                 limitedToUTF16Length: parent.maximumUTF16Length
             )
-            guard textView.text != limitedText else { return false }
+            guard textView.text != limitedText else {
+                lastStableText = limitedText
+                return false
+            }
 
             isApplyingProgrammaticText = true
             let selectedRange = textView.selectedRange
@@ -892,6 +1104,8 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
                 length: 0
             )
             isApplyingProgrammaticText = false
+            lastStableText = limitedText
+            pendingMarkedEditContext = nil
             return true
         }
 
@@ -936,33 +1150,94 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             guard !isApplyingProgrammaticText,
-                  !isApplyingHighlighting,
-                  textView.markedTextRange == nil else {
+                  !isApplyingHighlighting else {
+                return
+            }
+            guard textView.markedTextRange == nil else {
+                highlightingPendingAfterMarkedText = true
+                if let markedRange = codeSnippetMarkedTextRange(in: textView) {
+                    pendingMarkedEditContext = codeSnippetMarkedEditContext(
+                        currentText: textView.text ?? "",
+                        stableText: lastStableText,
+                        markedRange: markedRange
+                    )
+                }
                 return
             }
 
             if textView.textStorage.length > parent.maximumUTF16Length {
-                isApplyingProgrammaticText = true
-                let limitedText = codeSnippetText(
-                    textView.text,
-                    limitedToUTF16Length: parent.maximumUTF16Length
-                )
-                textView.text = limitedText
-                textView.selectedRange = NSRange(location: textView.textStorage.length, length: 0)
-                isApplyingProgrammaticText = false
+                applyLengthLimit(to: textView)
                 parent.onLengthLimitReached()
             }
 
             publishTextAndHighlight(from: textView)
         }
 
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            guard highlightingPendingAfterMarkedText,
+                  textView.markedTextRange == nil,
+                  !isApplyingProgrammaticText,
+                  !isApplyingHighlighting else {
+                return
+            }
+            highlightingPendingAfterMarkedText = false
+            publishTextAndHighlight(from: textView)
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            guard highlightingPendingAfterMarkedText || parent.text != textView.text else {
+                return
+            }
+            highlightingPendingAfterMarkedText = false
+            publishTextAndHighlight(from: textView)
+        }
+
         func publishTextAndHighlight(from textView: UITextView) {
-            guard textView.markedTextRange == nil else { return }
+            guard textView.markedTextRange == nil else {
+                highlightingPendingAfterMarkedText = true
+                return
+            }
+            highlightingPendingAfterMarkedText = false
+            if textView.textStorage.length > parent.maximumUTF16Length {
+                applyLengthLimit(to: textView)
+                parent.onLengthLimitReached()
+            }
             let nextText = textView.text ?? ""
+            if textView.textStorage.length <= immediateHighlightMaximumUTF16Length {
+                highlightingWorkItem?.cancel()
+                applyHighlighting(to: textView)
+            } else {
+                scheduleHighlighting(for: textView, delay: 0.06)
+            }
+            lastStableText = nextText
+            pendingMarkedEditContext = nil
             if parent.text != nextText {
                 parent.text = nextText
             }
-            scheduleHighlighting(for: textView, delay: 0.08)
+        }
+
+        private func applyLengthLimit(to textView: UITextView) {
+            let boundedEdit: CodeSnippetBoundedEdit
+            if let pendingMarkedEditContext {
+                boundedEdit = codeSnippetBoundedMarkedEdit(
+                    currentText: textView.text ?? "",
+                    context: pendingMarkedEditContext,
+                    selectedRange: textView.selectedRange,
+                    maximumUTF16Length: parent.maximumUTF16Length
+                )
+            } else {
+                boundedEdit = codeSnippetBoundedEdit(
+                    currentText: textView.text ?? "",
+                    stableText: lastStableText,
+                    selectedRange: textView.selectedRange,
+                    maximumUTF16Length: parent.maximumUTF16Length
+                )
+            }
+            isApplyingProgrammaticText = true
+            textView.text = boundedEdit.text
+            textView.selectedRange = boundedEdit.selectedRange
+            isApplyingProgrammaticText = false
+            pendingMarkedEditContext = nil
         }
 
         func scheduleHighlighting(for textView: UITextView, delay: TimeInterval) {
@@ -976,9 +1251,9 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
         }
 
         func applyHighlighting(to textView: UITextView) {
-            guard !isApplyingProgrammaticText,
-                  textView.markedTextRange == nil else {
-                scheduleHighlighting(for: textView, delay: 0.1)
+            guard !isApplyingProgrammaticText else { return }
+            guard textView.markedTextRange == nil else {
+                highlightingPendingAfterMarkedText = true
                 return
             }
 
@@ -988,7 +1263,7 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
                 for: code,
                 language: parent.language,
                 font: resolvedFont,
-                foregroundColor: parent.foregroundColor
+                palette: parent.palette
             )
             guard highlighted.string == code,
                   highlighted.length == textView.textStorage.length else {
@@ -999,18 +1274,25 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
             let wholeRange = NSRange(location: 0, length: textView.textStorage.length)
             isApplyingHighlighting = true
             textView.textStorage.beginEditing()
-            textView.textStorage.setAttributes(
+            textView.textStorage.addAttributes(
                 [
                     .font: resolvedFont,
-                    .foregroundColor: parent.foregroundColor
+                    .foregroundColor: parent.palette.foregroundColor,
+                    .paragraphStyle: CodeSnippetLayout.codeParagraphStyle(font: resolvedFont)
                 ],
                 range: wholeRange
             )
-            highlighted.enumerateAttributes(
+            highlighted.enumerateAttribute(
+                .foregroundColor,
                 in: NSRange(location: 0, length: highlighted.length),
                 options: []
-            ) { attributes, range, _ in
-                textView.textStorage.addAttributes(attributes, range: range)
+            ) { color, range, _ in
+                guard let color else { return }
+                textView.textStorage.addAttribute(
+                    .foregroundColor,
+                    value: color,
+                    range: range
+                )
             }
             textView.textStorage.endEditing()
             textView.selectedRange = NSRange(
@@ -1022,9 +1304,34 @@ private struct CodeSyntaxTextView: UIViewRepresentable {
             )
             textView.typingAttributes = [
                 .font: resolvedFont,
-                .foregroundColor: parent.foregroundColor
+                .foregroundColor: parent.palette.foregroundColor,
+                .paragraphStyle: CodeSnippetLayout.codeParagraphStyle(font: resolvedFont)
             ]
             isApplyingHighlighting = false
+        }
+    }
+}
+
+private final class CodeSyntaxUITextView: UITextView {
+    // A finite bound avoids TextKit normalizing `greatestFiniteMagnitude` back to
+    // the viewport during layout. It comfortably contains the 60k UTF-16 source
+    // limit at the largest supported font size in either direction.
+    private static let nonWrappingContainerDimension: CGFloat = 4_000_000
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        enforceNonWrappingTextContainer()
+    }
+
+    func enforceNonWrappingTextContainer() {
+        textContainer.widthTracksTextView = false
+        textContainer.heightTracksTextView = false
+        let requiredSize = CGSize(
+            width: Self.nonWrappingContainerDimension,
+            height: Self.nonWrappingContainerDimension
+        )
+        if textContainer.size != requiredSize {
+            textContainer.size = requiredSize
         }
     }
 }
@@ -1081,52 +1388,27 @@ private struct CodeSnippetHandwritingCanvas: UIViewRepresentable {
 }
 
 private struct CodeSnippetSurfaceModifier: ViewModifier {
-    var style: CodeSnippetBackgroundStyle
-
-    @Environment(\.colorScheme) private var colorScheme
+    var palette: CodeSnippetSyntaxPalette
 
     func body(content: Content) -> some View {
         content
-            .background(backgroundColor, in: surfaceShape)
+            .background(Color(uiColor: palette.backgroundColor), in: surfaceShape)
         .overlay {
             surfaceShape
-                .stroke(borderColor, lineWidth: 1)
+                .stroke(Color(uiColor: palette.borderColor), lineWidth: 1)
         }
     }
 
     private var surfaceShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
+        RoundedRectangle(cornerRadius: CodeSnippetLayout.cornerRadius, style: .continuous)
     }
 
-    private var backgroundColor: Color {
-        switch style {
-        case .automatic:
-            colorScheme == .dark ? Self.darkBackground : .white
-        case .light:
-            .white
-        case .dark:
-            Self.darkBackground
-        }
-    }
-
-    private static let darkBackground = Color(red: 0.14, green: 0.15, blue: 0.17)
-
-    private var borderColor: Color {
-        switch style {
-        case .automatic:
-            .secondary.opacity(0.22)
-        case .light:
-            .black.opacity(0.14)
-        case .dark:
-            .white.opacity(0.18)
-        }
-    }
 }
 
 private extension View {
-    func codeSnippetSurface(style: CodeSnippetBackgroundStyle) -> some View {
+    func codeSnippetSurface(palette: CodeSnippetSyntaxPalette) -> some View {
         modifier(
-            CodeSnippetSurfaceModifier(style: style)
+            CodeSnippetSurfaceModifier(palette: palette)
         )
     }
 }
@@ -1201,7 +1483,7 @@ private enum CodeSnippetHandwritingError: LocalizedError {
     }
 }
 
-private func codeSnippetText(_ text: String, limitedToUTF16Length limit: Int) -> String {
+func codeSnippetText(_ text: String, limitedToUTF16Length limit: Int) -> String {
     guard limit > 0 else { return "" }
 
     let text = text as NSString
@@ -1213,4 +1495,166 @@ private func codeSnippetText(_ text: String, limitedToUTF16Length limit: Int) ->
         safeLength = finalSequence.location
     }
     return text.substring(to: safeLength)
+}
+
+struct CodeSnippetBoundedEdit: Equatable {
+    let text: String
+    let selectedRange: NSRange
+}
+
+struct CodeSnippetMarkedEditContext: Equatable {
+    let stableText: String
+    let replacementRange: NSRange
+}
+
+func codeSnippetMarkedTextRange(in textView: UITextView) -> NSRange? {
+    guard let markedTextRange = textView.markedTextRange else { return nil }
+    let location = textView.offset(
+        from: textView.beginningOfDocument,
+        to: markedTextRange.start
+    )
+    let length = textView.offset(from: markedTextRange.start, to: markedTextRange.end)
+    guard location >= 0, length >= 0 else { return nil }
+    return NSRange(location: location, length: length)
+}
+
+/// Recovers the exact stable range replaced by UIKit's marked text. The length
+/// equation avoids ambiguous prefix/suffix diffs when inserted characters match
+/// code immediately before or after the composition.
+func codeSnippetMarkedEditContext(
+    currentText: String,
+    stableText: String,
+    markedRange: NSRange
+) -> CodeSnippetMarkedEditContext? {
+    let currentLength = (currentText as NSString).length
+    let stableLength = (stableText as NSString).length
+    guard markedRange.location >= 0,
+          markedRange.length >= 0,
+          NSMaxRange(markedRange) <= currentLength else {
+        return nil
+    }
+    let replacedStableLength = stableLength + markedRange.length - currentLength
+    guard replacedStableLength >= 0,
+          markedRange.location + replacedStableLength <= stableLength else {
+        return nil
+    }
+    return CodeSnippetMarkedEditContext(
+        stableText: stableText,
+        replacementRange: NSRange(
+            location: markedRange.location,
+            length: replacedStableLength
+        )
+    )
+}
+
+/// Bounds a known marked-text replacement while preserving every stable character
+/// outside that range, including a repeated or identical suffix.
+func codeSnippetBoundedMarkedEdit(
+    currentText: String,
+    context: CodeSnippetMarkedEditContext,
+    selectedRange: NSRange,
+    maximumUTF16Length limit: Int
+) -> CodeSnippetBoundedEdit {
+    let stableText = codeSnippetText(context.stableText, limitedToUTF16Length: limit)
+    let stableNSString = stableText as NSString
+    let currentNSString = currentText as NSString
+    let stableRange = context.replacementRange
+    let currentReplacementLength = currentNSString.length
+        - (stableNSString.length - stableRange.length)
+    guard stableRange.location >= 0,
+          stableRange.length >= 0,
+          NSMaxRange(stableRange) <= stableNSString.length,
+          currentReplacementLength >= 0,
+          stableRange.location + currentReplacementLength <= currentNSString.length else {
+        return codeSnippetBoundedEdit(
+            currentText: currentText,
+            stableText: stableText,
+            selectedRange: selectedRange,
+            maximumUTF16Length: limit
+        )
+    }
+
+    let currentRange = NSRange(
+        location: stableRange.location,
+        length: currentReplacementLength
+    )
+    let replacement = currentNSString.substring(with: currentRange)
+    let availableReplacementLength = max(
+        limit - (stableNSString.length - stableRange.length),
+        0
+    )
+    let boundedReplacement = codeSnippetText(
+        replacement,
+        limitedToUTF16Length: availableReplacementLength
+    )
+    let boundedReplacementLength = (boundedReplacement as NSString).length
+    let mutableText = NSMutableString(string: stableText)
+    mutableText.replaceCharacters(in: stableRange, with: boundedReplacement)
+
+    func mappedSelectionLocation(_ location: Int) -> Int {
+        let nonnegativeLocation = max(location, 0)
+        if nonnegativeLocation <= currentRange.location {
+            return nonnegativeLocation
+        }
+        if nonnegativeLocation <= NSMaxRange(currentRange) {
+            return currentRange.location + min(
+                nonnegativeLocation - currentRange.location,
+                boundedReplacementLength
+            )
+        }
+        return currentRange.location
+            + boundedReplacementLength
+            + min(
+                nonnegativeLocation - NSMaxRange(currentRange),
+                stableNSString.length - NSMaxRange(stableRange)
+            )
+    }
+
+    let selectionStart = mappedSelectionLocation(selectedRange.location)
+    let selectionEnd = mappedSelectionLocation(NSMaxRange(selectedRange))
+    return CodeSnippetBoundedEdit(
+        text: mutableText as String,
+        selectedRange: clampedTextSelection(
+            NSRange(
+                location: min(selectionStart, selectionEnd),
+                length: abs(selectionEnd - selectionStart)
+            ),
+            textLength: mutableText.length
+        )
+    )
+}
+
+/// Safe fallback for an over-limit change whose replacement range is unknown.
+/// Rejecting the change preserves existing source; guessing from a text diff can
+/// silently delete a repeated suffix.
+func codeSnippetBoundedEdit(
+    currentText: String,
+    stableText: String,
+    selectedRange: NSRange,
+    maximumUTF16Length limit: Int
+) -> CodeSnippetBoundedEdit {
+    let currentLength = (currentText as NSString).length
+    guard currentLength > limit else {
+        return CodeSnippetBoundedEdit(
+            text: currentText,
+            selectedRange: clampedTextSelection(selectedRange, textLength: currentLength)
+        )
+    }
+    let boundedText = codeSnippetText(stableText, limitedToUTF16Length: limit)
+    let boundedLength = (boundedText as NSString).length
+    return CodeSnippetBoundedEdit(
+        text: boundedText,
+        selectedRange: clampedTextSelection(
+            selectedRange,
+            textLength: boundedLength
+        )
+    )
+}
+
+private func clampedTextSelection(_ selection: NSRange, textLength: Int) -> NSRange {
+    let location = min(max(selection.location, 0), textLength)
+    return NSRange(
+        location: location,
+        length: min(max(selection.length, 0), textLength - location)
+    )
 }

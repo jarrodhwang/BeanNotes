@@ -9,6 +9,7 @@ import UIKit
 struct ExportView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.beanNotesTheme) private var beanNotesTheme
+    @Environment(\.colorScheme) private var colorScheme
 
     var note: NoteDocument
     var page: NotePage
@@ -465,6 +466,7 @@ struct ExportView: View {
                     page,
                     format: format,
                     options: options,
+                    automaticInterfaceStyle: colorScheme == .dark ? .dark : .light,
                     progress: progress
                 )]
             case .allPages:
@@ -472,6 +474,7 @@ struct ExportView: View {
                     note,
                     format: format,
                     options: options,
+                    automaticInterfaceStyle: colorScheme == .dark ? .dark : .light,
                     progress: progress
                 )
             }

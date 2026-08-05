@@ -240,6 +240,7 @@ struct PageNavigatorSidebar: View {
 
 private struct PageNavigatorThumbnail: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.colorScheme) private var colorScheme
 
     var page: NotePage
     var theme: BeanNotesTheme
@@ -278,7 +279,8 @@ private struct PageNavigatorThumbnail: View {
 
     private var previewRequestID: String {
         let contentRevision = NotePageRenderSnapshot.contentRevision(for: page)
-        return "\(page.id.uuidString)-\(contentRevision)-\(theme.rawValue)-\(showsThemeArtwork)-\(previewRevision)"
+        let appearance = colorScheme == .dark ? "dark" : "light"
+        return "\(page.id.uuidString)-\(contentRevision)-\(theme.rawValue)-\(showsThemeArtwork)-\(appearance)-\(previewRevision)"
     }
 
     @MainActor
@@ -291,10 +293,12 @@ private struct PageNavigatorThumbnail: View {
         }
 
         do {
+            let previousThumbnailPath = page.thumbnailFileName
             let url = try await thumbnailService.generateThumbnailInBackground(
                 for: page,
                 theme: theme,
                 showsBeanArtwork: showsThemeArtwork,
+                automaticInterfaceStyle: colorScheme == .dark ? .dark : .light,
                 maxDimension: 320
             )
             try Task.checkCancellation()
@@ -304,6 +308,10 @@ private struct PageNavigatorThumbnail: View {
             )
             try Task.checkCancellation()
             try modelContext.save()
+            thumbnailService.retireThumbnailIfSuperseded(
+                previousThumbnailPath,
+                currentRelativePath: page.thumbnailFileName
+            )
         } catch is CancellationError {
             return
         } catch {
@@ -312,13 +320,15 @@ private struct PageNavigatorThumbnail: View {
     }
 
     private func currentThumbnailURL() -> URL? {
-        guard let relativePath = page.thumbnailFileName,
+        guard let storedPath = page.thumbnailFileName,
+              let relativePath = LocalStorageService.normalizedThumbnailRelativePath(storedPath),
               ThumbnailService.isCurrentThumbnailPath(
                   relativePath,
                   pageID: page.id,
                   theme: theme,
                   contentRevision: NotePageRenderSnapshot.contentRevision(for: page),
-                  showsBeanArtwork: showsThemeArtwork
+                  showsBeanArtwork: showsThemeArtwork,
+                  automaticInterfaceStyle: colorScheme == .dark ? .dark : .light
               ) else {
             return nil
         }

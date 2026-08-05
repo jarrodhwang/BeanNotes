@@ -8,8 +8,21 @@ import PencilKit
 import UIKit
 import UniformTypeIdentifiers
 
+private enum ThumbnailGenerationError: LocalizedError {
+    case encodingFailed
+
+    var errorDescription: String? {
+        "BeanNotes could not encode the note preview."
+    }
+}
+
 struct NoteImageAttachmentRenderSnapshot: Sendable {
     var storedFileName: String
+    /// A freshly rendered snippet used when the stored flattened PNG is known stale.
+    /// Keeping this in the immutable snapshot also protects thumbnail/direct-export
+    /// paths that do not have an open, materialized editor page available to repair it.
+    var renderedImageData: Data?
+    var allowsStoredImage: Bool
     var x: Double
     var y: Double
     var width: Double
@@ -18,9 +31,42 @@ struct NoteImageAttachmentRenderSnapshot: Sendable {
     var rendersBehindDrawing: Bool
 
     @MainActor
-    init(attachment: Attachment, pageSize: CGSize?) {
+    init(
+        attachment: Attachment,
+        pageSize: CGSize?,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light
+    ) {
         let frame = attachment.normalizedFrame(for: pageSize)
         self.storedFileName = attachment.storedFileName
+        if attachment.isCodeSnippet {
+            let draft = CodeSnippetDraft(
+                editing: attachment,
+                defaults: CodeSnippetPreferences.defaultDraft()
+            )
+            let resolvedInterfaceStyle: UIUserInterfaceStyle = automaticInterfaceStyle == .dark
+                ? .dark
+                : .light
+            let expectedVersion = CodeSnippetPreviewRenderer.previewVersion(
+                for: draft,
+                automaticInterfaceStyle: resolvedInterfaceStyle
+            )
+            if attachment.codeSnippetPreviewVersion == expectedVersion {
+                self.renderedImageData = nil
+                self.allowsStoredImage = true
+            } else {
+                self.renderedImageData = CodeSnippetPreviewRenderer.pngData(
+                    for: draft,
+                    logicalSize: frame.size,
+                    automaticInterfaceStyle: resolvedInterfaceStyle
+                )
+                // Never fall back to a PNG we already know represents old source,
+                // dimensions, renderer rules, or an opposite adaptive appearance.
+                self.allowsStoredImage = false
+            }
+        } else {
+            self.renderedImageData = nil
+            self.allowsStoredImage = true
+        }
         self.x = Double(frame.origin.x)
         self.y = Double(frame.origin.y)
         self.width = Double(frame.width)
@@ -85,7 +131,8 @@ struct NotePageRenderSnapshot: Sendable {
         page: NotePage,
         theme: BeanNotesTheme,
         showsBeanArtwork: Bool? = nil,
-        rendersPageBackground: Bool = true
+        rendersPageBackground: Bool = true,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light
     ) {
         let pageSize = page.pageSize
         self.id = page.id
@@ -100,7 +147,11 @@ struct NotePageRenderSnapshot: Sendable {
         self.showsBeanArtwork = showsBeanArtwork ?? NoteBackground.showsArtwork(for: theme)
         self.rendersPageBackground = rendersPageBackground
         self.imageAttachments = page.visualAttachments.map {
-            NoteImageAttachmentRenderSnapshot(attachment: $0, pageSize: pageSize)
+            NoteImageAttachmentRenderSnapshot(
+                attachment: $0,
+                pageSize: pageSize,
+                automaticInterfaceStyle: automaticInterfaceStyle
+            )
         }
     }
 
@@ -153,10 +204,12 @@ struct ThumbnailService {
         pageID: UUID,
         theme: BeanNotesTheme,
         contentRevision: String,
-        showsBeanArtwork: Bool = false
+        showsBeanArtwork: Bool = false,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light
     ) -> String {
         let artwork = showsBeanArtwork ? "bean-on" : "bean-off"
-        return "\(pageID.uuidString)-\(contentRevision)-\(theme.rawValue)-\(artwork)-v\(thumbnailRenderVersion).jpg"
+        let appearance = automaticInterfaceStyle == .dark ? "dark" : "light"
+        return "\(pageID.uuidString)-\(contentRevision)-\(theme.rawValue)-\(artwork)-\(appearance)-v\(thumbnailRenderVersion).jpg"
     }
 
     nonisolated static func isCurrentThumbnailPath(
@@ -164,13 +217,20 @@ struct ThumbnailService {
         pageID: UUID,
         theme: BeanNotesTheme,
         contentRevision: String,
-        showsBeanArtwork: Bool = false
+        showsBeanArtwork: Bool = false,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light
     ) -> Bool {
-        URL(fileURLWithPath: relativePath).lastPathComponent == thumbnailFileName(
+        guard let normalizedPath = LocalStorageService.normalizedThumbnailRelativePath(
+            relativePath
+        ) else {
+            return false
+        }
+        return URL(fileURLWithPath: normalizedPath).lastPathComponent == thumbnailFileName(
             pageID: pageID,
             theme: theme,
             contentRevision: contentRevision,
-            showsBeanArtwork: showsBeanArtwork
+            showsBeanArtwork: showsBeanArtwork,
+            automaticInterfaceStyle: automaticInterfaceStyle
         )
     }
 
@@ -178,6 +238,7 @@ struct ThumbnailService {
         for page: NotePage,
         theme: BeanNotesTheme? = nil,
         showsBeanArtwork: Bool? = nil,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light,
         maxDimension: CGFloat = 360
     ) throws -> URL {
         let resolvedTheme = theme ?? .currentFromDefaults()
@@ -185,7 +246,8 @@ struct ThumbnailService {
         let snapshot = NotePageRenderSnapshot(
             page: page,
             theme: resolvedTheme,
-            showsBeanArtwork: resolvedShowsArtwork
+            showsBeanArtwork: resolvedShowsArtwork,
+            automaticInterfaceStyle: automaticInterfaceStyle
         )
         let drawing: PKDrawing
         switch drawingStorage.loadDrawingResult(for: page) {
@@ -202,12 +264,15 @@ struct ThumbnailService {
             rootURL: storage.rootURL,
             maxDimension: maxDimension
         )
-        let data = thumbnail.jpegData(compressionQuality: 0.82) ?? Data()
+        guard let data = thumbnail.jpegData(compressionQuality: 0.82), !data.isEmpty else {
+            throw ThumbnailGenerationError.encodingFailed
+        }
         let fileName = Self.thumbnailFileName(
             pageID: page.id,
             theme: resolvedTheme,
             contentRevision: snapshot.contentRevision,
-            showsBeanArtwork: snapshot.showsBeanArtwork
+            showsBeanArtwork: snapshot.showsBeanArtwork,
+            automaticInterfaceStyle: automaticInterfaceStyle
         )
         let stored = try storage.saveData(
             data,
@@ -225,6 +290,7 @@ struct ThumbnailService {
         for page: NotePage,
         theme: BeanNotesTheme? = nil,
         showsBeanArtwork: Bool? = nil,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light,
         maxDimension: CGFloat = 360
     ) async throws -> URL {
         let resolvedTheme = theme ?? .currentFromDefaults()
@@ -232,7 +298,8 @@ struct ThumbnailService {
         let snapshot = NotePageRenderSnapshot(
             page: page,
             theme: resolvedTheme,
-            showsBeanArtwork: resolvedShowsArtwork
+            showsBeanArtwork: resolvedShowsArtwork,
+            automaticInterfaceStyle: automaticInterfaceStyle
         )
         let rootURL = storage.rootURL
         let drawingFileName = page.drawingFileName
@@ -244,7 +311,8 @@ struct ThumbnailService {
             pageID: page.id,
             theme: resolvedTheme,
             contentRevision: snapshot.contentRevision,
-            showsBeanArtwork: snapshot.showsBeanArtwork
+            showsBeanArtwork: snapshot.showsBeanArtwork,
+            automaticInterfaceStyle: automaticInterfaceStyle
         )
         let data = try await Self.renderThumbnailData(
             snapshot: snapshot,
@@ -273,8 +341,21 @@ struct ThumbnailService {
               resolvedTheme == .currentFromDefaults(),
               resolvedShowsArtwork == NoteBackground.showsArtwork(for: resolvedTheme),
               snapshot.contentRevision == NotePageRenderSnapshot.contentRevision(for: page) else {
-            if page.thumbnailFileName != stored.relativePath {
-                _ = try? storage.removeFile(relativePath: stored.relativePath)
+            let currentRelativePath = page.thumbnailFileName.flatMap {
+                LocalStorageService.normalizedThumbnailRelativePath($0)
+            }
+            if currentRelativePath != stored.relativePath {
+                do {
+                    _ = try storage.removeFile(relativePath: stored.relativePath)
+                } catch {
+                    LocalStorageService.logStorageFailure(
+                        operation: "cancelled_thumbnail_cleanup",
+                        relativePath: stored.relativePath,
+                        rootURL: storage.rootURL,
+                        itemURL: storage.url(forRelativePath: stored.relativePath),
+                        error: error
+                    )
+                }
             }
             throw CancellationError()
         }
@@ -320,11 +401,37 @@ struct ThumbnailService {
     }
 
     private func replaceThumbnailReference(for page: NotePage, with relativePath: String) {
-        let previousPath = page.thumbnailFileName
         page.thumbnailFileName = relativePath
+    }
 
-        guard let previousPath, previousPath != relativePath else { return }
-        _ = try? storage.removeFile(relativePath: previousPath)
+    /// Deletes a superseded thumbnail only after the caller has successfully saved
+    /// the new model reference. Keeping this separate prevents a failed SwiftData
+    /// save from leaving the persistent page pointed at a file already deleted.
+    func retireThumbnailIfSuperseded(
+        _ previousRelativePath: String?,
+        currentRelativePath: String?
+    ) {
+        guard let previousRelativePath = previousRelativePath.flatMap(
+            LocalStorageService.normalizedThumbnailRelativePath
+        ),
+              let currentRelativePath = currentRelativePath.flatMap(
+                LocalStorageService.normalizedThumbnailRelativePath
+              ),
+              previousRelativePath != currentRelativePath else {
+            return
+        }
+
+        do {
+            _ = try storage.removeFile(relativePath: previousRelativePath)
+        } catch {
+            LocalStorageService.logStorageFailure(
+                operation: "retire_thumbnail",
+                relativePath: previousRelativePath,
+                rootURL: storage.rootURL,
+                itemURL: storage.url(forRelativePath: previousRelativePath),
+                error: error
+            )
+        }
     }
 
     nonisolated static func renderThumbnailImage(
@@ -622,14 +729,22 @@ struct ThumbnailService {
         var didRenderRequiredImages = true
 
         for attachment in attachments.sorted(by: { $0.createdAt < $1.createdAt }) {
-            guard let imageURL = try? storage.validatedURL(forRelativePath: attachment.storedFileName) else {
-                if requiresImageAttachments {
-                    didRenderRequiredImages = false
-                }
-                continue
-            }
             let maxPixelSize = max(attachment.width, attachment.height) * max(renderScale, 0.25)
-            guard let image = renderAttachmentImage(at: imageURL, maxPixelSize: maxPixelSize) else {
+            let image: UIImage?
+            if let renderedImageData = attachment.renderedImageData {
+                image = renderAttachmentImage(
+                    data: renderedImageData,
+                    maxPixelSize: maxPixelSize
+                )
+            } else if attachment.allowsStoredImage,
+                      let imageURL = try? storage.validatedURL(
+                          forRelativePath: attachment.storedFileName
+                      ) {
+                image = renderAttachmentImage(at: imageURL, maxPixelSize: maxPixelSize)
+            } else {
+                image = nil
+            }
+            guard let image else {
                 if requiresImageAttachments {
                     didRenderRequiredImages = false
                 }
@@ -652,6 +767,28 @@ struct ThumbnailService {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
             return nil
         }
+
+        return renderAttachmentImage(from: source, maxPixelSize: maxPixelSize)
+    }
+
+    nonisolated private static func renderAttachmentImage(
+        data: Data,
+        maxPixelSize: CGFloat
+    ) -> UIImage? {
+        let options = [
+            kCGImageSourceShouldCache: false
+        ] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, options) else {
+            return nil
+        }
+
+        return renderAttachmentImage(from: source, maxPixelSize: maxPixelSize)
+    }
+
+    nonisolated private static func renderAttachmentImage(
+        from source: CGImageSource,
+        maxPixelSize: CGFloat
+    ) -> UIImage? {
 
         let thumbnailOptions = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,

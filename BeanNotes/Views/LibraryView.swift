@@ -14,6 +14,7 @@ struct LibraryView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.beanNotesTheme) private var beanNotesTheme
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
     @Query(sort: [
@@ -819,7 +820,7 @@ struct LibraryView: View {
         )
         let importExportService = ImportExportService()
         let staging = importExportService.storage.beginImportStagingTransaction()
-        var didSave = false
+        var didCommitStaging = false
 
         do {
             modelContext.insert(note)
@@ -834,16 +835,18 @@ struct LibraryView: View {
                 into: page,
                 staging: staging
             )
-            try modelContext.save()
-            didSave = true
             try staging.commit()
+            didCommitStaging = true
+            try modelContext.save()
 
             selectedFolderID = folder.id
             syncSharedFolderIndex(including: [folder])
             openNote(note)
         } catch {
-            if !didSave {
-                modelContext.rollback()
+            modelContext.rollback()
+            if didCommitStaging {
+                staging.discardCommittedFilesAfterModelFailure()
+            } else {
                 staging.rollback()
             }
             throw error
@@ -890,7 +893,7 @@ struct LibraryView: View {
 
         let service = ImportExportService()
         let staging = service.storage.beginImportStagingTransaction()
-        var didSave = false
+        var didCommitStaging = false
 
         do {
             try await Task.sleep(nanoseconds: 80_000_000)
@@ -923,22 +926,26 @@ struct LibraryView: View {
             }
 
             try Task.checkCancellation()
-            try modelContext.save()
-            didSave = true
             try staging.commit()
+            didCommitStaging = true
+            try modelContext.save()
             syncSharedFolderIndex(including: [selectedFolder])
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
             }
         } catch is CancellationError {
-            if !didSave {
-                modelContext.rollback()
+            modelContext.rollback()
+            if didCommitStaging {
+                staging.discardCommittedFilesAfterModelFailure()
+            } else {
                 staging.rollback()
             }
         } catch {
-            if !didSave {
-                modelContext.rollback()
+            modelContext.rollback()
+            if didCommitStaging {
+                staging.discardCommittedFilesAfterModelFailure()
+            } else {
                 staging.rollback()
             }
             errorMessage = error.localizedDescription
@@ -960,7 +967,7 @@ struct LibraryView: View {
 
         let service = ImportExportService()
         let staging = service.storage.beginImportStagingTransaction()
-        var didSave = false
+        var didCommitStaging = false
 
         do {
             try await Task.sleep(nanoseconds: 80_000_000)
@@ -993,22 +1000,26 @@ struct LibraryView: View {
             }
 
             try Task.checkCancellation()
-            try modelContext.save()
-            didSave = true
             try staging.commit()
+            didCommitStaging = true
+            try modelContext.save()
             syncSharedFolderIndex(including: [selectedFolder])
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
             }
         } catch is CancellationError {
-            if !didSave {
-                modelContext.rollback()
+            modelContext.rollback()
+            if didCommitStaging {
+                staging.discardCommittedFilesAfterModelFailure()
+            } else {
                 staging.rollback()
             }
         } catch {
-            if !didSave {
-                modelContext.rollback()
+            modelContext.rollback()
+            if didCommitStaging {
+                staging.discardCommittedFilesAfterModelFailure()
+            } else {
                 staging.rollback()
             }
             errorMessage = error.localizedDescription
@@ -1235,7 +1246,11 @@ struct LibraryView: View {
                     exportProgress = Double(index) / Double(total)
                     exportProgressMessage = "Exporting note \(noteNumber) of \(total)..."
 
-                    let noteURLs = try await service.exportNoteForSharing(note, format: format) { fraction, message in
+                    let noteURLs = try await service.exportNoteForSharing(
+                        note,
+                        format: format,
+                        automaticInterfaceStyle: colorScheme == .dark ? .dark : .light
+                    ) { fraction, message in
                         let noteProgress = fraction ?? 0
                         exportProgress = (Double(index) + noteProgress) / Double(total)
                         exportProgressMessage = total == 1 ? message : "\(message) Note \(noteNumber) of \(total)."
@@ -1330,12 +1345,19 @@ struct LibraryView: View {
         guard !Task.isCancelled else { return }
 
         do {
-            _ = try await ThumbnailService().generateThumbnailInBackground(
+            let thumbnailService = ThumbnailService()
+            let previousThumbnailPath = page.thumbnailFileName
+            _ = try await thumbnailService.generateThumbnailInBackground(
                 for: page,
                 theme: .currentFromDefaults(),
+                automaticInterfaceStyle: colorScheme == .dark ? .dark : .light,
                 maxDimension: 420
             )
             try modelContext.save()
+            thumbnailService.retireThumbnailIfSuperseded(
+                previousThumbnailPath,
+                currentRelativePath: page.thumbnailFileName
+            )
             thumbnailRefreshVersions[page.id, default: 0] &+= 1
         } catch is CancellationError {
             // A concurrent theme change will let the newly visible note card
@@ -2374,6 +2396,7 @@ private enum NoteCardLayout {
 private struct NoteCardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.beanNotesTheme) private var beanNotesTheme
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage(NoteBackground.showsBeanArtworkKey) private var showsBeanArtwork = false
     @AppStorage(NoteBackground.showsBlueberryArtworkKey) private var showsBlueberryArtwork = true
 
@@ -2493,6 +2516,9 @@ private struct NoteCardView: View {
         .onChange(of: showsThemeArtwork) { _, _ in
             loadThumbnail(forceRefresh: true)
         }
+        .onChange(of: colorScheme) { _, _ in
+            loadThumbnail(forceRefresh: true)
+        }
         .onChange(of: thumbnailRefreshVersion) { _, _ in
             loadThumbnail()
         }
@@ -2600,10 +2626,12 @@ private struct NoteCardView: View {
                     }
                 }
 
+                let previousThumbnailPath = page.thumbnailFileName
                 let url = try await thumbnailService.generateThumbnailInBackground(
                     for: page,
                     theme: requestedTheme,
                     showsBeanArtwork: showsThemeArtwork,
+                    automaticInterfaceStyle: colorScheme == .dark ? .dark : .light,
                     maxDimension: 360
                 )
                 try Task.checkCancellation()
@@ -2621,6 +2649,10 @@ private struct NoteCardView: View {
                     thumbnailImage = generatedImage
                 }
                 try modelContext.save()
+                thumbnailService.retireThumbnailIfSuperseded(
+                    previousThumbnailPath,
+                    currentRelativePath: page.thumbnailFileName
+                )
             } catch is CancellationError {
                 return
             } catch {
@@ -2644,13 +2676,15 @@ private struct NoteCardView: View {
         forceRefresh: Bool
     ) -> URL? {
         guard !forceRefresh,
-              let relativePath = page.thumbnailFileName,
+              let storedPath = page.thumbnailFileName,
+              let relativePath = LocalStorageService.normalizedThumbnailRelativePath(storedPath),
               ThumbnailService.isCurrentThumbnailPath(
                   relativePath,
                   pageID: page.id,
                   theme: theme,
                   contentRevision: NotePageRenderSnapshot.contentRevision(for: page),
-                  showsBeanArtwork: showsThemeArtwork
+                  showsBeanArtwork: showsThemeArtwork,
+                  automaticInterfaceStyle: colorScheme == .dark ? .dark : .light
               ) else {
             return nil
         }

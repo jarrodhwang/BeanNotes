@@ -21,6 +21,23 @@ import UniformTypeIdentifiers
 struct BeanNotesTests {
     private static var retainedModelContainers: [ModelContainer] = []
 
+    nonisolated private final class ThreadExecutionRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var valuesStorage: [Bool] = []
+
+        func record(isMainThread: Bool) {
+            lock.lock()
+            valuesStorage.append(isMainThread)
+            lock.unlock()
+        }
+
+        var values: [Bool] {
+            lock.lock()
+            defer { lock.unlock() }
+            return valuesStorage
+        }
+    }
+
     private func makeInMemoryModelContext() throws -> ModelContext {
         let schema = Schema([
             NotebookFolder.self,
@@ -74,6 +91,37 @@ struct BeanNotesTests {
         await Task.detached {
             DrawingStorageService.waitForPendingPrefetchesForTesting()
         }.value
+    }
+
+    private func firstDescendant<ViewType: UIView>(
+        of view: UIView,
+        type: ViewType.Type
+    ) -> ViewType? {
+        if let match = view as? ViewType {
+            return match
+        }
+        for subview in view.subviews {
+            if let match = firstDescendant(of: subview, type: type) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private func waitForDescendant<ViewType: UIView>(
+        of view: UIView,
+        type: ViewType.Type,
+        attempts: Int = 50
+    ) async -> ViewType? {
+        for _ in 0..<attempts {
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            if let match = firstDescendant(of: view, type: type) {
+                return match
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return nil
     }
 
     private func attachPDFVersion(
@@ -1357,6 +1405,17 @@ struct BeanNotesTests {
         #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: stored.relativePath).path))
     }
 
+    @Test func productionStorageFactoryDoesNotFallBackToTemporaryStorage() {
+        do {
+            _ = try LocalStorageService.production { _ in nil }
+            Issue.record("A missing Documents directory must make production storage creation fail.")
+        } catch LocalStorageError.missingDocumentsDirectory {
+            // Expected.
+        } catch {
+            Issue.record("Unexpected production storage error: \(error)")
+        }
+    }
+
     @Test func localStorageUsageSnapshotCountsContentDirectories() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesStorageUsage-\(UUID().uuidString)", isDirectory: true)
@@ -1380,6 +1439,37 @@ struct BeanNotesTests {
         #expect(snapshot.usage(for: .exports)?.byteCount == 19)
         #expect(snapshot.totalByteCount == 60)
         #expect(snapshot.totalFileCount == 4)
+    }
+
+    @Test func storageScansAndCleanupExecuteOffTheMainThread() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesBackgroundStorage-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let oldExport = try storage.saveData(
+            Data("old".utf8),
+            preferredName: "Old.pdf",
+            contentType: .pdf,
+            to: .exports
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-48 * 60 * 60)],
+            ofItemAtPath: storage.url(forRelativePath: oldExport.relativePath).path
+        )
+        let recorder = ThreadExecutionRecorder()
+
+        _ = try await storage.storageUsageSnapshotInBackground { isMainThread in
+            recorder.record(isMainThread: isMainThread)
+        }
+        _ = try await storage.removeExportsInBackground(
+            olderThan: Date().addingTimeInterval(-24 * 60 * 60),
+            scope: .renderedExports
+        ) { isMainThread in
+            recorder.record(isMainThread: isMainThread)
+        }
+
+        #expect(recorder.values == [false, false])
     }
 
     @Test func localStorageAtomicallyReplacesExistingPreviewData() throws {
@@ -1467,7 +1557,7 @@ struct BeanNotesTests {
         }
     }
 
-    @Test func localStorageRemovesOnlyOldExports() throws {
+    @Test func localStorageCleansRenderedExportsAndBackupsWithSeparateScopes() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesOldExports-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -1480,6 +1570,10 @@ struct BeanNotesTests {
         let oldExport = try storage.saveData(Data(repeating: 1, count: 7), preferredName: "Old.pdf", contentType: .pdf, to: .exports)
         let recentExport = try storage.saveData(Data(repeating: 2, count: 9), preferredName: "Recent.pdf", contentType: .pdf, to: .exports)
         let oldBackup = try storage.saveData(Data(repeating: 3, count: 11), preferredName: "Backup.beannotes", contentType: .data, to: .exports)
+        let exportDirectory = try storage.directoryURL(for: .exports)
+        let packageURL = exportDirectory.appendingPathComponent("Legacy-Package.beannotes", isDirectory: true)
+        try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
+        try Data(repeating: 4, count: 5).write(to: packageURL.appendingPathComponent("manifest.json"))
         let oldURL = storage.url(forRelativePath: oldExport.relativePath)
         let recentURL = storage.url(forRelativePath: recentExport.relativePath)
         let oldBackupURL = storage.url(forRelativePath: oldBackup.relativePath)
@@ -1488,16 +1582,139 @@ struct BeanNotesTests {
 
         try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: oldURL.path)
         try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: oldBackupURL.path)
+        try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: packageURL.path)
 
-        let report = try storage.removeExports(olderThan: cutoffDate)
+        let renderedReport = try storage.removeExports(
+            olderThan: cutoffDate,
+            scope: .renderedExports
+        )
 
-        #expect(report.removedFileCount == 1)
-        #expect(report.removedByteCount == 7)
-        #expect(report.failedFileCount == 0)
+        #expect(renderedReport.removedFileCount == 1)
+        #expect(renderedReport.removedByteCount == 7)
+        #expect(renderedReport.failedFileCount == 0)
         #expect(!FileManager.default.fileExists(atPath: oldURL.path))
         #expect(FileManager.default.fileExists(atPath: recentURL.path))
         #expect(FileManager.default.fileExists(atPath: oldBackupURL.path))
-        #expect(try storage.storageUsageSnapshot().usage(for: .exports)?.fileCount == 2)
+        #expect(FileManager.default.fileExists(atPath: packageURL.path))
+
+        let backupReport = try storage.removeExports(
+            olderThan: cutoffDate,
+            scope: .backups
+        )
+
+        #expect(backupReport.removedFileCount == 2)
+        #expect(backupReport.removedByteCount == 16)
+        #expect(backupReport.failedFileCount == 0)
+        #expect(!FileManager.default.fileExists(atPath: oldBackupURL.path))
+        #expect(!FileManager.default.fileExists(atPath: packageURL.path))
+        #expect(FileManager.default.fileExists(atPath: recentURL.path))
+        #expect(try storage.storageUsageSnapshot().usage(for: .exports)?.fileCount == 1)
+    }
+
+    @Test func localStorageCountsPendingImportsAndPackageContents() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesHiddenUsage-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let staging = storage.beginImportStagingTransaction()
+        _ = try staging.saveData(
+            Data(repeating: 1, count: 23),
+            preferredName: "Pending.bin",
+            contentType: .data
+        )
+
+        let exportDirectory = try storage.directoryURL(for: .exports)
+        let packageURL = exportDirectory.appendingPathComponent("Backup.beannotes", isDirectory: true)
+        try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
+        try Data(repeating: 2, count: 29).write(to: packageURL.appendingPathComponent("archive.bin"))
+
+        let snapshot = try storage.storageUsageSnapshot()
+        #expect(snapshot.usage(for: .imports)?.byteCount == 23)
+        #expect(snapshot.usage(for: .imports)?.fileCount == 1)
+        #expect(snapshot.usage(for: .exports)?.byteCount == 29)
+        #expect(snapshot.usage(for: .exports)?.fileCount == 1)
+        staging.rollback()
+    }
+
+    @Test func storageOperationRunnerReturnsAtItsDeadline() async {
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+
+        do {
+            _ = try await StorageOperationRunner.run(
+                timeout: 0.05,
+                timeoutError: LocalStorageError.storageOperationTimedOut("Test operation")
+            ) {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                return true
+            }
+            Issue.record("The bounded storage operation should have timed out.")
+        } catch LocalStorageError.storageOperationTimedOut(let operation) {
+            #expect(operation == "Test operation")
+        } catch {
+            Issue.record("Unexpected timeout error: \(error)")
+        }
+
+        #expect(startedAt.duration(to: clock.now) < .seconds(1))
+    }
+
+    @Test func stagedExternalCopyPublishesOnlyItsFinalFile() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesExternalCopy-\(UUID().uuidString)", isDirectory: true)
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesExternalSource-\(UUID().uuidString).bin")
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+            try? FileManager.default.removeItem(at: sourceURL)
+        }
+
+        let expected = Data(repeating: 0xA5, count: 4096)
+        try expected.write(to: sourceURL)
+        let transaction = LocalStorageService(rootURL: rootURL).beginImportStagingTransaction()
+        let stored = try transaction.copyFile(from: sourceURL, preferredName: "Imported.bin")
+        let stagedURLs = try FileManager.default.contentsOfDirectory(
+            at: transaction.stagingDirectoryURL,
+            includingPropertiesForKeys: nil
+        )
+
+        #expect(stagedURLs.map(\.lastPathComponent) == [stored.fileName])
+        #expect(try Data(contentsOf: transaction.stagedURL(for: stored)) == expected)
+        #expect(!stagedURLs.contains { $0.lastPathComponent.hasPrefix(".Incoming-") })
+        transaction.rollback()
+    }
+
+    @Test func localStorageNormalizesLegacyThumbnailPaths() {
+        #expect(
+            LocalStorageService.normalizedThumbnailRelativePath("legacy.jpg")
+                == "Thumbnails/legacy.jpg"
+        )
+        #expect(
+            LocalStorageService.normalizedThumbnailRelativePath("Thumbnails/current.jpg")
+                == "Thumbnails/current.jpg"
+        )
+        #expect(LocalStorageService.normalizedThumbnailRelativePath("Imports/not-a-thumbnail.jpg") == nil)
+        #expect(LocalStorageService.normalizedThumbnailRelativePath("../escape.jpg") == nil)
+    }
+
+    @Test func sanitizedFileNamesRespectUTF8ComponentLimitsAndPreserveExtensions() throws {
+        let preferredName = String(repeating: "Very Long 🫘 Title ", count: 80) + ".pdf"
+        let sanitized = preferredName.sanitizedFileName
+
+        #expect(sanitized.utf8.count <= 180)
+        #expect(sanitized.hasSuffix(".pdf"))
+
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesLongName-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let stored = try LocalStorageService(rootURL: rootURL).saveData(
+            Data("export".utf8),
+            preferredName: preferredName,
+            contentType: .pdf,
+            to: .exports
+        )
+        #expect(stored.fileName.utf8.count <= 255)
+        #expect(stored.fileName.hasSuffix(".pdf"))
     }
 
     @Test @MainActor func libraryBackupManifestCapturesWholeLibraryMetadata() throws {
@@ -1744,6 +1961,110 @@ struct BeanNotesTests {
         }
     }
 
+    @Test @MainActor func emptyDrawingNameCannotDeleteDrawingsDirectory() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesEmptyDrawingCleanup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let sentinel = try storage.saveData(
+            Data("keep".utf8),
+            fileName: "sentinel.drawing",
+            contentType: .data,
+            to: .drawings,
+            replacingExisting: true
+        )
+        let page = NotePage(pageOrder: 0, drawingFileName: "")
+
+        let report = storage.removeStoredFiles(matching: LocalStorageCleanupTarget(page: page))
+
+        #expect(report.removedRelativePaths.isEmpty)
+        #expect(report.failedRelativePaths.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: sentinel.relativePath).path))
+        #expect(FileManager.default.fileExists(atPath: try storage.directoryURL(for: .drawings).path))
+    }
+
+    @Test func generalStorageRemovalRejectsDirectoriesAndMalformedPaths() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesManagedPathSafety-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let nestedDirectory = try storage.directoryURL(for: .imports)
+            .appendingPathComponent("folder", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
+        let sentinel = try storage.saveData(
+            Data("sentinel".utf8),
+            fileName: "symlink-target.drawing",
+            contentType: .data,
+            to: .drawings,
+            replacingExisting: true
+        )
+        let sentinelURL = storage.url(forRelativePath: sentinel.relativePath)
+        let symlinkURL = try storage.directoryURL(for: .imports).appendingPathComponent("drawing-link")
+        try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: sentinelURL)
+
+        let invalidPaths = [
+            "Drawings/",
+            "Imports/",
+            "Thumbnails/",
+            "Exports/",
+            ".",
+            "..",
+            "Drawings/../Imports/file.bin",
+            "Imports/.Pending/transaction/file.bin",
+            "Imports/folder",
+            "Imports/drawing-link"
+        ]
+        for path in invalidPaths {
+            do {
+                _ = try storage.removeFile(relativePath: path)
+                Issue.record("Expected managed path to be rejected: \(path)")
+            } catch LocalStorageError.invalidRelativePath {
+                // Expected.
+            }
+        }
+
+        #expect(FileManager.default.fileExists(atPath: try storage.directoryURL(for: .drawings).path))
+        #expect(FileManager.default.fileExists(atPath: nestedDirectory.path))
+        #expect(FileManager.default.fileExists(atPath: sentinelURL.path))
+    }
+
+    @Test @MainActor func identicalNoteTitlesDoNotCrossDeleteUUIDNamedExports() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesExportOwnership-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let firstNote = NoteDocument(title: "Same Title")
+        let secondNote = NoteDocument(title: "Same Title")
+        let first = try storage.saveData(
+            Data("first".utf8),
+            preferredName: "\(firstNote.id.uuidString)-Same Title.pdf",
+            contentType: .pdf,
+            to: .exports
+        )
+        let second = try storage.saveData(
+            Data("second".utf8),
+            preferredName: "\(secondNote.id.uuidString)-Same Title.pdf",
+            contentType: .pdf,
+            to: .exports
+        )
+        let legacy = try storage.saveData(
+            Data("legacy".utf8),
+            preferredName: "Same Title.pdf",
+            contentType: .pdf,
+            to: .exports
+        )
+
+        _ = storage.removeStoredFiles(matching: LocalStorageCleanupTarget(note: firstNote))
+
+        #expect(!FileManager.default.fileExists(atPath: storage.url(forRelativePath: first.relativePath).path))
+        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: second.relativePath).path))
+        #expect(FileManager.default.fileExists(atPath: storage.url(forRelativePath: legacy.relativePath).path))
+    }
+
     @Test func drawingStorageCacheSeparatesMatchingFileNamesAcrossRoots() throws {
         let containerURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesDrawingCache-\(UUID().uuidString)", isDirectory: true)
@@ -1769,6 +2090,41 @@ struct BeanNotesTests {
 
         #expect(firstStorage.loadDrawing(for: firstPage).dataRepresentation() == firstDrawing.dataRepresentation())
         #expect(secondStorage.loadDrawing(for: secondPage).dataRepresentation() == secondDrawing.dataRepresentation())
+    }
+
+    @Test func drawingStorageRejectsEmptyNestedAndTraversalFileNames() throws {
+        let containerURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDrawingPathSafety-\(UUID().uuidString)", isDirectory: true)
+        let rootURL = containerURL.appendingPathComponent("Storage", isDirectory: true)
+        let outsideURL = containerURL.appendingPathComponent("escape.drawing")
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: containerURL)
+        }
+
+        try FileManager.default.createDirectory(at: containerURL, withIntermediateDirectories: true)
+        try Data("outside".utf8).write(to: outsideURL)
+        let drawingStorage = DrawingStorageService(storage: LocalStorageService(rootURL: rootURL))
+        let drawing = makeTestDrawing(color: .systemPurple, xOffset: 0)
+
+        for fileName in ["", "folder/nested.drawing", "../escape.drawing", ".", ".."] {
+            let page = NotePage(pageOrder: 0, drawingFileName: fileName)
+            do {
+                _ = try drawingStorage.drawingURL(for: page)
+                Issue.record("Expected drawing filename to be rejected: \(fileName)")
+            } catch LocalStorageError.invalidRelativePath {
+                // Expected.
+            }
+            guard case .unavailable = drawingStorage.loadDrawingResult(for: page) else {
+                Issue.record("Invalid drawing paths must load as unavailable: \(fileName)")
+                continue
+            }
+            #expect(throws: (any Error).self) {
+                try drawingStorage.save(drawing, for: page)
+            }
+        }
+
+        #expect(try Data(contentsOf: outsideURL) == Data("outside".utf8))
     }
 
     @Test func drawingStorageCacheClearsOnMemoryWarning() throws {
@@ -1832,6 +2188,42 @@ struct BeanNotesTests {
             return
         }
         #expect(loadedDrawing.dataRepresentation() == expectedDrawing.dataRepresentation())
+    }
+
+    @Test func missingDrawingOpensAnEditableEmptyCanvas() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesMissingDrawingCanvas-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        DrawingStorageService.clearCache()
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, drawingFileName: "not-created-yet.drawing")
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+
+        container.configure(
+            pages: [page],
+            selectedPageID: page.id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+
+        let canvasView = try #require(container.activeCanvasView)
+        #expect(canvasView.isUserInteractionEnabled)
+        #expect(canvasView.drawing.strokes.isEmpty)
+        DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
     }
 
     @Test func drawingLoadResultCarriesTheExactStoredArchiveBytes() throws {
@@ -2423,7 +2815,9 @@ struct BeanNotesTests {
         page.thumbnailFileName = storedThumbnail.relativePath
 
         let exportDirectory = try storage.directoryURL(for: .exports)
-        let matchingExportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName("Delete Me.pdf"))
+        let matchingExportURL = exportDirectory.appendingPathComponent(
+            storage.uniqueFileName("\(note.id.uuidString)-Delete Me.pdf")
+        )
         try Data("export".utf8).write(to: matchingExportURL)
 
         let unrelatedImport = try storage.saveData(
@@ -3447,6 +3841,7 @@ struct BeanNotesTests {
             nativeZoomScale: 2,
             force: true
         )
+        fixture.pageView.setDrawingInteractionActive(true)
         fixture.pageView.setLiveDrawingActive(true)
         fixture.pageView.updateNativeDrawingViewport(
             visiblePageRect: CGRect(x: 200, y: 260, width: 120, height: 150),
@@ -3459,6 +3854,12 @@ struct BeanNotesTests {
         #expect(fixture.pageView.drawingViewportView.frame == CGRect(x: 0, y: 0, width: 180, height: 220))
 
         fixture.pageView.setLiveDrawingActive(false)
+        // A brief lift between letters must not resize PencilKit's tiled canvas and
+        // contend with the next stroke. The session-level interaction releases it.
+        #expect(abs(fixture.pageView.canvasView.zoomScale - 2) < 0.01)
+        #expect(fixture.pageView.drawingViewportView.frame == CGRect(x: 0, y: 0, width: 180, height: 220))
+
+        fixture.pageView.setDrawingInteractionActive(false)
         #expect(abs(fixture.pageView.canvasView.zoomScale - 5) < 0.01)
         #expect(fixture.pageView.drawingViewportView.frame == CGRect(x: 200, y: 260, width: 120, height: 150))
     }
@@ -4232,13 +4633,17 @@ struct BeanNotesTests {
         #expect(initial.font == .systemMono)
         #expect(initial.fontSize == 16)
         #expect(initial.backgroundStyle == .automatic)
-        #expect(initial.preferredInputMode == .handwriting)
+        #expect(initial.syntaxTheme == .adaptive)
+        #expect(initial.preferredInputMode == .text)
+        #expect(CodeSnippetPreferences.defaultSize(in: defaults) == CGSize(width: 420, height: 240))
 
         defaults.set("unknown", forKey: CodeSnippetPreferences.defaultLanguageKey)
         defaults.set("missing-font", forKey: CodeSnippetPreferences.defaultFontKey)
         defaults.set(Double.infinity, forKey: CodeSnippetPreferences.defaultFontSizeKey)
         defaults.set("neon", forKey: CodeSnippetPreferences.defaultBackgroundStyleKey)
-        defaults.set(false, forKey: CodeSnippetPreferences.handwritingByDefaultKey)
+        defaults.set("missing-theme", forKey: CodeSnippetPreferences.defaultSyntaxThemeKey)
+        defaults.set(-500, forKey: CodeSnippetPreferences.defaultWidthKey)
+        defaults.set(Double.infinity, forKey: CodeSnippetPreferences.defaultHeightKey)
         CodeSnippetPreferences.normalizePersistedValues(in: defaults)
 
         let repaired = CodeSnippetPreferences.defaultDraft(in: defaults)
@@ -4246,11 +4651,53 @@ struct BeanNotesTests {
         #expect(repaired.font == .systemMono)
         #expect(repaired.fontSize == 16)
         #expect(repaired.backgroundStyle == .automatic)
+        #expect(repaired.syntaxTheme == .adaptive)
         #expect(repaired.preferredInputMode == .text)
         #expect(defaults.string(forKey: CodeSnippetPreferences.defaultLanguageKey) == "python")
+        #expect(CodeSnippetPreferences.defaultSize(in: defaults) == CGSize(width: 180, height: 240))
 
         defaults.set(100, forKey: CodeSnippetPreferences.defaultFontSizeKey)
         #expect(CodeSnippetPreferences.defaultDraft(in: defaults).fontSize == 32)
+    }
+
+    @Test func codeSnippetSyntaxThemesExposeDistinctSharedPalettes() {
+        let expectedThemes: Set<String> = [
+            "adaptive", "light", "dark", "monokai", "solarizedLight",
+            "solarizedDark", "goodNight", "githubLight", "githubDark"
+        ]
+        #expect(Set(CodeSnippetSyntaxTheme.allCases.map(\.rawValue)) == expectedThemes)
+
+        let monokai = CodeSnippetSyntaxTheme.monokai.palette(for: .light)
+        let tokenColors = [
+            monokai.keywordColor,
+            monokai.typeColor,
+            monokai.functionColor,
+            monokai.stringColor,
+            monokai.numberColor,
+            monokai.commentColor,
+            monokai.directiveColor,
+            monokai.registerColor
+        ].map { String(describing: $0.cgColor) }
+        #expect(Set(tokenColors).count >= 7)
+        #expect(monokai.isDark)
+        #expect(monokai.backgroundColor != monokai.foregroundColor)
+    }
+
+    @Test func codeSnippetPaletteVisibilityDefaultsPersistsAndRepairsInvalidValues() throws {
+        let suiteName = "BeanNotesCodeSnippetPaletteVisibility-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(CodeSnippetPreferences.showsInPencilPalette(in: defaults))
+
+        defaults.set(false, forKey: CodeSnippetPreferences.showsInPencilPaletteKey)
+        CodeSnippetPreferences.normalizePersistedValues(in: defaults)
+        #expect(!CodeSnippetPreferences.showsInPencilPalette(in: defaults))
+
+        defaults.set("invalid", forKey: CodeSnippetPreferences.showsInPencilPaletteKey)
+        CodeSnippetPreferences.normalizePersistedValues(in: defaults)
+        #expect(CodeSnippetPreferences.showsInPencilPalette(in: defaults))
+        #expect(defaults.bool(forKey: CodeSnippetPreferences.showsInPencilPaletteKey))
     }
 
     @Test func codeSyntaxHighlightingPreservesSourceAndBoundsLargeInput() {
@@ -4326,6 +4773,58 @@ struct BeanNotesTests {
         #expect(semicolonColor == assemblyCommentColor)
     }
 
+    @Test func codeSnippetBoundedMarkedEditPreservesRepeatedSuffixAndMapsCaret() throws {
+        let context = try #require(codeSnippetMarkedEditContext(
+            currentText: "aba",
+            stableText: "a",
+            markedRange: NSRange(location: 0, length: 2)
+        ))
+        let bounded = codeSnippetBoundedMarkedEdit(
+            currentText: "aba",
+            context: context,
+            selectedRange: NSRange(location: 2, length: 0),
+            maximumUTF16Length: 2
+        )
+
+        #expect(context.replacementRange == NSRange(location: 0, length: 0))
+        #expect(bounded.text == "aa")
+        #expect(bounded.selectedRange == NSRange(location: 1, length: 0))
+    }
+
+    @Test func codeSyntaxHighlightingRecognizesATTIntelAndIBMAssembly() {
+        func kind(
+            of value: String,
+            in source: String,
+            tokens: [CodeSyntaxToken]
+        ) -> CodeSyntaxTokenKind? {
+            let location = (source as NSString).range(of: value).location
+            return tokens.first { NSLocationInRange(location, $0.range) }?.kind
+        }
+
+        let attSource = ".globl main\nmain:\n    movq $4, %rax\n    imulq %rbx, %rax"
+        let attTokens = CodeSyntaxHighlighter.tokens(for: attSource, language: .assembly)
+        #expect(CodeSyntaxHighlighter.assemblyDialect(for: attSource) == .x86ATT)
+        #expect(kind(of: ".globl", in: attSource, tokens: attTokens) == .directive)
+        #expect(kind(of: "main:", in: attSource, tokens: attTokens) == .label)
+        #expect(kind(of: "movq", in: attSource, tokens: attTokens) == .mnemonic)
+        #expect(kind(of: "imulq", in: attSource, tokens: attTokens) == .mnemonic)
+        #expect(kind(of: "%rax", in: attSource, tokens: attTokens) == .register)
+
+        let intelSource = "section .text\nimul rax, rbx\nmov qword ptr [rax], rbx"
+        let intelTokens = CodeSyntaxHighlighter.tokens(for: intelSource, language: .assembly)
+        #expect(CodeSyntaxHighlighter.assemblyDialect(for: intelSource) == .x86Intel)
+        #expect(kind(of: "imul", in: intelSource, tokens: intelTokens) == .mnemonic)
+        #expect(kind(of: "rax", in: intelSource, tokens: intelTokens) == .register)
+
+        let ibmSource = "MAIN CSECT\n     USING *,15\n     MVC TARGET,SOURCE"
+        let ibmTokens = CodeSyntaxHighlighter.tokens(for: ibmSource, language: .assembly)
+        #expect(CodeSyntaxHighlighter.assemblyDialect(for: ibmSource) == .ibmHLASM)
+        #expect(kind(of: "MAIN", in: ibmSource, tokens: ibmTokens) == .label)
+        #expect(kind(of: "CSECT", in: ibmSource, tokens: ibmTokens) == .directive)
+        #expect(kind(of: "USING", in: ibmSource, tokens: ibmTokens) == .directive)
+        #expect(kind(of: "MVC", in: ibmSource, tokens: ibmTokens) == .mnemonic)
+    }
+
     @Test func codeSnippetSearchProjectionIsBoundedAndUnicodeSafe() {
         let prefix = String(repeating: "a", count: CodeSnippetSearchIndex.maximumSourceUTF16Length - 1)
         let source = prefix + "👩🏽‍💻" + String(repeating: "secret", count: 10_000)
@@ -4352,7 +4851,9 @@ struct BeanNotesTests {
             codeSnippetLanguageRaw: CodeSnippetLanguage.python.rawValue,
             codeSnippetFontRaw: CodeSnippetFontChoice.menlo.rawValue,
             codeSnippetFontSize: 17,
-            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.dark.rawValue
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.dark.rawValue,
+            codeSnippetSyntaxThemeRaw: CodeSnippetSyntaxTheme.monokai.rawValue,
+            codeSnippetPreviewVersion: CodeSnippetPreviewRenderer.currentVersion
         )
         note.pages.append(page)
         page.attachments.append(snippet)
@@ -4379,6 +4880,12 @@ struct BeanNotesTests {
         #expect(snapshot?.codeSnippetFontRaw == "menlo")
         #expect(snapshot?.codeSnippetFontSize == 17)
         #expect(snapshot?.codeSnippetBackgroundRaw == "dark")
+        #expect(snapshot?.codeSnippetSyntaxThemeRaw == "monokai")
+        #expect(snapshot?.codeSnippetPreviewVersion == CodeSnippetPreviewRenderer.currentVersion)
+        #expect(CodeSnippetDraft(
+            editing: snippet,
+            defaults: CodeSnippetPreferences.defaultDraft()
+        ).syntaxTheme == .monokai)
     }
 
     @Test func codeSnippetPreviewRendererProducesBoundedPNG() throws {
@@ -4396,6 +4903,121 @@ struct BeanNotesTests {
         #expect(!data.isEmpty)
         #expect(image.cgImage?.width == Int(CodeSnippetPreviewRenderer.defaultLogicalSize.width * 2))
         #expect(image.cgImage?.height == Int(CodeSnippetPreviewRenderer.defaultLogicalSize.height * 2))
+    }
+
+    @Test func codeSnippetHeaderFitsEveryLanguageWithoutTruncationAtMinimumWidth() {
+        let renderLayout = CodeSnippetPreviewRenderer.renderLayout(
+            for: CodeSnippetLayout.minimumFrameSize
+        )
+        let bounds = CGRect(origin: .zero, size: renderLayout.bitmapLogicalSize)
+
+        for language in CodeSnippetLanguage.allCases {
+            let header = CodeSnippetPreviewRenderer.headerLayout(
+                for: language.label,
+                in: bounds,
+                renderLayout: renderLayout
+            )
+            #expect(header.measuredLabelWidth <= header.labelRect.width + 0.5)
+            #expect(header.pillRect.maxX <= bounds.maxX
+                - renderLayout.scaled(CodeSnippetLayout.settingsReservedWidth) + 0.5)
+            #expect(header.iconRect.minX >= bounds.minX)
+            #expect(abs(header.iconRect.width
+                - renderLayout.scaled(CodeSnippetLayout.codeIconWidth)) < 0.001)
+            #expect(abs(header.iconRect.height
+                - renderLayout.scaled(CodeSnippetLayout.codeIconSize)) < 0.001)
+        }
+    }
+
+    @Test func codeSnippetPreviewPreservesDocumentMetricsAcrossBoundedFrameSizes() throws {
+        let draft = CodeSnippetDraft(
+            code: "let answer = 42",
+            language: .javaScript,
+            font: .menlo,
+            fontSize: 16,
+            backgroundStyle: .dark,
+            preferredInputMode: .text
+        )
+        let requestedSizes = [
+            CGSize(width: 120, height: 120 * 320 / 560),
+            CGSize(width: 420, height: 240),
+            CGSize(width: 3_840, height: 2_160)
+        ]
+
+        for requestedSize in requestedSizes {
+            let layout = CodeSnippetPreviewRenderer.renderLayout(for: requestedSize)
+            let widthScale = layout.bitmapLogicalSize.width / requestedSize.width
+            let heightScale = layout.bitmapLogicalSize.height / requestedSize.height
+            let rasterFontSize = CodeSnippetPreviewRenderer.rasterFontSize(
+                for: draft.fontSize,
+                layout: layout
+            )
+
+            #expect(layout.requestedLogicalSize == requestedSize)
+            #expect(abs(widthScale - heightScale) < 0.000_1)
+            #expect(abs(widthScale - layout.contentScale) < 0.000_1)
+            #expect(abs(rasterFontSize / layout.contentScale - 16) < 0.000_1)
+            #expect(layout.bitmapLogicalSize.width <= 1_200.001)
+            #expect(layout.bitmapLogicalSize.height <= 900.001)
+
+            let data = try #require(
+                CodeSnippetPreviewRenderer.pngData(
+                    for: draft,
+                    logicalSize: requestedSize,
+                    automaticInterfaceStyle: .dark
+                )
+            )
+            let image = try #require(UIImage(data: data))
+            let source = try #require(image.cgImage)
+            let expectedPixelWidth = layout.bitmapLogicalSize.width
+                * CodeSnippetPreviewRenderer.renderScale
+            let expectedPixelHeight = layout.bitmapLogicalSize.height
+                * CodeSnippetPreviewRenderer.renderScale
+
+            #expect(abs(CGFloat(source.width) - expectedPixelWidth) <= 1)
+            #expect(abs(CGFloat(source.height) - expectedPixelHeight) <= 1)
+            #expect(source.width <= 2_400)
+            #expect(source.height <= 1_800)
+        }
+    }
+
+    @Test func codeSnippetPreviewUsesReducedCornersWithoutBakedSettingsGear() throws {
+        let draft = CodeSnippetDraft(
+            code: "",
+            language: .python,
+            font: .systemMono,
+            fontSize: 16,
+            backgroundStyle: .light,
+            preferredInputMode: .text
+        )
+        let data = try #require(
+            CodeSnippetPreviewRenderer.pngData(
+                for: draft,
+                automaticInterfaceStyle: .light
+            )
+        )
+        let image = try #require(UIImage(data: data))
+        let source = try #require(image.cgImage)
+
+        let transparentCorner = try #require(
+            rgbaPixel(in: image, at: CGPoint(x: 0, y: 0))
+        )
+        let reducedRadiusInterior = try #require(
+            rgbaPixel(in: image, at: CGPoint(x: 8, y: 8))
+        )
+        #expect(transparentCorner[3] < 64)
+        #expect(reducedRadiusInterior[3] > 192)
+
+        let oldGearCenterX = CGFloat(source.width) - 50
+        let referenceX = oldGearCenterX - 70
+        for y in [CGFloat(40), CGFloat(source.height) - 40] {
+            let formerGearPixel = try #require(
+                rgbaPixel(in: image, at: CGPoint(x: oldGearCenterX, y: y))
+            )
+            let referencePixel = try #require(
+                rgbaPixel(in: image, at: CGPoint(x: referenceX, y: y))
+            )
+            #expect(formerGearPixel == referencePixel)
+        }
     }
 
     @Test func codeSnippetPreviewUsesSolidAppearanceBackgrounds() throws {
@@ -4437,7 +5059,74 @@ struct BeanNotesTests {
         #expect(firstDarkPixel[2] >= 38 && firstDarkPixel[2] <= 48)
     }
 
-    @Test @MainActor func codeSnippetEditingOverlayExposesMoveAndDeleteControls() throws {
+    @Test func codeSnippetNamedThemePreviewIsIndependentOfAppAppearance() throws {
+        let draft = CodeSnippetDraft(
+            code: "",
+            language: .assembly,
+            font: .systemMono,
+            fontSize: 16,
+            backgroundStyle: .light,
+            syntaxTheme: .monokai,
+            preferredInputMode: .text
+        )
+        let lightData = try #require(CodeSnippetPreviewRenderer.pngData(
+            for: draft,
+            automaticInterfaceStyle: .light
+        ))
+        let darkData = try #require(CodeSnippetPreviewRenderer.pngData(
+            for: draft,
+            automaticInterfaceStyle: .dark
+        ))
+        let lightImage = try #require(UIImage(data: lightData))
+        let darkImage = try #require(UIImage(data: darkData))
+        let bodyPoint = CGPoint(x: 800, y: 500)
+        let lightPixel = try #require(rgbaPixel(in: lightImage, at: bodyPoint))
+        let darkPixel = try #require(rgbaPixel(in: darkImage, at: bodyPoint))
+
+        #expect(lightPixel == darkPixel)
+        #expect(lightPixel[0] >= 36 && lightPixel[0] <= 42)
+        #expect(lightPixel[1] >= 37 && lightPixel[1] <= 43)
+        #expect(lightPixel[2] >= 31 && lightPixel[2] <= 37)
+        #expect(CodeSnippetPreviewRenderer.previewVersion(
+            for: draft,
+            automaticInterfaceStyle: .light
+        ) == CodeSnippetPreviewRenderer.currentVersion)
+        #expect(CodeSnippetPreviewRenderer.previewVersion(
+            for: draft,
+            automaticInterfaceStyle: .dark
+        ) == CodeSnippetPreviewRenderer.currentVersion)
+
+        let adaptiveDraft = CodeSnippetDraft(
+            code: "",
+            language: .assembly,
+            font: .systemMono,
+            fontSize: 16,
+            backgroundStyle: .automatic,
+            syntaxTheme: .adaptive,
+            preferredInputMode: .text
+        )
+        #expect(CodeSnippetPreviewRenderer.previewVersion(
+            for: adaptiveDraft,
+            automaticInterfaceStyle: .light
+        ) != CodeSnippetPreviewRenderer.previewVersion(
+            for: adaptiveDraft,
+            automaticInterfaceStyle: .dark
+        ))
+    }
+
+    @Test @MainActor func codeSnippetEditingOverlayExposesSettingsMenuAndGreenSelection() throws {
+        let modelContext = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCodeSnippetOverlay-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(
+            pageOrder: 0,
+            drawingFileName: "CodeSnippetOverlay.drawing",
+            width: 612,
+            height: 792
+        )
         let attachment = Attachment(
             kind: .codeSnippet,
             displayName: "Python Code",
@@ -4445,30 +5134,951 @@ struct BeanNotesTests {
             storedFileName: "Imports/python-code.png",
             contentTypeIdentifier: UTType.png.identifier,
             fileExtension: "png",
+            x: 80,
+            y: 100,
+            width: 350,
+            height: 200,
             rendersBehindDrawing: false,
             codeSnippetText: "print('hello')",
-            codeSnippetLanguageRaw: CodeSnippetLanguage.python.rawValue
+            codeSnippetLanguageRaw: CodeSnippetLanguage.python.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.menlo.rawValue,
+            codeSnippetFontSize: 17,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.dark.rawValue,
+            codeSnippetPreviewVersion: CodeSnippetPreviewRenderer.currentVersion
         )
-        let overlay = DrawingCanvasView.AttachmentEditingOverlayView()
-        overlay.configure(
-            attachment: attachment,
-            pageSize: CGSize(width: 612, height: 792),
-            frameChanged: { _ in },
-            changeCommitted: {},
-            deleteRequested: {},
-            dismiss: {}
+        modelContext.insert(page)
+        page.attachments.append(attachment)
+        try modelContext.save()
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView(
+            frame: CGRect(x: 0, y: 0, width: 612, height: 792)
         )
+        let selectionWindow = UIWindow(frame: pageView.bounds)
+        selectionWindow.addSubview(pageView)
+        selectionWindow.makeKeyAndVisible()
+        defer {
+            selectionWindow.isHidden = true
+            pageView.releaseHeavyResources()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippet: { _, savedAttachment in
+                savedAttachment.id == attachment.id
+            }
+        )
+        pageView.beginEditingAttachment(id: attachment.id)
+
+        let overlay = try #require(pageView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingOverlayView }
+            .first)
         overlay.layoutIfNeeded()
 
         let visibleControls = overlay.subviews
             .compactMap { $0 as? UIButton }
             .filter { !$0.isHidden }
-        let deleteButton = try #require(
-            visibleControls.first { $0.accessibilityLabel == "Delete Python Code" }
+        let settingsButton = try #require(
+            visibleControls.first { $0.accessibilityIdentifier == "codeSnippet.settings" }
         )
+        let settingsMenu = try #require(settingsButton.menu)
+        let settingsVisual = try #require(overlay.subviews
+            .compactMap { $0 as? UIImageView }
+            .first { $0.accessibilityIdentifier == "codeSnippet.settings.visual" })
+        let optionMenus = settingsMenu.children.compactMap { $0 as? UIMenu }
+        let removeAction = try #require(settingsMenu.children
+            .compactMap { $0 as? UIAction }
+            .first { $0.title == "Remove Code Snippet" })
+        let selectedBorder = try #require(overlay.subviews.first {
+            $0.accessibilityLabel == "Selected Python Code"
+        })
+        let selectedBorderColor = try #require(selectedBorder.layer.borderColor)
 
         #expect(visibleControls.count == 1)
-        #expect(deleteButton.accessibilityHint == "Removes the code snippet after confirmation")
+        #expect(!visibleControls.contains { $0.accessibilityLabel == "Delete Python Code" })
+        #expect(settingsButton.accessibilityLabel == "Code snippet settings")
+        #expect(settingsButton.accessibilityHint == "Changes font size, font, theme, language, or removes the code snippet")
+        #expect(settingsButton.showsMenuAsPrimaryAction)
+        #expect(Set(optionMenus.map(\.title)) == [
+            "Font Size", "Font", "Box Appearance", "Syntax Theme", "Language"
+        ])
+        #expect(removeAction.attributes.contains(.destructive))
+        #expect(optionMenus.first { $0.title == "Language" }?.children
+            .compactMap { $0 as? UIAction }
+            .first { $0.title == "Python" }?.state == .on)
+        #expect(optionMenus.first { $0.title == "Font" }?.children
+            .compactMap { $0 as? UIAction }
+            .first { $0.title == "Menlo" }?.state == .on)
+        #expect(optionMenus.first { $0.title == "Font Size" }?.children
+            .compactMap { $0 as? UIAction }
+            .first { $0.title == "17 pt" }?.state == .on)
+        #expect(optionMenus.first { $0.title == "Box Appearance" }?.children
+            .compactMap { $0 as? UIAction }
+            .first { $0.title == "Dark Gray" }?.state == .on)
+        #expect(optionMenus.first { $0.title == "Syntax Theme" }?.children
+            .compactMap { $0 as? UIAction }
+            .first { $0.title == "Dark" }?.state == .on)
+        #expect(overlay.bounds.contains(settingsVisual.frame))
+        #expect(settingsVisual.frame.midX > overlay.bounds.midX)
+        #expect(settingsVisual.frame.midY < overlay.bounds.midY)
+        #expect(selectedBorder.layer.borderWidth == 2)
+        let selectedUIColor = UIColor(cgColor: selectedBorderColor)
+        var selectedRed: CGFloat = 0
+        var selectedGreen: CGFloat = 0
+        var selectedBlue: CGFloat = 0
+        var selectedAlpha: CGFloat = 0
+        #expect(selectedUIColor.getRed(
+            &selectedRed,
+            green: &selectedGreen,
+            blue: &selectedBlue,
+            alpha: &selectedAlpha
+        ))
+        #expect(selectedGreen > selectedRed + 0.45)
+        #expect(selectedGreen > selectedBlue + 0.35)
+        #expect(selectedAlpha > 0.99)
+        #expect(selectedBorder.accessibilityValue == "Ready for Apple Pencil or keyboard input")
+        #expect(selectedBorder.accessibilityHint?.contains("drag an edge or corner to resize") == true)
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        pageView.setNeedsLayout()
+        pageView.layoutIfNeeded()
+        let inlineTextView = try #require(firstDescendant(of: pageView, type: UITextView.self))
+        #expect(!inlineTextView.isFirstResponder)
+        #expect(inlineTextView.keyboardAppearance == .dark)
+        #expect(inlineTextView.overrideUserInterfaceStyle == .dark)
+        #expect(!inlineTextView.textContainer.widthTracksTextView)
+        #expect(inlineTextView.textContainer.size.width > 1_000_000)
+        #expect(inlineTextView.alwaysBounceHorizontal)
+        #expect(inlineTextView.textContainerInset.top == CodeSnippetLayout.codeTopPadding)
+        #expect(inlineTextView.textContainerInset.left == CodeSnippetLayout.codeHorizontalPadding)
+        let liveParagraphStyle = try #require(inlineTextView.textStorage.attribute(
+            .paragraphStyle,
+            at: 0,
+            effectiveRange: nil
+        ) as? NSParagraphStyle)
+        let expectedParagraphStyle = CodeSnippetLayout.codeParagraphStyle(
+            font: try #require(inlineTextView.font)
+        )
+        #expect(liveParagraphStyle.lineSpacing == expectedParagraphStyle.lineSpacing)
+        #expect(liveParagraphStyle.defaultTabInterval == expectedParagraphStyle.defaultTabInterval)
+        let tokenColorBeforeEdit = try #require(
+            inlineTextView.textStorage.attribute(
+                .foregroundColor,
+                at: 0,
+                effectiveRange: nil
+            ) as? UIColor
+        )
+        inlineTextView.selectedRange = NSRange(
+            location: inlineTextView.textStorage.length,
+            length: 0
+        )
+        inlineTextView.insertText(" ")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        let tokenColorAfterEdit = try #require(
+            inlineTextView.textStorage.attribute(
+                .foregroundColor,
+                at: 0,
+                effectiveRange: nil
+            ) as? UIColor
+        )
+        #expect(tokenColorAfterEdit.isEqual(tokenColorBeforeEdit))
+        #expect(!inlineTextView.isFirstResponder)
+        #expect(inlineTextView.becomeFirstResponder())
+        #expect(inlineTextView.isFirstResponder)
+        inlineTextView.resignFirstResponder()
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 1_000))
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let zoomedDocumentView = UIView(frame: window.bounds)
+        window.addSubview(zoomedDocumentView)
+        let zoomedOverlay = DrawingCanvasView.AttachmentEditingOverlayView()
+        zoomedOverlay.configure(
+            attachment: attachment,
+            pageSize: page.pageSize,
+            frameChanged: { _ in },
+            changeCommitted: {},
+            deleteRequested: {},
+            dismiss: {}
+        )
+        zoomedDocumentView.addSubview(zoomedOverlay)
+        zoomedOverlay.applyPreview(CGRect(
+            origin: CGPoint(x: 80, y: 100),
+            size: CodeSnippetLayout.minimumFrameSize
+        ))
+        zoomedDocumentView.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+        zoomedOverlay.setNeedsLayout()
+        zoomedOverlay.layoutIfNeeded()
+
+        let zoomedSettingsButton = try #require(zoomedOverlay.subviews
+            .compactMap { $0 as? UIButton }
+            .first { $0.accessibilityIdentifier == "codeSnippet.settings" })
+        let settingsFrameOnScreen = zoomedSettingsButton.convert(
+            zoomedSettingsButton.bounds,
+            to: window
+        )
+        let zoomedSettingsVisual = try #require(zoomedOverlay.subviews
+            .compactMap { $0 as? UIImageView }
+            .first { $0.accessibilityIdentifier == "codeSnippet.settings.visual" })
+        #expect(settingsFrameOnScreen.width >= 43.5)
+        #expect(settingsFrameOnScreen.height >= 43.5)
+        #expect(zoomedOverlay.bounds.contains(zoomedSettingsVisual.frame))
+        #expect(zoomedSettingsVisual.frame.minX >= zoomedOverlay.bounds.maxX
+            - CodeSnippetLayout.settingsReservedWidth)
+
+        let settingsCenter = CGPoint(
+            x: zoomedSettingsButton.frame.midX,
+            y: zoomedSettingsButton.frame.midY
+        )
+        let topRightResizePoint = CGPoint(
+            x: zoomedOverlay.bounds.maxX - 1,
+            y: zoomedOverlay.bounds.minY + 1
+        )
+        let topResizePoint = CGPoint(x: 70, y: 5)
+        let moveHeaderPoint = CGPoint(x: 70, y: 25)
+        let editableBodyPoint = CGPoint(x: 70, y: zoomedOverlay.bounds.midY)
+
+        #expect(zoomedOverlay.hitTest(settingsCenter, with: nil) === zoomedSettingsButton)
+        #expect(zoomedOverlay.hitTest(topRightResizePoint, with: nil) === zoomedOverlay)
+        #expect(zoomedOverlay.resizeHandle(at: topRightResizePoint) == .topRight)
+        #expect(zoomedOverlay.hitTest(topResizePoint, with: nil) === zoomedOverlay)
+        #expect(zoomedOverlay.resizeHandle(at: topResizePoint) == .top)
+        #expect(zoomedOverlay.hitTest(moveHeaderPoint, with: nil) === zoomedOverlay)
+        #expect(zoomedOverlay.resizeHandle(at: moveHeaderPoint) == nil)
+        #expect(zoomedOverlay.hitTest(editableBodyPoint, with: nil) == nil)
+    }
+
+    @Test @MainActor func adaptiveCodeSnippetRefreshesPreviewAndLivePaletteOnAppearanceChange() async throws {
+        let modelContext = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAdaptiveSnippet-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        let attachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "Assembly Code",
+            originalFileName: "assembly-code.png",
+            storedFileName: "Imports/assembly-code.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 80,
+            y: 100,
+            width: 350,
+            height: 200,
+            codeSnippetText: "movq %rax, %rbx",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.assembly.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.systemMono.rawValue,
+            codeSnippetFontSize: 16,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.automatic.rawValue,
+            codeSnippetSyntaxThemeRaw: CodeSnippetSyntaxTheme.adaptive.rawValue,
+            codeSnippetPreviewVersion: nil
+        )
+        modelContext.insert(page)
+        page.attachments.append(attachment)
+        try modelContext.save()
+
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView(
+            frame: CGRect(x: 0, y: 0, width: 612, height: 792)
+        )
+        let window = UIWindow(frame: pageView.bounds)
+        window.addSubview(pageView)
+        window.makeKeyAndVisible()
+        var renderedInterfaceStyle = UIUserInterfaceStyle.light
+        var rasterSaveCount = 0
+        var failsNextDarkPreviewSave = true
+        let savePreview: (CodeSnippetDraft, BeanNotes.Attachment) -> Bool = { draft, savedAttachment in
+            rasterSaveCount += 1
+            if renderedInterfaceStyle == .dark, failsNextDarkPreviewSave {
+                failsNextDarkPreviewSave = false
+                return false
+            }
+            savedAttachment.codeSnippetPreviewVersion = CodeSnippetPreviewRenderer.previewVersion(
+                for: draft,
+                automaticInterfaceStyle: renderedInterfaceStyle
+            )
+            return true
+        }
+        defer {
+            window.isHidden = true
+            pageView.releaseHeavyResources()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippet: savePreview,
+            isDarkAppearance: false
+        )
+        #expect(rasterSaveCount == 0)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        #expect(rasterSaveCount == 1)
+
+        pageView.beginEditingAttachment(id: attachment.id)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        pageView.setNeedsLayout()
+        pageView.layoutIfNeeded()
+        let lightTextView = try #require(firstDescendant(of: pageView, type: UITextView.self))
+        let draft = CodeSnippetDraft(
+            editing: attachment,
+            defaults: CodeSnippetPreferences.defaultDraft()
+        )
+        let lightBackground = try #require(lightTextView.backgroundColor)
+        #expect(lightBackground.isEqual(
+            draft.syntaxPalette(for: .light).backgroundColor
+        ))
+
+        renderedInterfaceStyle = .dark
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippet: savePreview,
+            isDarkAppearance: true
+        )
+        try await Task.sleep(nanoseconds: 30_000_000)
+        pageView.setNeedsLayout()
+        pageView.layoutIfNeeded()
+        let darkTextView = try #require(firstDescendant(of: pageView, type: UITextView.self))
+        let darkBackground = try #require(darkTextView.backgroundColor)
+        #expect(rasterSaveCount == 2)
+        #expect(darkBackground.isEqual(
+            draft.syntaxPalette(for: .dark).backgroundColor
+        ))
+        #expect(pageView.flushInlineCodeSnippetEdits())
+        #expect(rasterSaveCount == 3)
+        #expect(attachment.codeSnippetPreviewVersion == CodeSnippetPreviewRenderer.previewVersion(
+            for: draft,
+            automaticInterfaceStyle: .dark
+        ))
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippet: savePreview,
+            isDarkAppearance: true
+        )
+        #expect(rasterSaveCount == 3)
+    }
+
+    @Test @MainActor func staleSnippetPreviewRepairIsDeferredAndSerialized() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesDeferredSnippetRepair-\(UUID().uuidString)")
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        for index in 0..<4 {
+            page.attachments.append(Attachment(
+                kind: .codeSnippet,
+                displayName: "Assembly Code \(index)",
+                originalFileName: "stale-\(index).png",
+                storedFileName: "Imports/stale-\(index).png",
+                contentTypeIdentifier: UTType.png.identifier,
+                fileExtension: "png",
+                x: Double(20 + index * 15),
+                y: Double(30 + index * 15),
+                width: 260,
+                height: 150,
+                codeSnippetText: "imulq $4, %rax, %rbx",
+                codeSnippetLanguageRaw: CodeSnippetLanguage.assembly.rawValue,
+                codeSnippetFontRaw: CodeSnippetFontChoice.systemMono.rawValue,
+                codeSnippetFontSize: 16,
+                codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.automatic.rawValue,
+                codeSnippetSyntaxThemeRaw: CodeSnippetSyntaxTheme.adaptive.rawValue,
+                codeSnippetPreviewVersion: nil
+            ))
+        }
+
+        var isInsideConfigure = true
+        var didSaveReentrantly = false
+        var repairedIDs: [UUID] = []
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView()
+        defer {
+            pageView.releaseHeavyResources()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippet: { draft, attachment in
+                didSaveReentrantly = didSaveReentrantly || isInsideConfigure
+                repairedIDs.append(attachment.id)
+                attachment.codeSnippetPreviewVersion = CodeSnippetPreviewRenderer.previewVersion(
+                    for: draft,
+                    automaticInterfaceStyle: .light
+                )
+                return true
+            }
+        )
+        #expect(repairedIDs.isEmpty)
+        isInsideConfigure = false
+
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(!didSaveReentrantly)
+        #expect(Set(repairedIDs) == Set(page.attachments.map(\.id)))
+        #expect(repairedIDs.count == 4)
+    }
+
+    @Test @MainActor func inlineSnippetFlushCommitsMarkedIMETextWithoutReplacement() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesSnippetIME-\(UUID().uuidString)")
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        let attachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "JavaScript Code",
+            originalFileName: "ime.png",
+            storedFileName: "Imports/ime.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 80,
+            y: 100,
+            width: 340,
+            height: 190,
+            codeSnippetText: "const label = ",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.javaScript.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.systemMono.rawValue,
+            codeSnippetFontSize: 16,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.light.rawValue,
+            codeSnippetSyntaxThemeRaw: CodeSnippetSyntaxTheme.adaptive.rawValue,
+            codeSnippetPreviewVersion: CodeSnippetPreviewRenderer.currentVersion
+        )
+        page.attachments.append(attachment)
+        var savedDrafts: [CodeSnippetDraft] = []
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView(
+            frame: CGRect(x: 0, y: 0, width: 612, height: 792)
+        )
+        let window = UIWindow(frame: pageView.bounds)
+        window.addSubview(pageView)
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            pageView.releaseHeavyResources()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let save: (CodeSnippetDraft, BeanNotes.Attachment) -> Bool = { draft, target in
+            savedDrafts.append(draft)
+            target.codeSnippetPreviewVersion = CodeSnippetPreviewRenderer.currentVersion
+            return true
+        }
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippet: save,
+            isDarkAppearance: false
+        )
+        pageView.beginEditingAttachment(id: attachment.id)
+        let pendingTextView = await waitForDescendant(of: pageView, type: UITextView.self)
+        let textView = try #require(pendingTextView)
+        #expect(textView.becomeFirstResponder())
+        textView.selectedRange = NSRange(location: textView.textStorage.length, length: 0)
+        textView.setMarkedText("漢字", selectedRange: NSRange(location: 2, length: 0))
+        let composedText = try #require(textView.text)
+        #expect(composedText.hasSuffix("漢字"))
+
+        // Rebuilding the hosting root for an appearance update must not replace the
+        // active marked range with the older SwiftUI binding.
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippet: save,
+            isDarkAppearance: true
+        )
+        try await Task.sleep(nanoseconds: 30_000_000)
+        #expect(textView.text == composedText)
+
+        #expect(pageView.flushInlineCodeSnippetEdits())
+        #expect(savedDrafts.last?.code == composedText)
+        #expect(!textView.isFirstResponder)
+
+        let maximumLength = CodeSyntaxHighlighter.maximumHighlightedUTF16Length
+        textView.text = String(repeating: "x", count: maximumLength - 1)
+        textView.selectedRange = NSRange(location: textView.textStorage.length, length: 0)
+        textView.delegate?.textViewDidChange?(textView)
+        #expect(textView.becomeFirstResponder())
+        textView.setMarkedText("😀XYZ", selectedRange: NSRange(location: 5, length: 0))
+        #expect(textView.textStorage.length > maximumLength)
+        #expect(pageView.flushInlineCodeSnippetEdits())
+        let boundedDraft = try #require(savedDrafts.last)
+        #expect((boundedDraft.code as NSString).length <= maximumLength)
+        #expect(textView.text == boundedDraft.code)
+        #expect(!boundedDraft.code.hasSuffix("\u{FFFD}"))
+
+        // A committed composition in the middle must consume only the remaining
+        // capacity. Existing code after the insertion and the caret both survive.
+        let preservedSuffix = "\nTAIL_MUST_SURVIVE"
+        let stablePrefix = String(
+            repeating: "a",
+            count: maximumLength - (preservedSuffix as NSString).length - 2
+        )
+        let stableText = stablePrefix + preservedSuffix
+        textView.text = stableText
+        textView.selectedRange = NSRange(location: 100, length: 0)
+        textView.delegate?.textViewDidChange?(textView)
+        #expect(textView.becomeFirstResponder())
+        textView.selectedRange = NSRange(location: 100, length: 0)
+        textView.setMarkedText("漢字XYZ", selectedRange: NSRange(location: 5, length: 0))
+        #expect(textView.textStorage.length > maximumLength)
+        #expect(pageView.flushInlineCodeSnippetEdits())
+        let middleDraft = try #require(savedDrafts.last)
+        #expect((middleDraft.code as NSString).length == maximumLength)
+        #expect(middleDraft.code.hasSuffix(preservedSuffix))
+        #expect((middleDraft.code as NSString).substring(with: NSRange(location: 100, length: 2)) == "漢字")
+        #expect(textView.selectedRange == NSRange(location: 102, length: 0))
+    }
+
+    @Test @MainActor func exportServiceRefreshesOffscreenCodeSnippetPreviewsOutsideCanvasUpdate() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesOffscreenSnippetExport-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let service = ImportExportService(
+            storage: storage,
+            drawingStorage: drawingStorage,
+            thumbnailService: ThumbnailService(
+                storage: storage,
+                drawingStorage: drawingStorage
+            )
+        )
+        let note = NoteDocument(title: "Offscreen snippets")
+        let firstPage = NotePage(pageOrder: 0, width: 612, height: 792)
+        let offscreenPage = NotePage(pageOrder: 1, width: 612, height: 792)
+        note.pages.append(contentsOf: [firstPage, offscreenPage])
+        let currentDraft = CodeSnippetDraft(
+            code: "const visible = true",
+            language: .javaScript,
+            font: .systemMono,
+            fontSize: 15,
+            backgroundStyle: .automatic,
+            syntaxTheme: .adaptive,
+            preferredInputMode: .text
+        )
+        let currentAttachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "JavaScript Code",
+            originalFileName: "current.png",
+            storedFileName: "Imports/current.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            codeSnippetText: currentDraft.code,
+            codeSnippetLanguageRaw: currentDraft.language.rawValue,
+            codeSnippetFontRaw: currentDraft.font.rawValue,
+            codeSnippetFontSize: currentDraft.fontSize,
+            codeSnippetBackgroundRaw: currentDraft.backgroundStyle.rawValue,
+            codeSnippetSyntaxThemeRaw: currentDraft.syntaxTheme.rawValue,
+            codeSnippetPreviewVersion: nil
+        )
+        let staleAttachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "Assembly Code",
+            originalFileName: "stale.png",
+            storedFileName: "Imports/stale.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            codeSnippetText: "movq %rax, %rbx",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.assembly.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.systemMono.rawValue,
+            codeSnippetFontSize: 16,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.automatic.rawValue,
+            codeSnippetSyntaxThemeRaw: CodeSnippetSyntaxTheme.adaptive.rawValue,
+            codeSnippetPreviewVersion: nil
+        )
+        firstPage.attachments.append(currentAttachment)
+        offscreenPage.attachments.append(staleAttachment)
+
+        let exportedURLs = try await service.exportNote(
+            note,
+            format: .png,
+            automaticInterfaceStyle: .dark
+        )
+        #expect(exportedURLs.count == 2)
+        for attachment in [currentAttachment, staleAttachment] {
+            let draft = CodeSnippetDraft(
+                editing: attachment,
+                defaults: CodeSnippetPreferences.defaultDraft()
+            )
+            #expect(attachment.codeSnippetPreviewVersion == CodeSnippetPreviewRenderer.previewVersion(
+                for: draft,
+                automaticInterfaceStyle: .dark
+            ))
+            let storedData = try Data(
+                contentsOf: storage.url(forRelativePath: attachment.storedFileName)
+            )
+            #expect(UIImage(data: storedData) != nil)
+        }
+    }
+
+    @Test @MainActor func staleCodeSnippetSnapshotsRenderFreshExplicitAppearance() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesStaleSnippetSnapshot-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        let page = NotePage(pageOrder: 0, width: 500, height: 400)
+        let attachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "Assembly Code",
+            originalFileName: "known-stale.png",
+            storedFileName: "Imports/known-stale.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 40,
+            y: 60,
+            width: 320,
+            height: 190,
+            codeSnippetText: "imulq $4, %rax, %rbx\nmovq %rbx, result",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.assembly.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.systemMono.rawValue,
+            codeSnippetFontSize: 16,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.automatic.rawValue,
+            codeSnippetSyntaxThemeRaw: CodeSnippetSyntaxTheme.adaptive.rawValue,
+            codeSnippetPreviewVersion: nil
+        )
+        page.attachments.append(attachment)
+
+        let lightAttachment = NoteImageAttachmentRenderSnapshot(
+            attachment: attachment,
+            pageSize: page.pageSize,
+            automaticInterfaceStyle: .light
+        )
+        let darkAttachment = NoteImageAttachmentRenderSnapshot(
+            attachment: attachment,
+            pageSize: page.pageSize,
+            automaticInterfaceStyle: .dark
+        )
+        let darkPage = NotePageRenderSnapshot(
+            page: page,
+            theme: .standard,
+            automaticInterfaceStyle: .dark
+        )
+
+        #expect(!lightAttachment.allowsStoredImage)
+        #expect(!darkAttachment.allowsStoredImage)
+        #expect(lightAttachment.renderedImageData?.isEmpty == false)
+        #expect(darkAttachment.renderedImageData?.isEmpty == false)
+        #expect(lightAttachment.renderedImageData != darkAttachment.renderedImageData)
+        #expect(darkPage.imageAttachments.first?.renderedImageData
+            == darkAttachment.renderedImageData)
+        let exportedImage = try ThumbnailService.renderPageImageForExport(
+            snapshot: darkPage,
+            drawing: PKDrawing(),
+            rootURL: rootURL,
+            scale: 1
+        )
+        #expect(exportedImage.size == page.pageSize)
+    }
+
+    @Test @MainActor func codeSnippetResizeKeepsMinimumSizeAndFontMetadata() throws {
+        let pageSize = CGSize(width: 612, height: 792)
+        let attachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "JavaScript Code",
+            originalFileName: "javascript-code.png",
+            storedFileName: "Imports/javascript-code.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 100,
+            y: 120,
+            width: 280,
+            height: 160,
+            codeSnippetText: "const answer = 42",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.javaScript.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.courier.rawValue,
+            codeSnippetFontSize: 19,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.light.rawValue
+        )
+        let originalFrame = attachment.normalizedFrame(for: pageSize)
+        let originalFontSize = attachment.codeSnippetFontSize
+        let genericMinimumFrame = AttachmentEditingGeometry.resizedFrame(
+            from: originalFrame,
+            translation: CGPoint(x: -1_000, y: -1_000),
+            pageSize: pageSize,
+            handle: .bottomRight
+        )
+        let snippetMinimumFrame = AttachmentEditingGeometry.resizedFrame(
+            from: originalFrame,
+            translation: CGPoint(x: -1_000, y: -1_000),
+            pageSize: pageSize,
+            handle: .bottomRight,
+            minimumLongEdge: CodeSnippetLayout.minimumFrameLongEdge,
+            minimumSize: CodeSnippetLayout.minimumFrameSize,
+            resizesEdgesIndependently: true
+        )
+        let horizontalOnlyFrame = AttachmentEditingGeometry.resizedFrame(
+            from: originalFrame,
+            translation: CGPoint(x: 80, y: 500),
+            pageSize: pageSize,
+            handle: .right,
+            minimumSize: CodeSnippetLayout.minimumFrameSize,
+            resizesEdgesIndependently: true
+        )
+        let verticalOnlyFrame = AttachmentEditingGeometry.resizedFrame(
+            from: originalFrame,
+            translation: CGPoint(x: 500, y: 80),
+            pageSize: pageSize,
+            handle: .bottom,
+            minimumSize: CodeSnippetLayout.minimumFrameSize,
+            resizesEdgesIndependently: true
+        )
+        let cornerFrame = AttachmentEditingGeometry.resizedFrame(
+            from: originalFrame,
+            translation: CGPoint(x: 100, y: 60),
+            pageSize: pageSize,
+            handle: .bottomRight,
+            minimumSize: CodeSnippetLayout.minimumFrameSize,
+            resizesEdgesIndependently: true
+        )
+        let overlay = DrawingCanvasView.AttachmentEditingOverlayView()
+        overlay.configure(
+            attachment: attachment,
+            pageSize: pageSize,
+            frameChanged: { _ in },
+            changeCommitted: {},
+            deleteRequested: {},
+            dismiss: {}
+        )
+
+        // Sample clearly below the dedicated top-edge resize strip. The strip is
+        // screen-size compensated and is intentionally about 12 points at 1x.
+        let headerPoint = CGPoint(x: overlay.bounds.midX, y: 20)
+        let bodyPoint = CGPoint(x: overlay.bounds.midX, y: overlay.bounds.maxY - 32)
+        #expect(overlay.hitTest(headerPoint, with: nil) === overlay)
+        #expect(overlay.resizeHandle(at: headerPoint) == nil)
+        #expect(overlay.resizeHandle(at: CGPoint(x: 1, y: 1)) == .topLeft)
+        #expect(overlay.hitTest(bodyPoint, with: nil) == nil)
+
+        overlay.applyPreview(snippetMinimumFrame)
+        #expect(overlay.commitPreview(startingAt: originalFrame))
+
+        #expect(abs(max(genericMinimumFrame.width, genericMinimumFrame.height)
+            - AttachmentEditingGeometry.minimumResizeLongEdge) < 0.001)
+        #expect(snippetMinimumFrame.width >= CodeSnippetLayout.minimumFrameSize.width)
+        #expect(snippetMinimumFrame.height >= CodeSnippetLayout.minimumFrameSize.height)
+        #expect(horizontalOnlyFrame.width == originalFrame.width + 80)
+        #expect(horizontalOnlyFrame.height == originalFrame.height)
+        #expect(verticalOnlyFrame.width == originalFrame.width)
+        #expect(verticalOnlyFrame.height == originalFrame.height + 80)
+        #expect(abs(cornerFrame.width / cornerFrame.height
+            - originalFrame.width / originalFrame.height) < 0.001)
+        #expect(CodeSnippetLayout.minimumFrameLongEdge > AttachmentEditingGeometry.minimumResizeLongEdge)
+        #expect(attachment.normalizedFrame(for: pageSize) == snippetMinimumFrame)
+        #expect(attachment.codeSnippetFontSize == originalFontSize)
+        #expect(attachment.codeSnippetFontRaw == CodeSnippetFontChoice.courier.rawValue)
+        #expect(attachment.codeSnippetLanguageRaw == CodeSnippetLanguage.javaScript.rawValue)
+    }
+
+    @Test @MainActor func codeSnippetInlineAutosaveKeepsRasterWorkForExplicitFlush() async throws {
+        let modelContext = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCodeSnippetAutosave-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        let attachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "JavaScript Code",
+            originalFileName: "javascript-code.png",
+            storedFileName: "Imports/javascript-code.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            width: 350,
+            height: 200,
+            codeSnippetText: "let oldValue = 1",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.javaScript.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.systemMono.rawValue,
+            codeSnippetFontSize: 16,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.automatic.rawValue
+        )
+        attachment.codeSnippetPreviewVersion = CodeSnippetPreviewRenderer.previewVersion(
+            for: CodeSnippetDraft(
+                editing: attachment,
+                defaults: CodeSnippetPreferences.defaultDraft()
+            ),
+            automaticInterfaceStyle: .light
+        )
+        modelContext.insert(page)
+        page.attachments.append(attachment)
+        try modelContext.save()
+
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView()
+        var sourceSaveCount = 0
+        var rasterSaveCount = 0
+        defer {
+            pageView.releaseHeavyResources()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippetSource: { _, _ in
+                sourceSaveCount += 1
+                return true
+            },
+            saveCodeSnippet: { _, _ in
+                rasterSaveCount += 1
+                return true
+            }
+        )
+        pageView.beginEditingAttachment(id: attachment.id)
+
+        var editedDraft = CodeSnippetDraft(
+            editing: attachment,
+            defaults: CodeSnippetPreferences.defaultDraft()
+        )
+        editedDraft.code = "let currentValue = 2"
+        #expect(pageView.replaceInlineCodeSnippetDraftForTesting(editedDraft))
+
+        try await Task.sleep(for: .milliseconds(750))
+        #expect(sourceSaveCount == 1)
+        #expect(rasterSaveCount == 0)
+
+        #expect(pageView.flushInlineCodeSnippetEdits())
+        #expect(rasterSaveCount == 1)
+        #expect(pageView.selectedAttachmentID == attachment.id)
+    }
+
+    @Test @MainActor func codeSnippetResizeFailureRetriesAndStaticSnippetIsAccessible() throws {
+        let modelContext = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesCodeSnippetRetry-\(UUID().uuidString)", isDirectory: true)
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0, width: 612, height: 792)
+        let attachment = Attachment(
+            kind: .codeSnippet,
+            displayName: "Python Code",
+            originalFileName: "python-code.png",
+            storedFileName: "Imports/python-code.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 80,
+            y: 100,
+            width: 350,
+            height: 200,
+            codeSnippetText: "print('hello')",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.python.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.menlo.rawValue,
+            codeSnippetFontSize: 17,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.dark.rawValue,
+            codeSnippetPreviewVersion: CodeSnippetPreviewRenderer.currentVersion
+        )
+        modelContext.insert(page)
+        page.attachments.append(attachment)
+        try modelContext.save()
+
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let pageView = DrawingCanvasView.PageCanvasView()
+        var rasterSaveAttempts = 0
+        defer {
+            pageView.releaseHeavyResources()
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        pageView.configure(
+            page: page,
+            storage: storage,
+            drawingStorage: drawingStorage,
+            inputMode: .pencilOnly,
+            coordinator: coordinator,
+            attachmentChanged: {},
+            deleteAttachment: { _ in },
+            saveCodeSnippet: { _, _ in
+                rasterSaveAttempts += 1
+                return rasterSaveAttempts > 1
+            }
+        )
+
+        let staticSnippet = try #require(pageView.subviews
+            .flatMap(\.subviews)
+            .compactMap { $0 as? DrawingCanvasView.AttachmentImageContainerView }
+            .first { $0.accessibilityLabel == "Python Code" })
+        #expect(staticSnippet.isAccessibilityElement)
+        #expect(staticSnippet.accessibilityTraits.contains(.button))
+        #expect(staticSnippet.accessibilityActivate())
+        #expect(pageView.selectedAttachmentID == attachment.id)
+
+        let overlay = try #require(pageView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingOverlayView }
+            .first)
+        let selectedBorder = try #require(overlay.subviews.first {
+            $0.accessibilityLabel == "Selected Python Code"
+        })
+        let increaseSize = try #require(selectedBorder.accessibilityCustomActions?
+            .first { $0.name == "Increase size" })
+        #expect(increaseSize.actionHandler?(increaseSize) == true)
+        #expect(rasterSaveAttempts == 1)
+        #expect(pageView.selectedAttachmentID == attachment.id)
+
+        #expect(pageView.flushInlineCodeSnippetEdits())
+        #expect(rasterSaveAttempts == 2)
+        #expect(pageView.clearAttachmentSelection())
+        #expect(pageView.selectedAttachmentID == nil)
     }
 
     @Test func penPaletteDragClampsInsideEditorBounds() {
@@ -4653,7 +6263,7 @@ struct BeanNotesTests {
         page.attachments.append(attachment)
         try modelContext.save()
 
-        func signature() -> DrawingCanvasConfigurationSignature {
+        func signature(isDarkAppearance: Bool = false) -> DrawingCanvasConfigurationSignature {
             DrawingCanvasConfigurationSignature(
                 pages: [page],
                 pageFlowMode: .continuous,
@@ -4661,7 +6271,8 @@ struct BeanNotesTests {
                 renderQuality: .balanced,
                 storageRootURL: URL(fileURLWithPath: "/tmp/BeanNotesConfigurationSignature"),
                 theme: .bean,
-                hasTopContent: false
+                hasTopContent: false,
+                isDarkAppearance: isDarkAppearance
             )
         }
 
@@ -4670,6 +6281,7 @@ struct BeanNotesTests {
         attachment.touch(at: Date(timeIntervalSince1970: 1_900_000_001))
 
         #expect(signature() == baseline)
+        #expect(signature(isDarkAppearance: true) != baseline)
 
         attachment.x += 12
         #expect(signature() != baseline)
@@ -5118,11 +6730,38 @@ struct BeanNotesTests {
             height: 180,
             rendersBehindDrawing: true
         )
+        let snippet = Attachment(
+            kind: .codeSnippet,
+            displayName: "Accessible Python Code",
+            originalFileName: "accessible-python-code.png",
+            storedFileName: "Imports/accessible-python-code.png",
+            contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png",
+            x: 300,
+            y: 420,
+            width: 250,
+            height: 180,
+            codeSnippetText: "answer = 42",
+            codeSnippetLanguageRaw: CodeSnippetLanguage.python.rawValue,
+            codeSnippetFontRaw: CodeSnippetFontChoice.systemMono.rawValue,
+            codeSnippetFontSize: 16,
+            codeSnippetBackgroundRaw: CodeSnippetBackgroundStyle.automatic.rawValue
+        )
+        snippet.codeSnippetPreviewVersion = CodeSnippetPreviewRenderer.previewVersion(
+            for: CodeSnippetDraft(
+                editing: snippet,
+                defaults: CodeSnippetPreferences.defaultDraft()
+            ),
+            automaticInterfaceStyle: .light
+        )
         modelContext.insert(page)
         page.attachments.append(image)
+        page.attachments.append(snippet)
         try modelContext.save()
 
-        let parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        var parent = makeDrawingCanvasView(page: page, drawingStorage: drawingStorage)
+        parent.saveCodeSnippetSource = { _, _ in true }
+        parent.saveCodeSnippet = { _, _ in true }
         let coordinator = DrawingCanvasView.Coordinator(parent: parent)
         let container = DrawingCanvasView.CanvasContainerView(
             frame: CGRect(x: 0, y: 0, width: 700, height: 900)
@@ -5209,6 +6848,27 @@ struct BeanNotesTests {
         deleteControl.sendActions(for: .touchUpInside)
         #expect(sectionView.selectedAttachmentID == nil)
         #expect(!container.contentView.subviews.contains { $0 is DrawingCanvasView.AttachmentEditingHostView })
+
+        let staticSnippet = try #require(sectionView.subviews
+            .flatMap(\.subviews)
+            .compactMap { $0 as? DrawingCanvasView.AttachmentImageContainerView }
+            .first { $0.accessibilityLabel == "Accessible Python Code" })
+        #expect(staticSnippet.accessibilityActivate())
+        #expect(sectionView.selectedAttachmentID == snippet.id)
+
+        let accessibleEditingHost = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.AttachmentEditingHostView }
+            .first)
+        let accessibleHostIndex = try #require(container.contentView.subviews.firstIndex {
+            $0 === accessibleEditingHost
+        })
+        #expect(accessibleHostIndex > continuousIndex)
+        #expect(accessibleEditingHost.subviews.contains {
+            $0 is DrawingCanvasView.AttachmentEditingOverlayView
+        })
+        #expect(accessibleEditingHost.subviews.contains {
+            $0.accessibilityIdentifier == "codeSnippet.inlineEditor"
+        })
     }
 
     @Test @MainActor func zoomedRelayoutPreservesViewportAndReachableDocumentEdges() throws {
@@ -7678,6 +9338,87 @@ struct BeanNotesTests {
         #expect(!container.isPDFVectorRenderingProtectedForDrawing)
     }
 
+    @Test @MainActor func liveInkProtectsOnlyTheActiveMaterializedPDFPage() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesScopedPDFInk-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = (0..<2).map { index in
+            NotePage(
+                pageOrder: index,
+                drawingFileName: "scoped-pdf-ink-\(index).drawing",
+                width: 400,
+                height: 300
+            )
+        }
+        let parent = makeDrawingCanvasView(
+            page: pages[0],
+            drawingStorage: drawingStorage,
+            pages: pages
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 500, height: 900)
+        )
+        coordinator.containerView = container
+        defer { DrawingCanvasView.dismantleUIView(container, coordinator: coordinator) }
+
+        container.configure(
+            pages: pages,
+            selectedPageID: pages[0].id,
+            pageFlowMode: .continuous,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.layoutIfNeeded()
+
+        let activePageView = try #require(
+            container.pageCanvasViewForTesting(pageID: pages[0].id)
+        )
+        let otherPageView = try #require(
+            container.pageCanvasViewForTesting(pageID: pages[1].id)
+        )
+
+        container.scrollViewWillBeginDragging(container.scrollView)
+        #expect(activePageView.isDocumentTraversalActiveForTesting)
+        #expect(otherPageView.isDocumentTraversalActiveForTesting)
+        container.scrollViewDidEndDragging(
+            container.scrollView,
+            willDecelerate: false
+        )
+        let prewarmedPageID = try #require(container.currentSelectedPageID)
+        let prewarmedPageView = prewarmedPageID == pages[0].id
+            ? activePageView
+            : otherPageView
+        let deferredPageView = prewarmedPageID == pages[0].id
+            ? otherPageView
+            : activePageView
+        // The likely next drawing page is vector-ready before touch-down. Keeping the
+        // other page deferred avoids a competing PDFKit tile burst.
+        #expect(!prewarmedPageView.isDocumentTraversalActiveForTesting)
+        #expect(deferredPageView.isDocumentTraversalActiveForTesting)
+
+        container.setActiveDrawingPage(id: prewarmedPageID)
+        container.setDrawingInteractionActive(true, prioritizing: prewarmedPageView)
+
+        #expect(prewarmedPageView.isDrawingInteractionActiveForTesting)
+        #expect(!deferredPageView.isDrawingInteractionActiveForTesting)
+
+        container.cancelPendingRenderingWork()
+        #expect(!activePageView.isDrawingInteractionActiveForTesting)
+        #expect(!otherPageView.isDrawingInteractionActiveForTesting)
+        #expect(!activePageView.isDocumentTraversalActiveForTesting)
+        #expect(!otherPageView.isDocumentTraversalActiveForTesting)
+    }
+
     @Test @MainActor func zoomSettlementWaitsForImmediateDrawingStrokeToEnd() async throws {
         let container = DrawingCanvasView.CanvasContainerView()
 
@@ -7870,7 +9611,9 @@ struct BeanNotesTests {
         saveStarted: @escaping () -> Void = {},
         saveSucceeded: @escaping () -> Void = {},
         saveFailed: @escaping (Error) -> Void = { _ in },
-        exportPreparationCompleted: @escaping (Int, Result<Void, Error>) -> Void = { _, _ in }
+        exportPreparationCompleted: @escaping (Int, Result<Void, Error>) -> Void = { _, _ in },
+        saveCodeSnippet: @escaping (CodeSnippetDraft, BeanNotes.Attachment) -> Bool = { _, _ in false },
+        isDarkAppearance: Bool = false
     ) -> DrawingCanvasView {
         let defaults = UserDefaults(suiteName: "BeanNotesCanvasTest-\(UUID().uuidString)")!
         return DrawingCanvasView(
@@ -7895,6 +9638,8 @@ struct BeanNotesTests {
             drawingStorage: drawingStorage,
             attachmentChanged: {},
             deleteAttachment: { _ in },
+            saveCodeSnippet: saveCodeSnippet,
+            isDarkAppearance: isDarkAppearance,
             drawingChanged: drawingChanged,
             captureFailed: captureFailed,
             saveStarted: saveStarted,
@@ -9854,6 +11599,7 @@ struct BeanNotesTests {
             showsBeanArtwork: false,
             maxDimension: 160
         )
+        let portraitRelativePath = page.thumbnailFileName
 
         page.width = 320
         page.height = 240
@@ -9869,6 +11615,12 @@ struct BeanNotesTests {
 
         #expect(firstRevision != secondRevision)
         #expect(portraitURL.lastPathComponent != landscapeURL.lastPathComponent)
+        // The previous preview remains until the new model reference is durable.
+        #expect(FileManager.default.fileExists(atPath: portraitURL.path))
+        service.retireThumbnailIfSuperseded(
+            portraitRelativePath,
+            currentRelativePath: page.thumbnailFileName
+        )
         #expect(!FileManager.default.fileExists(atPath: portraitURL.path))
         #expect(landscapeImage.size.width > landscapeImage.size.height)
         #expect(!ThumbnailService.isCurrentThumbnailPath(
@@ -10201,16 +11953,24 @@ struct BeanNotesTests {
             theme: .bean,
             contentRevision: "revision-b"
         )
+        let darkBeanFileName = ThumbnailService.thumbnailFileName(
+            pageID: pageID,
+            theme: .bean,
+            contentRevision: contentRevision,
+            automaticInterfaceStyle: .dark
+        )
 
         #expect(beanFileName != standardFileName)
         #expect(beanFileName != beanArtworkFileName)
         #expect(blueberryFileName != blueberryArtworkFileName)
         #expect(beanFileName != blueberryFileName)
         #expect(beanFileName != changedRevisionFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-v11.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-v11.jpg"))
-        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-v11.jpg"))
-        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-v11.jpg"))
+        #expect(beanFileName != darkBeanFileName)
+        #expect(beanFileName.hasSuffix("-bean-off-light-v11.jpg"))
+        #expect(darkBeanFileName.hasSuffix("-bean-off-dark-v11.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-light-v11.jpg"))
+        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-light-v11.jpg"))
+        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-light-v11.jpg"))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,
@@ -10223,6 +11983,20 @@ struct BeanNotesTests {
             theme: .bean,
             contentRevision: contentRevision,
             showsBeanArtwork: false
+        ))
+        #expect(!ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(beanFileName)",
+            pageID: pageID,
+            theme: .bean,
+            contentRevision: contentRevision,
+            automaticInterfaceStyle: .dark
+        ))
+        #expect(ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(darkBeanFileName)",
+            pageID: pageID,
+            theme: .bean,
+            contentRevision: contentRevision,
+            automaticInterfaceStyle: .dark
         ))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanArtworkFileName)",
@@ -10840,6 +12614,120 @@ struct BeanNotesTests {
         }
     }
 
+    @Test func missingImportStagingFailsAndRepeatedCommitIsIdempotent() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesStagingCommit-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let missing = storage.beginImportStagingTransaction()
+        do {
+            try missing.commit()
+            Issue.record("A transaction with no staged data must not commit successfully.")
+        } catch LocalStorageError.missingImportStagingData {
+            // Expected.
+        }
+
+        let transaction = storage.beginImportStagingTransaction()
+        let stored = try transaction.saveData(
+            Data("committed".utf8),
+            preferredName: "file.bin",
+            contentType: .data
+        )
+        try transaction.commit()
+        let originalData = try Data(contentsOf: transaction.finalURL(for: stored))
+        try transaction.commit()
+
+        #expect(try Data(contentsOf: transaction.finalURL(for: stored)) == originalData)
+        #expect(!FileManager.default.fileExists(atPath: transaction.stagingDirectoryURL.path))
+    }
+
+    @Test func importRollbackIsTransactionLocalAndRetainsPendingParent() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesStagingIsolation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let first = storage.beginImportStagingTransaction()
+        let second = storage.beginImportStagingTransaction()
+        _ = try first.saveData(Data("first".utf8), preferredName: "first.bin", contentType: .data)
+        let secondFile = try second.saveData(
+            Data("second".utf8),
+            preferredName: "second.bin",
+            contentType: .data
+        )
+
+        first.rollback()
+
+        #expect(!FileManager.default.fileExists(atPath: first.stagingDirectoryURL.path))
+        #expect(FileManager.default.fileExists(atPath: second.stagedURL(for: secondFile).path))
+        #expect(FileManager.default.fileExists(atPath: second.stagingDirectoryURL.deletingLastPathComponent().path))
+
+        try second.commit()
+        #expect(try Data(contentsOf: second.finalURL(for: secondFile)) == Data("second".utf8))
+        #expect(FileManager.default.fileExists(atPath: second.stagingDirectoryURL.deletingLastPathComponent().path))
+    }
+
+    @Test func importCommitNeverDeletesPreexistingFinalDirectory() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesStagingCollision-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let transaction = storage.beginImportStagingTransaction()
+        _ = try transaction.saveData(Data("new".utf8), preferredName: "new.bin", contentType: .data)
+        try FileManager.default.createDirectory(
+            at: transaction.finalDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        let sentinelURL = transaction.finalDirectoryURL.appendingPathComponent("sentinel.bin")
+        try Data("existing".utf8).write(to: sentinelURL)
+
+        do {
+            try transaction.commit()
+            Issue.record("A colliding final import directory must not be replaced.")
+        } catch LocalStorageError.importDestinationAlreadyExists {
+            // Expected.
+        }
+
+        #expect(try Data(contentsOf: sentinelURL) == Data("existing".utf8))
+        #expect(FileManager.default.fileExists(atPath: transaction.stagingDirectoryURL.path))
+        transaction.rollback()
+    }
+
+    @Test func abandonedStagingCleanupPreservesRecentAndActiveTransactions() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAbandonedStaging-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        let importsDirectory = try storage.directoryURL(for: .imports)
+        let pendingDirectory = importsDirectory.appendingPathComponent(".Pending", isDirectory: true)
+        let oldDirectory = pendingDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let recentDirectory = pendingDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: recentDirectory, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: oldDirectory.appendingPathComponent("file.bin"))
+        try Data("recent".utf8).write(to: recentDirectory.appendingPathComponent("file.bin"))
+
+        let active = storage.beginImportStagingTransaction()
+        _ = try active.saveData(Data("active".utf8), preferredName: "file.bin", contentType: .data)
+        let oldDate = Date().addingTimeInterval(-48 * 60 * 60)
+        try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: oldDirectory.path)
+        try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: active.stagingDirectoryURL.path)
+
+        let report = try storage.removeAbandonedImportStaging(
+            olderThan: Date().addingTimeInterval(-24 * 60 * 60)
+        )
+
+        #expect(report.removedRelativePaths.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: oldDirectory.path))
+        #expect(FileManager.default.fileExists(atPath: recentDirectory.path))
+        #expect(FileManager.default.fileExists(atPath: active.stagingDirectoryURL.path))
+        #expect(FileManager.default.fileExists(atPath: pendingDirectory.path))
+        active.rollback()
+    }
+
     @Test @MainActor func directPageImportRollsBackOwnedFilesWhenPDFValidationFails() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesInvalidPDFRollback-\(UUID().uuidString)", isDirectory: true)
@@ -10877,7 +12765,13 @@ struct BeanNotesTests {
             at: importsDirectory,
             includingPropertiesForKeys: nil
         )
-        #expect(importedContents.isEmpty)
+        #expect(importedContents.map(\.lastPathComponent) == [".Pending"])
+        #expect(
+            try FileManager.default.contentsOfDirectory(
+                at: importedContents[0],
+                includingPropertiesForKeys: nil
+            ).isEmpty
+        )
         #expect(note.pages.isEmpty)
     }
 
@@ -10970,7 +12864,13 @@ struct BeanNotesTests {
             at: importsDirectory,
             includingPropertiesForKeys: nil
         )
-        #expect(!contents.contains { $0.lastPathComponent == ".Pending" })
+        let pendingDirectory = try #require(contents.first { $0.lastPathComponent == ".Pending" })
+        #expect(
+            try FileManager.default.contentsOfDirectory(
+                at: pendingDirectory,
+                includingPropertiesForKeys: nil
+            ).isEmpty
+        )
     }
 
     @Test @MainActor func cancelingDirectPDFImportRemovesStagedFiles() async throws {
@@ -11027,7 +12927,13 @@ struct BeanNotesTests {
                 includingPropertiesForKeys: nil
             )
 
-            #expect(contents.isEmpty)
+            #expect(contents.map(\.lastPathComponent) == [".Pending"])
+            #expect(
+                try FileManager.default.contentsOfDirectory(
+                    at: contents[0],
+                    includingPropertiesForKeys: nil
+                ).isEmpty
+            )
             #expect(folder.notes.isEmpty)
             #expect(!progressMessages.contains { $0.contains("page 3") })
         }
@@ -11307,6 +13213,11 @@ struct BeanNotesTests {
         let jpegURLs = try await service.exportNote(note, format: .jpeg)
         let pagePDFURL = try await service.exportPage(pages[0], format: .pdf)
 
+        for url in pdfURLs + pngURLs + jpegURLs + [pagePDFURL] {
+            #expect(url.lastPathComponent.hasPrefix("\(note.id.uuidString)-"))
+            #expect(url.lastPathComponent.utf8.count <= 255)
+        }
+
         #expect(pdfURLs.count == 1)
         #expect(pdfURLs.first?.pathExtension == "pdf")
         let pdfURL = try #require(pdfURLs.first)
@@ -11357,6 +13268,16 @@ struct BeanNotesTests {
         #expect(sharingProgress.contains { $0 > 0 && $0 < 0.5 })
         #expect(sharingProgress.contains { $0 > 0.5 && $0 < 1 })
         #expect(sharingProgress.last == 1)
+        #expect(sharedPNGURLs.allSatisfy {
+            $0.lastPathComponent.hasPrefix("\(note.id.uuidString)-")
+        })
+
+        note.title = String(repeating: "Very Long 🫘 Export Title ", count: 80)
+        let longTitleExportURL = try await service.exportPage(pages[1], format: .pdf)
+        #expect(FileManager.default.fileExists(atPath: longTitleExportURL.path))
+        #expect(longTitleExportURL.lastPathComponent.hasPrefix("\(note.id.uuidString)-"))
+        #expect(longTitleExportURL.lastPathComponent.utf8.count <= 255)
+        #expect(longTitleExportURL.pathExtension == "pdf")
 
         let exportDirectory = try storage.directoryURL(for: .exports)
         let exportFileNames = try FileManager.default.contentsOfDirectory(atPath: exportDirectory.path)

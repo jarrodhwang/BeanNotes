@@ -78,7 +78,8 @@ enum AttachmentEditingGeometry {
     static func initialImageFrame(
         sourceSize: CGSize,
         pageSize: CGSize,
-        occupiedFrames: [CGRect]
+        occupiedFrames: [CGRect],
+        maximumLongEdge: CGFloat = maximumInitialLongEdge
     ) -> CGRect {
         let pageSize = normalizedPageSize(pageSize)
         let sourceSize = normalizedSourceSize(sourceSize)
@@ -87,9 +88,12 @@ enum AttachmentEditingGeometry {
             height: max(pageSize.height - placementMargin * 2, 1)
         )
 
+        let normalizedMaximumLongEdge = maximumLongEdge.isFinite
+            ? max(maximumLongEdge, 1)
+            : maximumInitialLongEdge
         let fittingScale = min(
             1,
-            maximumInitialLongEdge / max(sourceSize.width, sourceSize.height),
+            normalizedMaximumLongEdge / max(sourceSize.width, sourceSize.height),
             availableSize.width / sourceSize.width,
             availableSize.height / sourceSize.height
         )
@@ -162,7 +166,10 @@ enum AttachmentEditingGeometry {
         from startFrame: CGRect,
         translation: CGPoint,
         pageSize: CGSize,
-        handle: AttachmentResizeHandle
+        handle: AttachmentResizeHandle,
+        minimumLongEdge: CGFloat = minimumResizeLongEdge,
+        minimumSize: CGSize? = nil,
+        resizesEdgesIndependently: Bool = false
     ) -> CGRect {
         let startFrame = normalizedFrame(startFrame, pageSize: pageSize)
         let pageSize = normalizedPageSize(pageSize)
@@ -174,6 +181,72 @@ enum AttachmentEditingGeometry {
         let heightScale = (startFrame.height + verticalDelta) / max(startFrame.height, 1)
         let adjustsWidth = handle.movesLeftEdge || handle.movesRightEdge
         let adjustsHeight = handle.movesTopEdge || handle.movesBottomEdge
+
+        if resizesEdgesIndependently, adjustsWidth != adjustsHeight {
+            let proposedMinimumSize = minimumSize ?? CGSize(
+                width: minimumLongEdge,
+                height: minimumLongEdge
+            )
+            // An older or corrupted attachment may already be below today's minimum.
+            // Starting a drag must never make it jump larger before the user's finger moves.
+            let minimumWidth = min(
+                max(proposedMinimumSize.width.isFinite ? proposedMinimumSize.width : 1, 1),
+                startFrame.width
+            )
+            let minimumHeight = min(
+                max(proposedMinimumSize.height.isFinite ? proposedMinimumSize.height : 1, 1),
+                startFrame.height
+            )
+
+            switch handle {
+            case .left:
+                let resolvedX = min(
+                    max(startFrame.minX + translationX, 0),
+                    startFrame.maxX - minimumWidth
+                )
+                return CGRect(
+                    x: resolvedX,
+                    y: startFrame.minY,
+                    width: startFrame.maxX - resolvedX,
+                    height: startFrame.height
+                )
+            case .right:
+                let resolvedWidth = min(
+                    max(startFrame.width + translationX, minimumWidth),
+                    pageSize.width - startFrame.minX
+                )
+                return CGRect(
+                    x: startFrame.minX,
+                    y: startFrame.minY,
+                    width: resolvedWidth,
+                    height: startFrame.height
+                )
+            case .top:
+                let resolvedY = min(
+                    max(startFrame.minY + translationY, 0),
+                    startFrame.maxY - minimumHeight
+                )
+                return CGRect(
+                    x: startFrame.minX,
+                    y: resolvedY,
+                    width: startFrame.width,
+                    height: startFrame.maxY - resolvedY
+                )
+            case .bottom:
+                let resolvedHeight = min(
+                    max(startFrame.height + translationY, minimumHeight),
+                    pageSize.height - startFrame.minY
+                )
+                return CGRect(
+                    x: startFrame.minX,
+                    y: startFrame.minY,
+                    width: startFrame.width,
+                    height: resolvedHeight
+                )
+            case .topLeft, .topRight, .bottomRight, .bottomLeft:
+                break
+            }
+        }
 
         let proposedScale: CGFloat
         if adjustsWidth && adjustsHeight {
@@ -230,11 +303,24 @@ enum AttachmentEditingGeometry {
             )
         }
 
-        let requestedMinimumScale = minimumResizeLongEdge / max(
-            startFrame.width,
-            startFrame.height,
-            1
-        )
+        let normalizedMinimumLongEdge = minimumLongEdge.isFinite
+            ? max(minimumLongEdge, 1)
+            : minimumResizeLongEdge
+        let requestedMinimumScale: CGFloat
+        if let minimumSize {
+            let minimumWidth = minimumSize.width.isFinite ? max(minimumSize.width, 1) : 1
+            let minimumHeight = minimumSize.height.isFinite ? max(minimumSize.height, 1) : 1
+            requestedMinimumScale = max(
+                minimumWidth / max(startFrame.width, 1),
+                minimumHeight / max(startFrame.height, 1)
+            )
+        } else {
+            requestedMinimumScale = normalizedMinimumLongEdge / max(
+                startFrame.width,
+                startFrame.height,
+                1
+            )
+        }
         // Never make an existing undersized image jump larger when a resize begins.
         let minimumScale = min(requestedMinimumScale, 1, maximumScale)
         let resolvedScale = min(max(proposedScale, minimumScale), maximumScale)
@@ -356,6 +442,9 @@ final class Attachment {
     var codeSnippetFontRaw: String?
     var codeSnippetFontSize: Double?
     var codeSnippetBackgroundRaw: String?
+    var codeSnippetSyntaxThemeRaw: String?
+    /// Lets old flattened previews be refreshed after their live editor/header design changes.
+    var codeSnippetPreviewVersion: Int?
     var createdAt: Date
     var updatedAt: Date
     var page: NotePage?
@@ -386,6 +475,8 @@ final class Attachment {
         codeSnippetFontRaw: String? = nil,
         codeSnippetFontSize: Double? = nil,
         codeSnippetBackgroundRaw: String? = nil,
+        codeSnippetSyntaxThemeRaw: String? = nil,
+        codeSnippetPreviewVersion: Int? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         page: NotePage? = nil
@@ -422,6 +513,8 @@ final class Attachment {
         self.codeSnippetFontRaw = codeSnippetFontRaw
         self.codeSnippetFontSize = codeSnippetFontSize
         self.codeSnippetBackgroundRaw = codeSnippetBackgroundRaw
+        self.codeSnippetSyntaxThemeRaw = codeSnippetSyntaxThemeRaw
+        self.codeSnippetPreviewVersion = codeSnippetPreviewVersion
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.page = page

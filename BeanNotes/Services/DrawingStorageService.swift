@@ -115,8 +115,10 @@ struct DrawingStorageService {
 #endif
 
     func drawingURL(for page: NotePage) throws -> URL {
-        try storage.directoryURL(for: .drawings)
-            .appendingPathComponent(page.drawingFileName)
+        try Self.drawingURL(
+            fileName: page.drawingFileName,
+            rootURL: storage.rootURL
+        )
     }
 
     func loadDrawing(for page: NotePage) -> PKDrawing {
@@ -132,6 +134,9 @@ struct DrawingStorageService {
 
     nonisolated static func loadDrawingResult(fileName: String, rootURL: URL) -> LoadResult {
         Self.ensureMemoryWarningObservation()
+        guard isValidDrawingFileName(fileName) else {
+            return .unavailable(invalidDrawingLoadError(fileName))
+        }
         let cacheKey = Self.cacheKey(rootURL: rootURL, fileName: fileName)
         let stringKey = cacheKey as String
         let maximumSupersessionRetries = 2
@@ -195,6 +200,7 @@ struct DrawingStorageService {
 
     nonisolated static func cachedDrawing(fileName: String, rootURL: URL) -> PKDrawing? {
         ensureMemoryWarningObservation()
+        guard isValidDrawingFileName(fileName) else { return nil }
         let cacheKey = Self.cacheKey(rootURL: rootURL, fileName: fileName)
         return drawingCache.object(forKey: cacheKey)?.drawing
     }
@@ -213,25 +219,25 @@ struct DrawingStorageService {
         rootURL: URL,
         drawingFileName: String
     ) throws -> Data {
-        let drawingsURL = rootURL.appendingPathComponent(
-            StorageDirectory.drawings.rawValue,
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
+        let destinationURL = try drawingURL(fileName: drawingFileName, rootURL: rootURL)
         let data = drawing.dataRepresentation()
-        // Atomic replacement lets readers observe either the old complete drawing
-        // or the new one, without globally blocking canvas and thumbnail loads.
-        try data.write(
-            to: drawingsURL.appendingPathComponent(drawingFileName),
-            options: [.atomic]
-        )
-        cache(
-            drawing,
-            fileName: drawingFileName,
-            rootURL: rootURL,
-            approximateBytes: data.count,
-            archiveData: data
-        )
+        try StorageMutationCoordinator.withLock {
+            try FileManager.default.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            // Atomic replacement lets readers observe either the old complete drawing
+            // or the new one. The shared mutation lock also orders cache publication
+            // with other durable storage changes.
+            try data.write(to: destinationURL, options: [.atomic])
+            cache(
+                drawing,
+                fileName: drawingFileName,
+                rootURL: rootURL,
+                approximateBytes: data.count,
+                archiveData: data
+            )
+        }
         return data
     }
 
@@ -243,6 +249,7 @@ struct DrawingStorageService {
         archiveData: Data? = nil
     ) {
         ensureMemoryWarningObservation()
+        guard isValidDrawingFileName(fileName) else { return }
         let key = cacheKey(rootURL: rootURL, fileName: fileName)
         // The cache retains both PencilKit's decoded model and, for disk-backed
         // entries, the exact archive used as the save baseline. Account for both so
@@ -265,6 +272,7 @@ struct DrawingStorageService {
     }
 
     nonisolated static func removeCachedDrawing(fileName: String, rootURL: URL) {
+        guard isValidDrawingFileName(fileName) else { return }
         let key = cacheKey(rootURL: rootURL, fileName: fileName)
         prefetchLock.lock()
         advanceCacheVersionLocked(for: key as String)
@@ -309,7 +317,8 @@ struct DrawingStorageService {
 
         var uniqueFileNames: [String] = []
         var seenFileNames = Set<String>()
-        for fileName in fileNames where seenFileNames.insert(fileName).inserted {
+        for fileName in fileNames
+        where isValidDrawingFileName(fileName) && seenFileNames.insert(fileName).inserted {
             uniqueFileNames.append(fileName)
         }
 
@@ -543,6 +552,26 @@ struct DrawingStorageService {
         "\(rootURL.standardizedFileURL.path)/\(StorageDirectory.drawings.rawValue)/\(fileName)" as NSString
     }
 
+    nonisolated private static func isValidDrawingFileName(_ fileName: String) -> Bool {
+        LocalStorageService.managedRelativePath(forFileName: fileName, in: .drawings) != nil
+    }
+
+    nonisolated private static func invalidDrawingLoadError(_ fileName: String) -> DrawingLoadError {
+        DrawingLoadError(underlyingError: LocalStorageError.invalidRelativePath(fileName))
+    }
+
+    nonisolated private static func drawingURL(fileName: String, rootURL: URL) throws -> URL {
+        guard let relativePath = LocalStorageService.managedRelativePath(
+            forFileName: fileName,
+            in: .drawings
+        ) else {
+            throw LocalStorageError.invalidRelativePath(fileName)
+        }
+        return try LocalStorageService(rootURL: rootURL).validatedURL(
+            forRelativePath: relativePath
+        )
+    }
+
     nonisolated private static func drainPrefetchRequests() {
         while true {
             prefetchLock.lock()
@@ -617,9 +646,7 @@ struct DrawingStorageService {
         do {
             // Reads do not need to create the drawings directory. This avoids a
             // filesystem mutation and directory check on every cold page load.
-            let url = rootURL
-                .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
-                .appendingPathComponent(fileName)
+            let url = try drawingURL(fileName: fileName, rootURL: rootURL)
             let data = try Data(contentsOf: url)
             if let expectedPrefetchState,
                !isPrefetchStateCurrent(expectedPrefetchState, for: cacheKey as String) {
@@ -675,6 +702,15 @@ struct DrawingStorageService {
                !isCacheVersionCurrent(expectedCacheVersion, for: cacheKey as String) {
                 return .superseded
             }
+            LocalStorageService.logStorageFailure(
+                operation: "drawing_load",
+                relativePath: "\(StorageDirectory.drawings.rawValue)/\(fileName)",
+                rootURL: rootURL,
+                itemURL: rootURL
+                    .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
+                    .appendingPathComponent(fileName),
+                error: error
+            )
             return .resolved(.unavailable(DrawingLoadError(underlyingError: error)))
         }
     }
@@ -684,9 +720,7 @@ struct DrawingStorageService {
         rootURL: URL
     ) -> LoadResult {
         do {
-            let url = rootURL
-                .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
-                .appendingPathComponent(fileName)
+            let url = try drawingURL(fileName: fileName, rootURL: rootURL)
             let data = try Data(contentsOf: url)
             let drawing = try PKDrawing(data: data)
             invokeDiskLoadPublicationHookForTesting(fileName: fileName)
@@ -694,6 +728,15 @@ struct DrawingStorageService {
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return .missing
         } catch {
+            LocalStorageService.logStorageFailure(
+                operation: "drawing_load_uncached",
+                relativePath: "\(StorageDirectory.drawings.rawValue)/\(fileName)",
+                rootURL: rootURL,
+                itemURL: rootURL
+                    .appendingPathComponent(StorageDirectory.drawings.rawValue, isDirectory: true)
+                    .appendingPathComponent(fileName),
+                error: error
+            )
             return .unavailable(DrawingLoadError(underlyingError: error))
         }
     }

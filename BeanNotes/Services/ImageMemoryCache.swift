@@ -12,7 +12,7 @@ struct ImageFileIdentity: Hashable {
     var byteCount: Int64
 }
 
-final class ImageMemoryCache: NSObject, NSCacheDelegate {
+nonisolated final class ImageMemoryCache: NSObject, NSCacheDelegate, @unchecked Sendable {
     static let shared = ImageMemoryCache()
     private static let memoryCostLimit = 48 * 1024 * 1024
     private static let maximumDecodePixelSize = 16_384
@@ -215,7 +215,7 @@ final class ImageMemoryCache: NSObject, NSCacheDelegate {
     }
 }
 
-private final class CachedImage {
+nonisolated private final class CachedImage: @unchecked Sendable {
     let image: UIImage
     let key: NSString
     let path: String
@@ -228,7 +228,7 @@ private final class CachedImage {
 }
 
 private extension UIImage {
-    var cacheCost: Int {
+    nonisolated var cacheCost: Int {
         guard let cgImage else { return 1 }
         return max(1, cgImage.bytesPerRow * cgImage.height)
     }

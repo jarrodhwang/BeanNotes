@@ -297,8 +297,14 @@ struct DocumentVersionService {
 
     private func invalidateDerivedPageData(in note: NoteDocument) {
         for page in note.pages where page.attachments.contains(where: { $0.documentVersionID != nil }) {
-            if let thumbnailFileName = page.thumbnailFileName {
-                ImageMemoryCache.shared.removeImages(for: storage.url(forRelativePath: thumbnailFileName))
+            if let storedThumbnailPath = page.thumbnailFileName,
+               let thumbnailRelativePath = LocalStorageService.normalizedThumbnailRelativePath(
+                   storedThumbnailPath
+               ),
+               let thumbnailURL = try? storage.validatedURL(
+                   forRelativePath: thumbnailRelativePath
+               ) {
+                ImageMemoryCache.shared.removeImages(for: thumbnailURL)
             }
             page.thumbnailFileName = nil
             page.markSearchIndexStale()

@@ -774,6 +774,52 @@ struct ImportExportService {
             staging: staging
         )
         try Task.checkCancellation()
+        return makeImportedFileAttachment(
+            sourceURL: sourceURL,
+            contentType: contentType,
+            stored: stored,
+            page: page,
+            staging: staging
+        )
+    }
+
+    /// Reads user-selected files away from the main actor. File-provider URLs
+    /// can wait for a cloud download or authentication and must not freeze the
+    /// editor or monopolize storage while that happens.
+    func importFileInBackground(
+        from sourceURL: URL,
+        into page: NotePage,
+        staging: ImportStagingTransaction? = nil
+    ) async throws -> Attachment {
+        let rootURL = storage.rootURL
+        let stored = try await StorageOperationRunner.run(
+            timeout: 60,
+            timeoutError: LocalStorageError.storageOperationTimedOut("File import")
+        ) {
+            try Self.copyImportFile(
+                from: sourceURL,
+                rootURL: rootURL,
+                staging: staging
+            )
+        }
+        try Task.checkCancellation()
+        let contentType = UTType(filenameExtension: sourceURL.pathExtension) ?? .data
+        return makeImportedFileAttachment(
+            sourceURL: sourceURL,
+            contentType: contentType,
+            stored: stored,
+            page: page,
+            staging: staging
+        )
+    }
+
+    private func makeImportedFileAttachment(
+        sourceURL: URL,
+        contentType: UTType,
+        stored: StoredFile,
+        page: NotePage,
+        staging: ImportStagingTransaction?
+    ) -> Attachment {
         let kind = attachmentKind(for: contentType, fileExtension: sourceURL.pathExtension)
 
         var frame = CGRect(
@@ -893,12 +939,22 @@ struct ImportExportService {
     func exportPage(
         _ page: NotePage,
         format: ExportFormat,
-        options: ExportOptions = .standard
+        options: ExportOptions = .standard,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light
     ) async throws -> URL {
         try Task.checkCancellation()
-        let snapshot = options.applying(to: NotePageRenderSnapshot(page: page))
+        try await refreshCodeSnippetPreviews(
+            in: [page],
+            automaticInterfaceStyle: automaticInterfaceStyle
+        )
+        let snapshot = options.applying(to: NotePageRenderSnapshot(
+            page: page,
+            theme: .currentFromDefaults(),
+            automaticInterfaceStyle: automaticInterfaceStyle
+        ))
         let title = page.note?.title.sanitizedFileName ?? "BeanNotes"
-        let fileName = "\(title)-Page-\(page.pageOrder + 1).\(format.fileExtension)"
+        let ownerID = page.note?.id ?? page.id
+        let fileName = "\(ownerID.uuidString)-\(title)-Page-\(page.pageOrder + 1).\(format.fileExtension)"
         let exportDirectory = try storage.directoryURL(for: .exports)
         let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName(fileName))
 
@@ -912,7 +968,7 @@ struct ImportExportService {
                 jpegCompressionQuality: options.jpegQuality.compressionQuality
             )
         } catch {
-            try? storage.fileManager.removeItem(at: exportURL)
+            removeExportFiles([exportURL])
             throw error
         }
         return exportURL
@@ -921,17 +977,30 @@ struct ImportExportService {
     func exportNote(
         _ note: NoteDocument,
         format: ExportFormat,
-        options: ExportOptions = .standard
+        options: ExportOptions = .standard,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light
     ) async throws -> [URL] {
         let pages = note.sortedPages
         guard !pages.isEmpty else { throw ImportExportError.exportFailed }
-        let snapshots = pages.map { options.applying(to: NotePageRenderSnapshot(page: $0)) }
+        try await refreshCodeSnippetPreviews(
+            in: pages,
+            automaticInterfaceStyle: automaticInterfaceStyle
+        )
+        let snapshots = pages.map {
+            options.applying(to: NotePageRenderSnapshot(
+                page: $0,
+                theme: .currentFromDefaults(),
+                automaticInterfaceStyle: automaticInterfaceStyle
+            ))
+        }
 
         switch format {
         case .pdf:
             let title = note.title.sanitizedFileName
             let exportDirectory = try storage.directoryURL(for: .exports)
-            let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName("\(title).pdf"))
+            let exportURL = exportDirectory.appendingPathComponent(
+                storage.uniqueFileName("\(note.id.uuidString)-\(title).pdf")
+            )
             do {
                 try await Self.writePDF(
                     snapshots: snapshots,
@@ -941,7 +1010,7 @@ struct ImportExportService {
                     renderScale: options.pdfQuality.renderScale
                 )
             } catch {
-                try? storage.fileManager.removeItem(at: exportURL)
+                removeExportFiles([exportURL])
                 throw error
             }
             return [exportURL]
@@ -952,7 +1021,7 @@ struct ImportExportService {
                 for snapshot in snapshots {
                     try Task.checkCancellation()
                     let title = note.title.sanitizedFileName
-                    let fileName = "\(title)-Page-\(snapshot.pageOrder + 1).\(format.fileExtension)"
+                    let fileName = "\(note.id.uuidString)-\(title)-Page-\(snapshot.pageOrder + 1).\(format.fileExtension)"
                     let exportDirectory = try storage.directoryURL(for: .exports)
                     let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName(fileName))
                     currentExportURL = exportURL
@@ -982,16 +1051,26 @@ struct ImportExportService {
         _ page: NotePage,
         format: ExportFormat,
         options: ExportOptions = .standard,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light,
         progress: ImportExportProgressHandler? = nil
     ) async throws -> URL {
         try Task.checkCancellation()
         progress?(0.05, "Preparing page...")
         await Task.yield()
         try Task.checkCancellation()
+        try await refreshCodeSnippetPreviews(
+            in: [page],
+            automaticInterfaceStyle: automaticInterfaceStyle
+        )
 
-        let snapshot = options.applying(to: NotePageRenderSnapshot(page: page))
+        let snapshot = options.applying(to: NotePageRenderSnapshot(
+            page: page,
+            theme: .currentFromDefaults(),
+            automaticInterfaceStyle: automaticInterfaceStyle
+        ))
         let title = page.note?.title.sanitizedFileName ?? "BeanNotes"
-        let fileName = "\(title)-Page-\(page.pageOrder + 1).\(format.fileExtension)"
+        let ownerID = page.note?.id ?? page.id
+        let fileName = "\(ownerID.uuidString)-\(title)-Page-\(page.pageOrder + 1).\(format.fileExtension)"
         let exportDirectory = try storage.directoryURL(for: .exports)
         let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName(fileName))
 
@@ -1012,7 +1091,7 @@ struct ImportExportService {
                 }
             )
         } catch {
-            try? storage.fileManager.removeItem(at: exportURL)
+            removeExportFiles([exportURL])
             throw error
         }
 
@@ -1024,17 +1103,30 @@ struct ImportExportService {
         _ note: NoteDocument,
         format: ExportFormat,
         options: ExportOptions = .standard,
+        automaticInterfaceStyle: UIUserInterfaceStyle = .light,
         progress: ImportExportProgressHandler? = nil
     ) async throws -> [URL] {
         let pages = note.sortedPages
         guard !pages.isEmpty else { throw ImportExportError.exportFailed }
-        let snapshots = pages.map { options.applying(to: NotePageRenderSnapshot(page: $0)) }
+        try await refreshCodeSnippetPreviews(
+            in: pages,
+            automaticInterfaceStyle: automaticInterfaceStyle
+        )
+        let snapshots = pages.map {
+            options.applying(to: NotePageRenderSnapshot(
+                page: $0,
+                theme: .currentFromDefaults(),
+                automaticInterfaceStyle: automaticInterfaceStyle
+            ))
+        }
 
         switch format {
         case .pdf:
             let title = note.title.sanitizedFileName
             let exportDirectory = try storage.directoryURL(for: .exports)
-            let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName("\(title).pdf"))
+            let exportURL = exportDirectory.appendingPathComponent(
+                storage.uniqueFileName("\(note.id.uuidString)-\(title).pdf")
+            )
             do {
                 try await Self.writePDF(
                     snapshots: snapshots,
@@ -1045,7 +1137,7 @@ struct ImportExportService {
                     progress: progress
                 )
             } catch {
-                try? storage.fileManager.removeItem(at: exportURL)
+                removeExportFiles([exportURL])
                 throw error
             }
             progress?(1, "Export ready.")
@@ -1063,7 +1155,7 @@ struct ImportExportService {
                     await Task.yield()
                     try Task.checkCancellation()
 
-                    let fileName = "\(note.title.sanitizedFileName)-Page-\(snapshot.pageOrder + 1).\(format.fileExtension)"
+                    let fileName = "\(note.id.uuidString)-\(note.title.sanitizedFileName)-Page-\(snapshot.pageOrder + 1).\(format.fileExtension)"
                     let exportDirectory = try storage.directoryURL(for: .exports)
                     let exportURL = exportDirectory.appendingPathComponent(storage.uniqueFileName(fileName))
                     currentExportURL = exportURL
@@ -1117,7 +1209,18 @@ struct ImportExportService {
 
     private func removeExportFiles(_ urls: [URL]) {
         for url in urls {
-            try? storage.fileManager.removeItem(at: url)
+            do {
+                let relativePath = try storage.relativePath(for: url)
+                _ = try storage.removeFile(relativePath: relativePath)
+            } catch {
+                LocalStorageService.logStorageFailure(
+                    operation: "temporary_export_cleanup",
+                    relativePath: url.lastPathComponent,
+                    rootURL: storage.rootURL,
+                    itemURL: url,
+                    error: error
+                )
+            }
         }
     }
 
@@ -1218,7 +1321,7 @@ struct ImportExportService {
     ) async throws -> Bool {
         let staging = storage.beginImportStagingTransaction()
         var importedSourceURLs: [URL] = []
-        var didSave = false
+        var didCommitStaging = false
 
         do {
             let sharedFiles = try storage.fileManager.contentsOfDirectory(
@@ -1250,18 +1353,30 @@ struct ImportExportService {
                 return false
             }
 
-            try modelContext.save()
-            didSave = true
             try staging.commit()
+            didCommitStaging = true
+            try modelContext.save()
 
             for sourceURL in importedSourceURLs {
-                try? storage.fileManager.removeItem(at: sourceURL)
+                do {
+                    try storage.fileManager.removeItem(at: sourceURL)
+                } catch {
+                    LocalStorageService.logStorageFailure(
+                        operation: "shared_inbox_source_cleanup",
+                        relativePath: sourceURL.lastPathComponent,
+                        rootURL: storage.rootURL,
+                        itemURL: sourceURL,
+                        error: error
+                    )
+                }
             }
 
             return true
         } catch {
-            if !didSave {
-                modelContext.rollback()
+            modelContext.rollback()
+            if didCommitStaging {
+                staging.discardCommittedFilesAfterModelFailure()
+            } else {
                 staging.rollback()
             }
             throw error
@@ -1340,10 +1455,20 @@ struct ImportExportService {
             try staging.commit()
             didCommitStaging = true
             try modelContext.save()
-            try? storage.fileManager.removeItem(at: requestDirectory)
+            do {
+                try storage.fileManager.removeItem(at: requestDirectory)
+            } catch {
+                LocalStorageService.logStorageFailure(
+                    operation: "shared_request_cleanup",
+                    relativePath: requestDirectory.lastPathComponent,
+                    rootURL: storage.rootURL,
+                    itemURL: requestDirectory,
+                    error: error
+                )
+            }
         } catch {
             if didCommitStaging {
-                try? storage.fileManager.removeItem(at: staging.finalDirectoryURL)
+                staging.discardCommittedFilesAfterModelFailure()
             } else {
                 staging.rollback()
             }
@@ -1849,7 +1974,7 @@ struct ImportExportService {
         staging: ImportStagingTransaction?
     ) -> URL {
         if let staging {
-            return staging.url(for: storedFile)
+            return staging.stagedURL(for: storedFile)
         }
 
         return LocalStorageService(rootURL: rootURL).url(forRelativePath: storedFile.relativePath)
@@ -1863,7 +1988,11 @@ struct ImportExportService {
         progress: ImportExportProgressHandler?
     ) async throws -> PDFImportWorkerResult {
         try Task.checkCancellation()
-        let worker = Task.detached(priority: .userInitiated) { () async throws -> PDFImportWorkerResult in
+        return try await StorageOperationRunner.run(
+            priority: .userInitiated,
+            timeout: 120,
+            timeoutError: LocalStorageError.storageOperationTimedOut("PDF import")
+        ) { () async throws -> PDFImportWorkerResult in
             let baseName = sourceURL.deletingPathExtension().lastPathComponent
             // Reject directories and extension-spoofed inputs after reading only a
             // small prefix. This prevents a huge invalid item from being copied into
@@ -1952,12 +2081,6 @@ struct ImportExportService {
                 pages: pages
             )
         }
-
-        return try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
-        }
     }
 
     nonisolated private static func validatePDFSourceBeforeCopy(_ sourceURL: URL) throws {
@@ -1989,7 +2112,11 @@ struct ImportExportService {
         progress: ImportExportProgressHandler?
     ) async throws -> PreviewableDocumentWorkerResult {
         try Task.checkCancellation()
-        let worker = Task.detached(priority: .userInitiated) { () async throws -> PreviewableDocumentWorkerResult in
+        return try await StorageOperationRunner.run(
+            priority: .userInitiated,
+            timeout: 120,
+            timeoutError: LocalStorageError.storageOperationTimedOut("Document import")
+        ) { () async throws -> PreviewableDocumentWorkerResult in
             try Task.checkCancellation()
             let pageSize = CGSize(width: 1024, height: 1366)
             let baseName = sourceURL.deletingPathExtension().lastPathComponent
@@ -2054,12 +2181,6 @@ struct ImportExportService {
                 pageSize: pageSize
             )
         }
-
-        return try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
-        }
     }
 
     nonisolated private static func storeImageFileInBackground(
@@ -2068,7 +2189,11 @@ struct ImportExportService {
         staging: ImportStagingTransaction?
     ) async throws -> StoredImagePageResult {
         try Task.checkCancellation()
-        let worker = Task.detached(priority: .userInitiated) { () throws -> StoredImagePageResult in
+        return try await StorageOperationRunner.run(
+            priority: .userInitiated,
+            timeout: 60,
+            timeoutError: LocalStorageError.storageOperationTimedOut("Image import")
+        ) { () throws -> StoredImagePageResult in
             try Task.checkCancellation()
             let storedImage = try copyImportFile(from: sourceURL, rootURL: rootURL, staging: staging)
             try Task.checkCancellation()
@@ -2084,12 +2209,6 @@ struct ImportExportService {
                 originalFileName: sourceURL.lastPathComponent,
                 displayName: sourceURL.deletingPathExtension().lastPathComponent
             )
-        }
-
-        return try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
         }
     }
 
@@ -2134,6 +2253,49 @@ struct ImportExportService {
             try await worker.value
         } onCancel: {
             worker.cancel()
+        }
+    }
+
+    /// Ensures eager multi-page snapshots do not retain a generated PNG for every
+    /// stale snippet. Each bounded preview is rendered, atomically replaced, and
+    /// released before moving to the next attachment, with cancellation/yield points
+    /// between items so long exports remain responsive.
+    private func refreshCodeSnippetPreviews(
+        in pages: [NotePage],
+        automaticInterfaceStyle: UIUserInterfaceStyle
+    ) async throws {
+        let resolvedInterfaceStyle: UIUserInterfaceStyle = automaticInterfaceStyle == .dark
+            ? .dark
+            : .light
+
+        for page in pages {
+            for attachment in page.visualAttachments where attachment.isCodeSnippet {
+                try Task.checkCancellation()
+                let draft = CodeSnippetDraft(
+                    editing: attachment,
+                    defaults: CodeSnippetPreferences.defaultDraft()
+                )
+                let expectedVersion = CodeSnippetPreviewRenderer.previewVersion(
+                    for: draft,
+                    automaticInterfaceStyle: resolvedInterfaceStyle
+                )
+                guard attachment.codeSnippetPreviewVersion != expectedVersion else {
+                    continue
+                }
+                guard let previewData = CodeSnippetPreviewRenderer.pngData(
+                    for: draft,
+                    logicalSize: attachment.normalizedFrame(for: page.pageSize).size,
+                    automaticInterfaceStyle: resolvedInterfaceStyle
+                ), !previewData.isEmpty else {
+                    throw ImportExportError.exportFailed
+                }
+                try storage.replaceStoredData(
+                    previewData,
+                    relativePath: attachment.storedFileName
+                )
+                attachment.codeSnippetPreviewVersion = expectedVersion
+                await Task.yield()
+            }
         }
     }
 
@@ -2332,12 +2494,14 @@ struct ImportExportService {
     }
 
     nonisolated private static func commitStagedExport(at stagedURL: URL, to exportURL: URL) throws {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: stagedURL.path),
-              !fileManager.fileExists(atPath: exportURL.path) else {
-            throw ImportExportError.exportFailed
+        try StorageMutationCoordinator.withLock {
+            let fileManager = FileManager.default
+            guard fileManager.fileExists(atPath: stagedURL.path),
+                  !fileManager.fileExists(atPath: exportURL.path) else {
+                throw ImportExportError.exportFailed
+            }
+            try fileManager.moveItem(at: stagedURL, to: exportURL)
         }
-        try fileManager.moveItem(at: stagedURL, to: exportURL)
     }
 
     nonisolated private static func validateImage(

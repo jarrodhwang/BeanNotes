@@ -62,7 +62,13 @@ struct NoteSearchIndexService {
         for page in note.sortedPages {
             try Task.checkCancellation()
             if page.searchIndexUpdatedAt == nil || page.searchIndexUpdatedAt.map({ $0 < page.updatedAt }) == true {
-                let snapshot = NotePageRenderSnapshot(page: page)
+                // Search recognition is appearance-independent; use a stable light
+                // surface so background indexing never depends on ambient UIKit traits.
+                let snapshot = NotePageRenderSnapshot(
+                    page: page,
+                    theme: .currentFromDefaults(),
+                    automaticInterfaceStyle: .light
+                )
                 let recognizedText = try await Self.recognizePageText(
                     snapshot: snapshot,
                     rootURL: storage.rootURL

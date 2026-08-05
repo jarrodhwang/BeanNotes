@@ -130,6 +130,7 @@ struct DrawingCanvasConfigurationSignature: Equatable {
     private var storageRootPath: String
     private var theme: BeanNotesTheme
     private var hasTopContent: Bool
+    private var isDarkAppearance: Bool
 
     init(
         pages: [NotePage],
@@ -138,7 +139,8 @@ struct DrawingCanvasConfigurationSignature: Equatable {
         renderQuality: DrawingRenderQuality,
         storageRootURL: URL,
         theme: BeanNotesTheme,
-        hasTopContent: Bool
+        hasTopContent: Bool,
+        isDarkAppearance: Bool = false
     ) {
         self.pages = pages.map { page in
             PageRevision(
@@ -172,6 +174,7 @@ struct DrawingCanvasConfigurationSignature: Equatable {
         self.storageRootPath = storageRootURL.standardizedFileURL.path
         self.theme = theme
         self.hasTopContent = hasTopContent
+        self.isDarkAppearance = isDarkAppearance
     }
 }
 
@@ -277,6 +280,7 @@ struct DrawingCanvasView: UIViewRepresentable {
     var attachmentChanged: () -> Void
     var deleteAttachment: (Attachment) -> Void
     var editCodeSnippet: (Attachment) -> Void = { _ in }
+    var saveCodeSnippetSource: (CodeSnippetDraft, Attachment) -> Bool = { _, _ in false }
     var saveCodeSnippet: (CodeSnippetDraft, Attachment) -> Bool = { _, _ in false }
     var isDarkAppearance = false
     var drawingChanged: (UUID) -> Void
@@ -426,12 +430,19 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         if context.coordinator.saveNowSignal != saveNowSignal {
+            _ = containerView.flushInlineCodeSnippetEdits()
             context.coordinator.saveAllCanvases()
             context.coordinator.saveNowSignal = saveNowSignal
         }
 
         if context.coordinator.exportPreparationSignal != exportPreparationSignal {
-            context.coordinator.prepareForExport(requestID: exportPreparationSignal)
+            if containerView.flushInlineCodeSnippetEdits() {
+                context.coordinator.prepareForExport(requestID: exportPreparationSignal)
+            } else {
+                context.coordinator.failExportPreparationForUnsavedCodeSnippet(
+                    requestID: exportPreparationSignal
+                )
+            }
             context.coordinator.exportPreparationSignal = exportPreparationSignal
         }
 
@@ -483,7 +494,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             renderQuality: renderQuality,
             storageRootURL: drawingStorage.storage.rootURL,
             theme: theme,
-            hasTopContent: topContent != nil
+            hasTopContent: topContent != nil,
+            isDarkAppearance: isDarkAppearance
         )
     }
 
@@ -601,6 +613,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastPublishedVisiblePageID: UUID?
         private var isDrawingInteractionActive = false
         private var keepsPDFVectorSurfaceDuringDrawing = false
+        private var pdfVectorProtectedPageIDs: Set<UUID> = []
         private var pdfRenderingResumeWorkItem: DispatchWorkItem?
         private var pdfRenderingResumeGeneration: UInt = 0
         private var defersPDFRenderingAfterTraversal = false
@@ -709,6 +722,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             return pageViews[selectedPageID]?.canvasView
+        }
+
+        func pageCanvasViewForTesting(pageID: UUID) -> PageCanvasView? {
+            pageViews[pageID]
         }
 
         var currentSelectedPageID: UUID? {
@@ -826,6 +843,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             if shouldRelayout, (continuousPageView != nil || !pageViews.isEmpty) {
                 // Persist current ink before page bounds or flow mode change, so a
                 // rebuilt canvas can translate every stroke from stable coordinates.
+                guard flushInlineCodeSnippetEdits() else { return }
                 coordinator.saveAllCanvases(force: true)
             }
             if shouldRelayout, continuousPageView != nil {
@@ -1664,6 +1682,11 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
             )
             pageView.prioritizePageActionGestures(over: fingerDoubleTapGesture)
+            if let seamlessAttachmentSelectionGesture {
+                pageView.canvasView.drawingGestureRecognizer.require(
+                    toFail: seamlessAttachmentSelectionGesture
+                )
+            }
             pageView.setDocumentTraversalActive(effectivePDFTraversalActive)
             pageView.setDrawingInteractionActive(effectivePDFDrawingProtectionActive)
             pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
@@ -2166,8 +2189,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                         continue
                     }
                     if let pageView = pageViews[id] {
-                        retirePageView(id: id, pageView: pageView)
-                        didChangeMaterializedPages = true
+                        if retirePageView(id: id, pageView: pageView) {
+                            didChangeMaterializedPages = true
+                        }
                     }
                 }
 
@@ -2211,21 +2235,35 @@ struct DrawingCanvasView: UIViewRepresentable {
         func selectSeamlessAttachment(at documentPoint: CGPoint) -> Bool {
             guard pageFlowMode == .seamless else { return false }
 
-            let target = seamlessAttachmentTarget(at: documentPoint)
-            for pageView in pageViews.values where pageView !== target?.pageView {
-                pageView.clearAttachmentSelection()
-            }
-
-            guard let target else {
+            guard let target = seamlessAttachmentTarget(at: documentPoint) else {
+                for pageView in pageViews.values {
+                    guard pageView.clearAttachmentSelection() else { return false }
+                }
                 return false
             }
-
-            target.pageView.beginEditingAttachment(id: target.attachment.id)
-            target.pageView.presentAttachmentEditingControls(
-                in: contentView,
+            return selectSeamlessAttachment(
+                pageView: target.pageView,
+                attachment: target.attachment,
                 documentFrame: target.documentFrame
             )
-            return target.pageView.selectedAttachmentID == target.attachment.id
+        }
+
+        @discardableResult
+        private func selectSeamlessAttachment(
+            pageView targetPageView: PageCanvasView,
+            attachment: Attachment,
+            documentFrame: CGRect
+        ) -> Bool {
+            for pageView in pageViews.values where pageView !== targetPageView {
+                guard pageView.clearAttachmentSelection() else { return false }
+            }
+
+            targetPageView.beginEditingAttachment(id: attachment.id)
+            targetPageView.presentAttachmentEditingControls(
+                in: contentView,
+                documentFrame: documentFrame
+            )
+            return targetPageView.selectedAttachmentID == attachment.id
         }
 
         private func seamlessAttachmentTarget(
@@ -2261,7 +2299,8 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             var touchedView = touch.view
             while let view = touchedView {
-                if view is AttachmentEditingOverlayView {
+                if view is AttachmentEditingOverlayView
+                    || view.accessibilityIdentifier == "codeSnippet.inlineEditor" {
                     return false
                 }
                 touchedView = view.superview
@@ -2271,6 +2310,22 @@ struct DrawingCanvasView: UIViewRepresentable {
             return seamlessAttachmentTarget(at: documentPoint) != nil
                 || pageViews.values.contains { $0.selectedAttachmentID != nil }
                 || continuousPageView?.consumesBlankCanvasTaps == true
+        }
+
+        @discardableResult
+        func clearAttachmentSelectionsForContinuousDrawing() -> Bool {
+            for pageView in pageViews.values where pageView.selectedAttachmentID != nil {
+                guard pageView.clearAttachmentSelection() else { return false }
+            }
+            return true
+        }
+
+        @discardableResult
+        func flushInlineCodeSnippetEdits() -> Bool {
+            for pageView in pageViews.values {
+                guard pageView.flushInlineCodeSnippetEdits() else { return false }
+            }
+            return true
         }
 
         func gestureRecognizer(
@@ -2309,8 +2364,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageView.frame = frame
             // Apply interaction state before attachments are configured so a page
             // materialized mid-scroll or mid-stroke stays consistent with the editor.
-            pageView.setDocumentTraversalActive(effectivePDFTraversalActive)
-            pageView.setDrawingInteractionActive(effectivePDFDrawingProtectionActive)
+            pageView.setDocumentTraversalActive(
+                shouldDeferPDFTraversalRendering(on: id)
+            )
+            pageView.setDrawingInteractionActive(
+                shouldProtectVectorPDFDuringDrawing(on: id)
+            )
             if updatesImageLoadingState {
                 pageView.setImageLoadingEnabled(shouldLoadImages)
             } else if didCreatePageView {
@@ -2334,6 +2393,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                     editCodeSnippet: { [weak coordinator] attachment in
                         coordinator?.requestCodeSnippetEditing(attachment)
                     },
+                    saveCodeSnippetSource: { [weak coordinator] draft, attachment in
+                        coordinator?.saveCodeSnippetSource(draft, attachment: attachment) ?? false
+                    },
                     saveCodeSnippet: { [weak coordinator] draft, attachment in
                         coordinator?.saveCodeSnippet(draft, attachment: attachment) ?? false
                     },
@@ -2353,6 +2415,23 @@ struct DrawingCanvasView: UIViewRepresentable {
                 // changes when a canvas is installed/reconfigured, not on every offset
                 // sample, so install these requirements only at that lifecycle point.
                 pageView.prioritizePageActionGestures(over: fingerDoubleTapGesture)
+            }
+
+            // Static snippet views are VoiceOver elements. Route their activation
+            // through the document-level editing host in seamless mode so the live
+            // editor and controls remain above the continuous PencilKit canvas.
+            pageView.accessibilityAttachmentSelectionRequested = { [weak self, weak pageView] attachment in
+                guard let self, let pageView else { return }
+                if self.pageFlowMode == .seamless,
+                   let documentFrame = self.pageFrames[id] {
+                    _ = self.selectSeamlessAttachment(
+                        pageView: pageView,
+                        attachment: attachment,
+                        documentFrame: documentFrame
+                    )
+                } else {
+                    pageView.beginEditingAttachment(id: attachment.id)
+                }
             }
 
             return didCreatePageView
@@ -2378,12 +2457,17 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
         }
 
+        @discardableResult
         private func retirePageView(
             id: UUID,
             pageView: PageCanvasView,
             flushDrawingBeforeRelease: Bool = true,
             evictCachedImages: Bool = false
-        ) {
+        ) -> Bool {
+            // A virtualized page must not discard the only copy of a live draft.
+            // Keep it materialized when preview/source persistence reports failure.
+            guard pageView.flushInlineCodeSnippetEdits() else { return false }
+
             if let page = pageView.page, pageView.canvasView.delegate != nil {
                 coordinator?.unregister(
                     canvasView: pageView.canvasView,
@@ -2395,6 +2479,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageView.releaseHeavyResources(evictCachedImages: evictCachedImages)
             pageView.removeFromSuperview()
             pageViews[id] = nil
+            return true
         }
 
         func reduceMemoryFootprint() {
@@ -2643,22 +2728,18 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pdfRenderingResumeGeneration &+= 1
                 pdfRenderingResumeWorkItem?.cancel()
                 pdfRenderingResumeWorkItem = nil
-                if !keepsPDFVectorSurfaceDuringDrawing {
-                    keepsPDFVectorSurfaceDuringDrawing = true
-                    if let activePageView {
-                        // Restore the touched PDF's vector surface immediately, but
-                        // move the bounded materialized-page walk off PencilKit's
-                        // stroke-begin callback. This keeps first-ink latency independent
-                        // of page preloading without showing a rasterized background.
-                        activePageView.setDrawingInteractionActive(true)
-                        DispatchQueue.main.async { [weak self] in
-                            self?.publishPDFRenderingState()
-                        }
-                    } else {
-                        publishPDFRenderingState()
-                    }
+                keepsPDFVectorSurfaceDuringDrawing = true
+
+                if let protectedPageID = activeDrawingPageID ?? selectedPageID {
+                    pdfVectorProtectedPageIDs.insert(protectedPageID)
+                    pageViews[protectedPageID]?.setDrawingInteractionActive(true)
                 }
-                cancelPostTraversalPDFDeferral()
+                // The seamless canvas owns PencilKit geometry while its individual
+                // page views own PDF backgrounds. Protect both, but do not walk every
+                // materialized PDF on the stroke-begin callback.
+                continuousPageView?.setDrawingInteractionActive(true)
+                activePageView?.setDrawingInteractionActive(true)
+                pausePostTraversalPDFReleaseDuringDrawing()
                 return
             }
 
@@ -2675,6 +2756,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                 self.pdfRenderingResumeWorkItem = nil
                 guard !self.isDrawingInteractionActive else { return }
                 self.keepsPDFVectorSurfaceDuringDrawing = false
+                self.pdfVectorProtectedPageIDs.removeAll(keepingCapacity: true)
+                if !self.isUserScrolling {
+                    self.clearHeldPostTraversalPDFDeferral()
+                }
                 self.publishPDFRenderingState()
             }
             pdfRenderingResumeWorkItem = workItem
@@ -2690,6 +2775,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             pdfRenderingResumeWorkItem = nil
             guard keepsPDFVectorSurfaceDuringDrawing else { return }
             keepsPDFVectorSurfaceDuringDrawing = false
+            pdfVectorProtectedPageIDs.removeAll(keepingCapacity: false)
             publishPDFRenderingState()
         }
 
@@ -2699,6 +2785,21 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private var effectivePDFDrawingProtectionActive: Bool {
             keepsPDFVectorSurfaceDuringDrawing
+        }
+
+        private func shouldProtectVectorPDFDuringDrawing(on pageID: UUID) -> Bool {
+            effectivePDFDrawingProtectionActive
+                && pdfVectorProtectedPageIDs.contains(pageID)
+        }
+
+        private func shouldDeferPDFTraversalRendering(on pageID: UUID) -> Bool {
+            guard effectivePDFTraversalActive else { return false }
+            // Once navigation physically stops, prewarm the selected page's vector
+            // surface before PencilKit receives another touch. Other materialized PDF
+            // pages keep their bounded snapshots until the short settle window ends.
+            let isSettledPostTraversalWindow = defersPDFRenderingAfterTraversal
+                && !isUserScrolling
+            return !isSettledPostTraversalWindow || pageID != selectedPageID
         }
 
         private func beginPostTraversalPDFDeferral() {
@@ -2732,15 +2833,34 @@ struct DrawingCanvasView: UIViewRepresentable {
             publishPDFRenderingState()
         }
 
+        private func pausePostTraversalPDFReleaseDuringDrawing() {
+            guard defersPDFRenderingAfterTraversal else { return }
+            traversalPDFResumeGeneration &+= 1
+            traversalPDFResumeWorkItem?.cancel()
+            traversalPDFResumeWorkItem = nil
+        }
+
+        private func clearHeldPostTraversalPDFDeferral() {
+            traversalPDFResumeGeneration &+= 1
+            traversalPDFResumeWorkItem?.cancel()
+            traversalPDFResumeWorkItem = nil
+            defersPDFRenderingAfterTraversal = false
+        }
+
         private func publishPDFRenderingState() {
             let traversalActive = effectivePDFTraversalActive
-            let drawingProtectionActive = effectivePDFDrawingProtectionActive
-            for pageView in pageViews.values {
-                pageView.setDocumentTraversalActive(traversalActive)
-                pageView.setDrawingInteractionActive(drawingProtectionActive)
+            for (id, pageView) in pageViews {
+                pageView.setDocumentTraversalActive(
+                    shouldDeferPDFTraversalRendering(on: id)
+                )
+                pageView.setDrawingInteractionActive(
+                    shouldProtectVectorPDFDuringDrawing(on: id)
+                )
             }
             continuousPageView?.setDocumentTraversalActive(traversalActive)
-            continuousPageView?.setDrawingInteractionActive(drawingProtectionActive)
+            continuousPageView?.setDrawingInteractionActive(
+                effectivePDFDrawingProtectionActive
+            )
         }
 
         func dismissNativeCanvasEditMenus() {
@@ -2839,7 +2959,11 @@ struct DrawingCanvasView: UIViewRepresentable {
                 prunesTraversalResources: true
             )
             if keepsPDFVectorSurfaceDuringDrawing {
-                cancelPostTraversalPDFDeferral()
+                // Preserve the navigation snapshots on non-active PDF pages until the
+                // short handwriting session ends. Resuming them all between letters is
+                // a large, intermittent main-thread PDFKit tile burst.
+                defersPDFRenderingAfterTraversal = true
+                pausePostTraversalPDFReleaseDuringDrawing()
             } else {
                 beginPostTraversalPDFDeferral()
             }
@@ -4176,13 +4300,24 @@ struct DrawingCanvasView: UIViewRepresentable {
         private(set) var attachmentSelectionGesture: UITapGestureRecognizer?
         private var attachmentEditingOverlay: AttachmentEditingOverlayView?
         private var attachmentEditingHostView: AttachmentEditingHostView?
-        private var codeSnippetEditingController: UIHostingController<CodeSnippetInlineEditor>?
+        private var codeSnippetEditingController: UIHostingController<CodeSnippetCanvasEditor>?
+        private var codeSnippetEditingState: CodeSnippetCanvasEditingState?
+        private var codeSnippetLastSavedDraft: CodeSnippetDraft?
+        private var codeSnippetLastSourceSavedDraft: CodeSnippetDraft?
+        private var codeSnippetPreviewNeedsRefresh = false
+        private var codeSnippetSaveWorkItem: DispatchWorkItem?
+        private var pendingCodeSnippetPreviewRefreshIDs: [UUID] = []
+        private var pendingCodeSnippetPreviewRefreshIDSet: Set<UUID> = []
+        private var codeSnippetPreviewRefreshAttempts: [UUID: Int] = [:]
+        private var codeSnippetPreviewRefreshWorkItem: DispatchWorkItem?
+        private static let maximumCodeSnippetPreviewRefreshAttempts = 3
         private(set) var page: NotePage?
         private(set) var selectedAttachmentID: UUID?
         private var configurationSignature: String?
         private var attachmentChanged: (() -> Void)?
         private var deleteAttachment: ((Attachment) -> Void)?
         private var editCodeSnippet: ((Attachment) -> Void)?
+        private var saveCodeSnippetSource: ((CodeSnippetDraft, Attachment) -> Bool)?
         private var saveCodeSnippet: ((CodeSnippetDraft, Attachment) -> Bool)?
         private var isDarkAppearance = false
         private var pageActionRequested: ((UUID, NotePageContextAction) -> Void)?
@@ -4218,6 +4353,14 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var objectEraserHasChanges = false
         private(set) var objectEraserLiveEvaluationCount = 0
         private var laidOutPageBounds: CGRect = .null
+
+        var isDrawingInteractionActiveForTesting: Bool {
+            isDrawingInteractionActive
+        }
+
+        var isDocumentTraversalActiveForTesting: Bool {
+            isDocumentTraversalActive
+        }
         private var drawingPageSizeOverride: CGSize?
         private var isDrawingSurfaceEnabled = true
         private var isDrawingLoadBlocked = false
@@ -4228,6 +4371,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         var objectEraserDidBegin: (() -> Void)?
         var objectEraserDidEnd: (() -> Void)?
         var objectEraserDrawingChanged: (() -> Void)?
+        var accessibilityAttachmentSelectionRequested: ((Attachment) -> Void)?
 
         var currentNativeDrawingZoomScale: CGFloat {
             nativeZoomScale
@@ -4305,6 +4449,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             attachmentChanged: @escaping () -> Void,
             deleteAttachment: @escaping (Attachment) -> Void,
             editCodeSnippet: @escaping (Attachment) -> Void = { _ in },
+            saveCodeSnippetSource: ((CodeSnippetDraft, Attachment) -> Bool)? = nil,
             saveCodeSnippet: ((CodeSnippetDraft, Attachment) -> Bool)? = nil,
             isDarkAppearance: Bool = false,
             canRemovePage: Bool = false,
@@ -4317,7 +4462,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             let wasDrawingSurfaceEnabled = isDrawingSurfaceEnabled
             let wasRegisteredForDrawing = canvasView.delegate != nil
             let isNewPage = self.page?.id != page.id
-            let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)#beanArtwork=\(showsBeanArtwork)"
+            let signature = "\(staticContentSignature(for: page))#theme=\(theme.rawValue)#beanArtwork=\(showsBeanArtwork)#dark=\(isDarkAppearance)"
             let needsStaticRefresh = isNewPage || signature != configurationSignature
             let pageSizeChanged = laidOutPageBounds.size != page.pageSize
             drawingPageSizeOverride = nil
@@ -4325,6 +4470,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             allowsAttachmentSelection = true
             if isNewPage {
                 clearAttachmentSelection()
+                cancelPendingCodeSnippetPreviewRefreshes()
                 hasConfiguredImageAttachments = false
             }
             self.page = page
@@ -4335,6 +4481,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.attachmentChanged = attachmentChanged
             self.deleteAttachment = deleteAttachment
             self.editCodeSnippet = editCodeSnippet
+            self.saveCodeSnippetSource = saveCodeSnippetSource
             self.saveCodeSnippet = saveCodeSnippet
             self.isDarkAppearance = isDarkAppearance
             self.canRemovePage = canRemovePage
@@ -4453,6 +4600,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             attachmentChanged = nil
             deleteAttachment = nil
             editCodeSnippet = nil
+            saveCodeSnippetSource = nil
             saveCodeSnippet = nil
             self.canRemovePage = canRemovePage
             self.pageActionRequested = pageActionRequested
@@ -4561,6 +4709,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             for view in imageViews.values {
                 view.setDrawingInteractionActive(active)
             }
+            applyPendingNativeViewportIfPossible()
         }
 
         private func staticContentSignature(for page: NotePage) -> String {
@@ -4615,10 +4764,19 @@ struct DrawingCanvasView: UIViewRepresentable {
                 editingHost.removeFromSuperview()
                 hostView.addSubview(editingHost)
             }
+            if let editorView = codeSnippetEditingController?.view,
+               editorView.superview !== editingHost {
+                editorView.removeFromSuperview()
+                editingHost.addSubview(editorView)
+            }
             if attachmentEditingOverlay.superview !== editingHost {
                 attachmentEditingOverlay.removeFromSuperview()
                 editingHost.addSubview(attachmentEditingOverlay)
             }
+            if let editorView = codeSnippetEditingController?.view {
+                editingHost.bringSubviewToFront(editorView)
+            }
+            editingHost.bringSubviewToFront(attachmentEditingOverlay)
             hostView.bringSubviewToFront(editingHost)
         }
 
@@ -4632,6 +4790,10 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         func restoreAttachmentEditingControlsToPage() {
             guard let editingHost = attachmentEditingHostView else { return }
+            if let editorView = codeSnippetEditingController?.view {
+                editorView.removeFromSuperview()
+                addSubview(editorView)
+            }
             if let attachmentEditingOverlay {
                 attachmentEditingOverlay.removeFromSuperview()
                 addSubview(attachmentEditingOverlay)
@@ -4724,6 +4886,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             addGestureRecognizer(pageLongPress)
             pageActionLongPressGesture = pageLongPress
             selectAttachmentGesture.require(toFail: pageLongPress)
+            // In Any Input mode, a finger tap on a snippet must select it without
+            // leaving a PencilKit dot underneath. A moving finger quickly fails the
+            // tap recognizer and continues as normal drawing.
+            canvasView.drawingGestureRecognizer.require(toFail: selectAttachmentGesture)
             // Pencil-only mode can reserve a stationary finger hold for page actions.
             // Any Input disables this recognizer so first ink never waits for the
             // long-press failure timeout; page actions remain available in the toolbar.
@@ -4939,14 +5105,17 @@ struct DrawingCanvasView: UIViewRepresentable {
             } else {
                 eraserScopeView.hide()
             }
-            if !active, let pendingNativeViewport {
-                self.pendingNativeViewport = nil
-                applyNativeDrawingViewport(pendingNativeViewport)
-            }
+            applyPendingNativeViewportIfPossible()
         }
 
         func drawingDidChange() {
-            guard !isUsingDrawingTool, let pendingNativeViewport else { return }
+            applyPendingNativeViewportIfPossible()
+        }
+
+        private func applyPendingNativeViewportIfPossible() {
+            guard !isUsingDrawingTool,
+                  !isDrawingInteractionActive,
+                  let pendingNativeViewport else { return }
             self.pendingNativeViewport = nil
             applyNativeDrawingViewport(pendingNativeViewport)
         }
@@ -5062,6 +5231,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             for attachment in attachments {
+                enqueueCodeSnippetPreviewRefreshIfNeeded(attachment)
                 let imageView = imageViews[attachment.id] ?? {
                     let view = AttachmentImageContainerView()
                     imageViews[attachment.id] = view
@@ -5091,7 +5261,15 @@ struct DrawingCanvasView: UIViewRepresentable {
                     pageSize: page?.pageSize ?? .zero,
                     vectorSourceURL: vectorSource?.url,
                     vectorPageIndex: vectorSource?.pageIndex,
-                    changed: attachmentChanged
+                    changed: attachmentChanged,
+                    selectionRequested: { [weak self, weak attachment] in
+                        guard let self, let attachment, !attachment.isLocked else { return }
+                        if let accessibilityAttachmentSelectionRequested = self.accessibilityAttachmentSelectionRequested {
+                            accessibilityAttachmentSelectionRequested(attachment)
+                        } else {
+                            self.beginEditingAttachment(attachment)
+                        }
+                    }
                 )
             }
 
@@ -5111,6 +5289,142 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             hasConfiguredImageAttachments = true
             restoreDrawingLayerOrder()
+        }
+
+        @discardableResult
+        private func refreshCodeSnippetPreviewIfNeeded(_ attachment: Attachment) -> Bool {
+            guard attachment.isCodeSnippet else { return true }
+            let draft: CodeSnippetDraft
+            if let editingState = codeSnippetEditingState,
+               editingState.draft.id == attachment.id {
+                draft = editingState.draft
+            } else {
+                draft = CodeSnippetDraft(
+                    editing: attachment,
+                    defaults: CodeSnippetPreferences.defaultDraft()
+                )
+            }
+            let interfaceStyle: UIUserInterfaceStyle = isDarkAppearance ? .dark : .light
+            let expectedVersion = CodeSnippetPreviewRenderer.previewVersion(
+                for: draft,
+                automaticInterfaceStyle: interfaceStyle
+            )
+            guard attachment.codeSnippetPreviewVersion != expectedVersion else {
+                discardPendingCodeSnippetPreviewRefresh(id: attachment.id)
+                return true
+            }
+            guard let saveCodeSnippet else {
+                if codeSnippetEditingState?.draft.id == attachment.id {
+                    codeSnippetPreviewNeedsRefresh = true
+                }
+                return false
+            }
+            guard saveCodeSnippet(draft, attachment) else {
+                if codeSnippetEditingState?.draft.id == attachment.id {
+                    codeSnippetPreviewNeedsRefresh = true
+                }
+                return false
+            }
+
+            if codeSnippetEditingState?.draft.id == attachment.id {
+                codeSnippetLastSavedDraft = draft
+                codeSnippetLastSourceSavedDraft = draft
+                codeSnippetPreviewNeedsRefresh = false
+            }
+            discardPendingCodeSnippetPreviewRefresh(id: attachment.id)
+            return true
+        }
+
+        private func enqueueCodeSnippetPreviewRefreshIfNeeded(_ attachment: Attachment) {
+            guard attachment.isCodeSnippet, saveCodeSnippet != nil else { return }
+            let draft = CodeSnippetDraft(
+                editing: attachment,
+                defaults: CodeSnippetPreferences.defaultDraft()
+            )
+            let interfaceStyle: UIUserInterfaceStyle = isDarkAppearance ? .dark : .light
+            let expectedVersion = CodeSnippetPreviewRenderer.previewVersion(
+                for: draft,
+                automaticInterfaceStyle: interfaceStyle
+            )
+            guard attachment.codeSnippetPreviewVersion != expectedVersion else {
+                discardPendingCodeSnippetPreviewRefresh(id: attachment.id)
+                return
+            }
+            guard pendingCodeSnippetPreviewRefreshIDSet.insert(attachment.id).inserted else {
+                return
+            }
+
+            pendingCodeSnippetPreviewRefreshIDs.append(attachment.id)
+            scheduleNextCodeSnippetPreviewRefresh()
+        }
+
+        private func scheduleNextCodeSnippetPreviewRefresh(after delay: TimeInterval = 0) {
+            guard codeSnippetPreviewRefreshWorkItem == nil,
+                  !pendingCodeSnippetPreviewRefreshIDs.isEmpty else {
+                return
+            }
+
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.codeSnippetPreviewRefreshWorkItem = nil
+                self.processNextCodeSnippetPreviewRefresh()
+            }
+            codeSnippetPreviewRefreshWorkItem = workItem
+            if delay > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+            } else {
+                // Never render or mutate SwiftData inside UIViewRepresentable's
+                // configuration pass. One item per turn also bounds UI stalls when a
+                // migrated page contains several stale snippet previews.
+                DispatchQueue.main.async(execute: workItem)
+            }
+        }
+
+        private func processNextCodeSnippetPreviewRefresh() {
+            guard !pendingCodeSnippetPreviewRefreshIDs.isEmpty else { return }
+            let attachmentID = pendingCodeSnippetPreviewRefreshIDs.removeFirst()
+            pendingCodeSnippetPreviewRefreshIDSet.remove(attachmentID)
+
+            guard let attachment = page?.visualAttachments.first(where: {
+                $0.id == attachmentID && $0.isCodeSnippet
+            }) else {
+                codeSnippetPreviewRefreshAttempts.removeValue(forKey: attachmentID)
+                scheduleNextCodeSnippetPreviewRefresh(after: 0.01)
+                return
+            }
+
+            if refreshCodeSnippetPreviewIfNeeded(attachment) {
+                codeSnippetPreviewRefreshAttempts.removeValue(forKey: attachmentID)
+                scheduleNextCodeSnippetPreviewRefresh(after: 0.01)
+                return
+            }
+
+            let attempts = codeSnippetPreviewRefreshAttempts[attachmentID, default: 0] + 1
+            if attempts < Self.maximumCodeSnippetPreviewRefreshAttempts {
+                codeSnippetPreviewRefreshAttempts[attachmentID] = attempts
+                if pendingCodeSnippetPreviewRefreshIDSet.insert(attachmentID).inserted {
+                    pendingCodeSnippetPreviewRefreshIDs.append(attachmentID)
+                }
+            } else {
+                codeSnippetPreviewRefreshAttempts.removeValue(forKey: attachmentID)
+            }
+            scheduleNextCodeSnippetPreviewRefresh(
+                after: pendingCodeSnippetPreviewRefreshIDs.count == 1 ? 0.15 : 0.01
+            )
+        }
+
+        private func discardPendingCodeSnippetPreviewRefresh(id: UUID) {
+            pendingCodeSnippetPreviewRefreshIDSet.remove(id)
+            pendingCodeSnippetPreviewRefreshIDs.removeAll { $0 == id }
+            codeSnippetPreviewRefreshAttempts.removeValue(forKey: id)
+        }
+
+        private func cancelPendingCodeSnippetPreviewRefreshes() {
+            codeSnippetPreviewRefreshWorkItem?.cancel()
+            codeSnippetPreviewRefreshWorkItem = nil
+            pendingCodeSnippetPreviewRefreshIDs.removeAll()
+            pendingCodeSnippetPreviewRefreshIDSet.removeAll()
+            codeSnippetPreviewRefreshAttempts.removeAll()
         }
 
         private func resolvedVectorSource(
@@ -5205,6 +5519,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                 return
             }
 
+            if let selectedAttachmentID,
+               selectedAttachmentID != attachment.id {
+                guard finishInlineCodeSnippetEditing(
+                    attachmentID: selectedAttachmentID
+                ) else {
+                    return
+                }
+            }
             selectedAttachmentID = attachment.id
             let overlay = attachmentEditingOverlay ?? {
                 let overlay = AttachmentEditingOverlayView()
@@ -5219,9 +5541,21 @@ struct DrawingCanvasView: UIViewRepresentable {
                 frameChanged: { [weak self] frame in
                     guard self?.selectedAttachmentID == attachmentID else { return }
                     self?.imageViews[attachmentID]?.frame = frame
+                    self?.codeSnippetEditingController?.view.frame = frame
                 },
                 changeCommitted: { [weak self] in
                     self?.attachmentChanged?()
+                },
+                resizeCommitted: { [weak self, weak attachment] in
+                    guard let self, let attachment else { return }
+                    // Geometry is already committed at this point. Persist a stale
+                    // marker before attempting PNG regeneration so a failed render
+                    // cannot leave the old-size raster marked as current.
+                    attachment.codeSnippetPreviewVersion = nil
+                    attachment.touch()
+                    self.attachmentChanged?()
+                    self.codeSnippetPreviewNeedsRefresh = true
+                    _ = self.persistInlineCodeSnippet(attachment, force: true)
                 },
                 deleteRequested: { [weak self] in
                     guard let self,
@@ -5234,44 +5568,65 @@ struct DrawingCanvasView: UIViewRepresentable {
                 },
                 dismiss: { [weak self] in
                     self?.clearAttachmentSelection()
-                }
+                },
+                settingsMenu: attachment.isCodeSnippet
+                    ? codeSnippetSettingsMenu(for: attachment)
+                    : nil
             )
+            if attachment.isCodeSnippet {
+                beginInlineCodeSnippetEditing(attachment)
+            }
             overlay.superview?.bringSubviewToFront(overlay)
         }
 
         private func beginInlineCodeSnippetEditing(_ attachment: Attachment) {
             guard attachment.isCodeSnippet,
-                  let saveCodeSnippet else {
+                  saveCodeSnippet != nil else {
                 editCodeSnippet?(attachment)
                 return
             }
 
-            finishInlineCodeSnippetEditing(attachmentID: attachment.id)
-            selectedAttachmentID = attachment.id
-            attachmentEditingOverlay?.removeFromSuperview()
-            attachmentEditingOverlay = nil
+            if let editingState = codeSnippetEditingState,
+               editingState.draft.id == attachment.id,
+               let controller = codeSnippetEditingController {
+                controller.view.frame = displayedFrame(for: attachment)
+                // Keep appearance on the observable editing state. Updating only the
+                // hosting controller's root view can leave its existing UITextView on
+                // the previous palette until SwiftUI finishes replacing the hierarchy.
+                editingState.updateAppearance(isDark: isDarkAppearance)
+                let interfaceStyle: UIUserInterfaceStyle = isDarkAppearance ? .dark : .light
+                codeSnippetPreviewNeedsRefresh = attachment.codeSnippetPreviewVersion
+                    != CodeSnippetPreviewRenderer.previewVersion(
+                        for: editingState.draft,
+                        automaticInterfaceStyle: interfaceStyle
+                    )
+                let attachmentID = attachment.id
+                controller.rootView = CodeSnippetCanvasEditor(
+                    editingState: editingState,
+                    onDraftChanged: { [weak self, weak attachment] _ in
+                        guard let attachment, attachment.id == attachmentID else { return }
+                        self?.scheduleInlineCodeSnippetSourceSave(for: attachment)
+                    }
+                )
+                imageViews[attachment.id]?.isHidden = true
+                return
+            }
 
             let draft = CodeSnippetDraft(
                 editing: attachment,
                 defaults: CodeSnippetPreferences.defaultDraft()
             )
+            let editingState = CodeSnippetCanvasEditingState(
+                draft: draft,
+                isDarkAppearance: isDarkAppearance
+            )
             let attachmentID = attachment.id
             let controller = UIHostingController(
-                rootView: CodeSnippetInlineEditor(
-                    draft: draft,
-                    isDarkAppearance: isDarkAppearance,
-                    onSave: { [weak self, weak attachment] updatedDraft in
-                        guard let self,
-                              let attachment,
-                              attachment.id == attachmentID,
-                              saveCodeSnippet(updatedDraft, attachment) else {
-                            return false
-                        }
-                        self.finishInlineCodeSnippetEditing(attachmentID: attachmentID)
-                        return true
-                    },
-                    onCancel: { [weak self] in
-                        self?.finishInlineCodeSnippetEditing(attachmentID: attachmentID)
+                rootView: CodeSnippetCanvasEditor(
+                    editingState: editingState,
+                    onDraftChanged: { [weak self, weak attachment] _ in
+                        guard let attachment, attachment.id == attachmentID else { return }
+                        self?.scheduleInlineCodeSnippetSourceSave(for: attachment)
                     }
                 )
             )
@@ -5279,15 +5634,363 @@ struct DrawingCanvasView: UIViewRepresentable {
             controller.view.frame = displayedFrame(for: attachment)
             controller.view.accessibilityIdentifier = "codeSnippet.inlineEditor"
             imageViews[attachmentID]?.isHidden = true
-            addSubview(controller.view)
+            if let overlay = attachmentEditingOverlay,
+               overlay.superview === self {
+                insertSubview(controller.view, belowSubview: overlay)
+            } else {
+                addSubview(controller.view)
+            }
+            codeSnippetEditingState = editingState
+            codeSnippetLastSavedDraft = draft
+            codeSnippetLastSourceSavedDraft = draft
+            let interfaceStyle: UIUserInterfaceStyle = isDarkAppearance ? .dark : .light
+            codeSnippetPreviewNeedsRefresh = attachment.codeSnippetPreviewVersion
+                != CodeSnippetPreviewRenderer.previewVersion(
+                    for: draft,
+                    automaticInterfaceStyle: interfaceStyle
+                )
             codeSnippetEditingController = controller
         }
 
-        private func finishInlineCodeSnippetEditing(attachmentID: UUID) {
+        @discardableResult
+        private func finishInlineCodeSnippetEditing(
+            attachmentID: UUID,
+            persistsChanges: Bool = true
+        ) -> Bool {
+            if persistsChanges {
+                commitInlineCodeSnippetTextInput()
+            }
+            codeSnippetSaveWorkItem?.cancel()
+            codeSnippetSaveWorkItem = nil
+            if persistsChanges,
+               codeSnippetEditingState?.draft.id == attachmentID,
+               let attachment = page?.visualAttachments.first(where: {
+                   $0.id == attachmentID && $0.isCodeSnippet
+               }) {
+                guard persistInlineCodeSnippet(attachment) else {
+                    _ = persistInlineCodeSnippetSource(attachment)
+                    return false
+                }
+            }
             codeSnippetEditingController?.view.removeFromSuperview()
             codeSnippetEditingController = nil
+            codeSnippetEditingState = nil
+            codeSnippetLastSavedDraft = nil
+            codeSnippetLastSourceSavedDraft = nil
+            codeSnippetPreviewNeedsRefresh = false
             imageViews[attachmentID]?.isHidden = false
-            selectedAttachmentID = nil
+            if selectedAttachmentID == attachmentID {
+                selectedAttachmentID = nil
+            }
+            return true
+        }
+
+        private func scheduleInlineCodeSnippetSourceSave(for attachment: Attachment) {
+            codeSnippetSaveWorkItem?.cancel()
+            let attachmentID = attachment.id
+            let workItem = DispatchWorkItem { [weak self, weak attachment] in
+                guard let self,
+                      let attachment,
+                      self.selectedAttachmentID == attachmentID else {
+                    return
+                }
+                self.codeSnippetSaveWorkItem = nil
+                _ = self.persistInlineCodeSnippetSource(attachment)
+            }
+            codeSnippetSaveWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.65, execute: workItem)
+        }
+
+        @discardableResult
+        private func persistInlineCodeSnippetSource(_ attachment: Attachment) -> Bool {
+            guard attachment.isCodeSnippet,
+                  let editingState = codeSnippetEditingState,
+                  editingState.draft.id == attachment.id else {
+                return false
+            }
+
+            let draft = editingState.draft
+            guard draft != codeSnippetLastSourceSavedDraft else { return true }
+            guard let saveCodeSnippetSource else {
+                // Full persistence still runs on deselection, explicit save, export,
+                // and lifecycle release when a lightweight source saver is unavailable.
+                return true
+            }
+
+            let previousSavedDraft = codeSnippetLastSourceSavedDraft
+            codeSnippetLastSourceSavedDraft = draft
+            guard saveCodeSnippetSource(draft, attachment) else {
+                codeSnippetLastSourceSavedDraft = previousSavedDraft
+                return false
+            }
+            return true
+        }
+
+        @discardableResult
+        func flushInlineCodeSnippetEdits() -> Bool {
+            commitInlineCodeSnippetTextInput()
+            codeSnippetSaveWorkItem?.cancel()
+            codeSnippetSaveWorkItem = nil
+            guard let editingState = codeSnippetEditingState else { return true }
+            guard let attachment = page?.visualAttachments.first(where: {
+                $0.id == editingState.draft.id && $0.isCodeSnippet
+            }) else {
+                return finishInlineCodeSnippetEditing(
+                    attachmentID: editingState.draft.id,
+                    persistsChanges: false
+                )
+            }
+            guard persistInlineCodeSnippet(attachment) else {
+                // A preview/render failure should not also lose the editable source.
+                // Keep the page mounted, and opportunistically persist the cheaper
+                // source payload for lifecycle recovery.
+                _ = persistInlineCodeSnippetSource(attachment)
+                return false
+            }
+            return true
+        }
+
+        /// Commit marked IME text before a deselect/export/lifecycle save. The live
+        /// UITextView deliberately does not publish while composition is active, so
+        /// reading only the SwiftUI binding here could otherwise omit the last word.
+        private func commitInlineCodeSnippetTextInput() {
+            guard let controller = codeSnippetEditingController,
+                  let editingState = codeSnippetEditingState,
+                  let textView = firstTextView(in: controller.view) else {
+                return
+            }
+
+            let markedEditContext = codeSnippetMarkedTextRange(in: textView).flatMap {
+                codeSnippetMarkedEditContext(
+                    currentText: textView.text ?? "",
+                    stableText: editingState.draft.code,
+                    markedRange: $0
+                )
+            }
+            textView.unmarkText()
+            let boundedEdit: CodeSnippetBoundedEdit
+            if let markedEditContext {
+                boundedEdit = codeSnippetBoundedMarkedEdit(
+                    currentText: textView.text ?? "",
+                    context: markedEditContext,
+                    selectedRange: textView.selectedRange,
+                    maximumUTF16Length: CodeSyntaxHighlighter.maximumHighlightedUTF16Length
+                )
+            } else {
+                boundedEdit = codeSnippetBoundedEdit(
+                    currentText: textView.text ?? "",
+                    stableText: editingState.draft.code,
+                    selectedRange: textView.selectedRange,
+                    maximumUTF16Length: CodeSyntaxHighlighter.maximumHighlightedUTF16Length
+                )
+            }
+            if textView.text != boundedEdit.text {
+                textView.text = boundedEdit.text
+            }
+            textView.selectedRange = boundedEdit.selectedRange
+            if editingState.draft.code != boundedEdit.text {
+                editingState.draft.code = boundedEdit.text
+            }
+            textView.resignFirstResponder()
+        }
+
+        private func firstTextView(in view: UIView) -> UITextView? {
+            if let textView = view as? UITextView {
+                return textView
+            }
+            for subview in view.subviews {
+                if let textView = firstTextView(in: subview) {
+                    return textView
+                }
+            }
+            return nil
+        }
+
+#if DEBUG
+        @discardableResult
+        func replaceInlineCodeSnippetDraftForTesting(_ draft: CodeSnippetDraft) -> Bool {
+            guard let editingState = codeSnippetEditingState,
+                  editingState.draft.id == draft.id else {
+                return false
+            }
+            editingState.draft = draft
+            if let attachment = page?.visualAttachments.first(where: { $0.id == draft.id }) {
+                scheduleInlineCodeSnippetSourceSave(for: attachment)
+            }
+            return true
+        }
+#endif
+
+        @discardableResult
+        private func persistInlineCodeSnippet(
+            _ attachment: Attachment,
+            force: Bool = false
+        ) -> Bool {
+            guard attachment.isCodeSnippet,
+                  let editingState = codeSnippetEditingState,
+                  editingState.draft.id == attachment.id,
+                  let saveCodeSnippet else {
+                return false
+            }
+
+            let draft = editingState.draft
+            guard force
+                    || codeSnippetPreviewNeedsRefresh
+                    || draft != codeSnippetLastSavedDraft else {
+                return true
+            }
+            let previousSavedDraft = codeSnippetLastSavedDraft
+            codeSnippetLastSavedDraft = draft
+            guard saveCodeSnippet(draft, attachment) else {
+                codeSnippetLastSavedDraft = previousSavedDraft
+                return false
+            }
+            codeSnippetLastSourceSavedDraft = draft
+            codeSnippetPreviewNeedsRefresh = false
+            discardPendingCodeSnippetPreviewRefresh(id: attachment.id)
+            attachmentEditingOverlay?.updateSettingsMenu(
+                codeSnippetSettingsMenu(for: attachment)
+            )
+            return true
+        }
+
+        private func updateSelectedCodeSnippet(
+            _ attachment: Attachment,
+            mutation: (inout CodeSnippetDraft) -> Void
+        ) {
+            guard attachment.id == selectedAttachmentID,
+                  let editingState = codeSnippetEditingState,
+                  editingState.draft.id == attachment.id else {
+                return
+            }
+
+            var draft = editingState.draft
+            mutation(&draft)
+            guard draft != editingState.draft else { return }
+            editingState.draft = draft
+            attachmentEditingOverlay?.updateSettingsMenu(
+                codeSnippetSettingsMenu(for: attachment)
+            )
+            scheduleInlineCodeSnippetSourceSave(for: attachment)
+        }
+
+        private func codeSnippetSettingsMenu(for attachment: Attachment) -> UIMenu {
+            let fallbackDraft = CodeSnippetDraft(
+                editing: attachment,
+                defaults: CodeSnippetPreferences.defaultDraft()
+            )
+            let draft = codeSnippetEditingState?.draft.id == attachment.id
+                ? codeSnippetEditingState?.draft ?? fallbackDraft
+                : fallbackDraft
+
+            let languageActions = CodeSnippetLanguage.allCases.map { language in
+                UIAction(
+                    title: language.label,
+                    state: draft.language == language ? .on : .off
+                ) { [weak self, weak attachment] _ in
+                    guard let self, let attachment else { return }
+                    self.updateSelectedCodeSnippet(attachment) {
+                        $0.language = language
+                    }
+                }
+            }
+            let languageMenu = UIMenu(
+                title: "Language",
+                image: UIImage(systemName: "chevron.left.forwardslash.chevron.right"),
+                children: languageActions
+            )
+
+            let fontActions = CodeSnippetFontChoice.allCases.map { font in
+                UIAction(
+                    title: font.label,
+                    state: draft.font == font ? .on : .off
+                ) { [weak self, weak attachment] _ in
+                    guard let self, let attachment else { return }
+                    self.updateSelectedCodeSnippet(attachment) {
+                        $0.font = font
+                    }
+                }
+            }
+            let fontMenu = UIMenu(
+                title: "Font",
+                image: UIImage(systemName: "textformat"),
+                children: fontActions
+            )
+
+            let fontSizeActions = (Int(CodeSnippetPreferences.supportedFontSize.lowerBound)...Int(CodeSnippetPreferences.supportedFontSize.upperBound)).map { size in
+                UIAction(
+                    title: "\(size) pt",
+                    state: Int(draft.fontSize.rounded()) == size ? .on : .off
+                ) { [weak self, weak attachment] _ in
+                    guard let self, let attachment else { return }
+                    self.updateSelectedCodeSnippet(attachment) {
+                        $0.fontSize = Double(size)
+                    }
+                }
+            }
+            let fontSizeMenu = UIMenu(
+                title: "Font Size",
+                image: UIImage(systemName: "textformat.size"),
+                children: fontSizeActions
+            )
+
+            let appearanceActions = CodeSnippetBackgroundStyle.allCases.map { style in
+                UIAction(
+                    title: style.label,
+                    state: draft.backgroundStyle == style ? .on : .off
+                ) { [weak self, weak attachment] _ in
+                    guard let self, let attachment else { return }
+                    self.updateSelectedCodeSnippet(attachment) {
+                        $0.backgroundStyle = style
+                    }
+                }
+            }
+            let appearanceMenu = UIMenu(
+                title: "Box Appearance",
+                image: UIImage(systemName: "circle.lefthalf.filled"),
+                children: appearanceActions
+            )
+
+            let syntaxThemeActions = CodeSnippetSyntaxTheme.allCases.map { theme in
+                UIAction(
+                    title: theme.label,
+                    state: draft.syntaxTheme == theme ? .on : .off
+                ) { [weak self, weak attachment] _ in
+                    guard let self, let attachment else { return }
+                    self.updateSelectedCodeSnippet(attachment) {
+                        $0.syntaxTheme = theme
+                    }
+                }
+            }
+            let syntaxThemeMenu = UIMenu(
+                title: "Syntax Theme",
+                image: UIImage(systemName: "paintpalette"),
+                children: syntaxThemeActions
+            )
+
+            let remove = UIAction(
+                title: "Remove Code Snippet",
+                image: UIImage(systemName: "trash"),
+                attributes: .destructive
+            ) { [weak self, weak attachment] _ in
+                guard let self,
+                      let attachment,
+                      self.selectedAttachmentID == attachment.id else {
+                    return
+                }
+                // Keep the live draft mounted until the parent confirmation resolves.
+                // Cancelling deletion must return to the same pending text and settings.
+                self.deleteAttachment?(attachment)
+            }
+
+            return UIMenu(children: [
+                languageMenu,
+                fontMenu,
+                fontSizeMenu,
+                appearanceMenu,
+                syntaxThemeMenu,
+                remove
+            ])
         }
 
         private func displayedFrame(for attachment: Attachment) -> CGRect {
@@ -5298,15 +6001,21 @@ struct DrawingCanvasView: UIViewRepresentable {
             return attachment.normalizedFrame(for: page?.pageSize)
         }
 
-        func clearAttachmentSelection() {
+        @discardableResult
+        func clearAttachmentSelection() -> Bool {
             if let selectedAttachmentID {
-                finishInlineCodeSnippetEditing(attachmentID: selectedAttachmentID)
+                guard finishInlineCodeSnippetEditing(
+                    attachmentID: selectedAttachmentID
+                ) else {
+                    return false
+                }
             }
             selectedAttachmentID = nil
             attachmentEditingOverlay?.removeFromSuperview()
             attachmentEditingOverlay = nil
             attachmentEditingHostView?.removeFromSuperview()
             attachmentEditingHostView = nil
+            return true
         }
 
         private func topmostEditableAttachment(at point: CGPoint) -> Attachment? {
@@ -5745,13 +6454,20 @@ struct DrawingCanvasView: UIViewRepresentable {
                 insertSubview(foregroundImageContainerView, aboveSubview: drawingViewportView)
             }
 
+            if let editorView = codeSnippetEditingController?.view,
+               editorView.superview === self {
+                bringSubviewToFront(editorView)
+            }
             if let attachmentEditingOverlay, attachmentEditingOverlay.superview === self {
                 bringSubviewToFront(attachmentEditingOverlay)
             }
             bringSubviewToFront(eraserScopeView)
         }
 
-        func releaseHeavyResources(evictCachedImages: Bool = false) {
+        @discardableResult
+        func releaseHeavyResources(evictCachedImages: Bool = false) -> Bool {
+            guard clearAttachmentSelection() else { return false }
+            cancelPendingCodeSnippetPreviewRefreshes()
             restoreForegroundImagesToPage()
             pendingNativeViewport = nil
             drawingViewportView.isHidden = true
@@ -5765,8 +6481,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             imageViews.removeAll()
-            clearAttachmentSelection()
             hasConfiguredImageAttachments = false
+            return true
         }
     }
 
@@ -6156,6 +6872,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private let outerBorderView = UIView()
         private let innerBorderView = UIView()
         private let deleteButton = UIButton(type: .custom)
+        private let settingsButton = UIButton(type: .custom)
+        private let settingsVisualView = UIImageView()
         private weak var attachment: Attachment?
         private var pageSize: CGSize = .zero
         private var dragStart: CGRect?
@@ -6164,10 +6882,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var previewFrame: CGRect?
         private var frameChanged: ((CGRect) -> Void)?
         private var changeCommitted: (() -> Void)?
+        private var resizeCommitted: (() -> Void)?
         private var deleteRequested: (() -> Void)?
         private var dismiss: (() -> Void)?
         private(set) var editingPanGestureRecognizers: [UIPanGestureRecognizer] = []
-        private let resizeHitWidth: CGFloat = 22
+        private let resizeHitWidth: CGFloat = 24
 
         var displayedFrame: CGRect {
             previewFrame ?? frame
@@ -6188,12 +6907,15 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageSize: CGSize,
             frameChanged: @escaping (CGRect) -> Void,
             changeCommitted: @escaping () -> Void,
+            resizeCommitted: @escaping () -> Void = {},
             deleteRequested: @escaping () -> Void,
-            dismiss: @escaping () -> Void
+            dismiss: @escaping () -> Void,
+            settingsMenu: UIMenu? = nil
         ) {
             self.attachment = attachment
             self.frameChanged = frameChanged
             self.changeCommitted = changeCommitted
+            self.resizeCommitted = resizeCommitted
             self.deleteRequested = deleteRequested
             self.dismiss = dismiss
             if let previewFrame {
@@ -6205,7 +6927,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             outerBorderView.accessibilityLabel = "Selected \(attachment.displayName)"
-            outerBorderView.accessibilityHint = "Drag the item to move it, or drag an edge or corner to resize it"
+            outerBorderView.accessibilityValue = attachment.isCodeSnippet
+                ? "Ready for Apple Pencil or keyboard input"
+                : nil
+            outerBorderView.accessibilityHint = attachment.isCodeSnippet
+                ? "Drag the header to move, drag an edge or corner to resize, or choose Settings for code options"
+                : "Drag the item to move it, or drag an edge or corner to resize it"
             var accessibilityActions = [
                 UIAccessibilityCustomAction(name: "Move left") { [weak self] _ in
                     self?.nudge(by: CGPoint(x: -8, y: 0)) ?? false
@@ -6234,10 +6961,36 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
             )
             outerBorderView.accessibilityCustomActions = accessibilityActions
+            let selectionColor = attachment.isCodeSnippet
+                ? UIColor.systemGreen
+                : UIColor.separator
+            outerBorderView.layer.borderWidth = attachment.isCodeSnippet ? 2 : 0
+            outerBorderView.layer.borderColor = selectionColor.cgColor
+            outerBorderView.layer.cornerRadius = attachment.isCodeSnippet
+                ? CodeSnippetLayout.cornerRadius
+                : 0
+            innerBorderView.layer.borderColor = selectionColor.withAlphaComponent(
+                attachment.isCodeSnippet ? 0.72 : 0.9
+            ).cgColor
+            innerBorderView.layer.cornerRadius = attachment.isCodeSnippet
+                ? max(CodeSnippetLayout.cornerRadius - 1, 0)
+                : 0
+            deleteButton.isHidden = attachment.isCodeSnippet
+            settingsButton.isHidden = !attachment.isCodeSnippet
+            settingsVisualView.isHidden = !attachment.isCodeSnippet
+            settingsButton.menu = settingsMenu
+            settingsButton.showsMenuAsPrimaryAction = attachment.isCodeSnippet
             deleteButton.accessibilityLabel = "Delete \(attachment.displayName)"
             deleteButton.accessibilityHint = attachment.isCodeSnippet
                 ? "Removes the code snippet after confirmation"
                 : "Removes the image after confirmation"
+            settingsButton.accessibilityLabel = "Code snippet settings"
+            settingsButton.accessibilityHint = "Changes font size, font, theme, language, or removes the code snippet"
+            settingsButton.accessibilityIdentifier = "codeSnippet.settings"
+        }
+
+        func updateSettingsMenu(_ menu: UIMenu) {
+            settingsButton.menu = menu
         }
 
         func updateFrame(_ frame: CGRect, pageSize: CGSize) {
@@ -6250,11 +7003,51 @@ struct DrawingCanvasView: UIViewRepresentable {
             super.layoutSubviews()
             outerBorderView.frame = bounds
             innerBorderView.frame = bounds.insetBy(dx: 1, dy: 1)
-            let controlSize: CGFloat = 44
-            let controlGap: CGFloat = 8
+            let horizontalScale = localToScreenScale(horizontal: true)
+            let verticalScale = localToScreenScale(horizontal: false)
+            let screenScale = max(min(horizontalScale, verticalScale), 0.05)
+            let availableInternalControlSize = max(min(bounds.width, bounds.height) - 4, 1)
+            let screenCompensatedControlSize = max(44, 44 / screenScale)
+            let controlSize = attachment?.isCodeSnippet == true
+                ? min(screenCompensatedControlSize, availableInternalControlSize)
+                : screenCompensatedControlSize
+            let controlGap = max(8, 8 / screenScale)
             let controlOffset = controlSize + controlGap
-
-            if frame.minY >= controlOffset {
+            let symbolPointSize = max(18, 18 / screenScale)
+            updateControlSymbolSize(deleteButton, pointSize: symbolPointSize)
+            if attachment?.isCodeSnippet == true {
+                // Keep the visible gear inside the snippet. Its transparent menu button
+                // remains screen-size compensated so it is still easy to hit while zoomed.
+                let visualSize = min(
+                    30,
+                    max(min(bounds.width, bounds.height) - 12, 24)
+                )
+                let visualInset = min(
+                    7,
+                    max((min(bounds.width, bounds.height) - visualSize) / 2, 4)
+                )
+                settingsVisualView.frame = CGRect(
+                    x: bounds.maxX - visualInset - visualSize,
+                    y: bounds.minY + visualInset,
+                    width: visualSize,
+                    height: visualSize
+                )
+                settingsVisualView.layer.cornerRadius = visualSize / 2
+                settingsVisualView.image = UIImage(
+                    systemName: "gearshape.fill",
+                    withConfiguration: UIImage.SymbolConfiguration(
+                        pointSize: min(16, visualSize * 0.58),
+                        weight: .semibold
+                    )
+                )
+                settingsButton.frame = CGRect(
+                    x: bounds.maxX - min(controlSize, bounds.width),
+                    y: bounds.minY,
+                    width: min(controlSize, bounds.width),
+                    height: min(controlSize, bounds.height)
+                )
+                deleteButton.frame = settingsButton.frame
+            } else if frame.minY >= controlOffset {
                 deleteButton.frame = CGRect(
                     x: bounds.maxX - controlSize,
                     y: -controlOffset,
@@ -6283,7 +7076,18 @@ struct DrawingCanvasView: UIViewRepresentable {
                     height: controlSize
                 )
             }
+            if attachment?.isCodeSnippet != true {
+                settingsButton.frame = deleteButton.frame
+            }
+        }
 
+        private func updateControlSymbolSize(_ button: UIButton, pointSize: CGFloat) {
+            guard var configuration = button.configuration else { return }
+            configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+                pointSize: pointSize,
+                weight: .semibold
+            )
+            button.configuration = configuration
         }
 
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -6296,9 +7100,35 @@ struct DrawingCanvasView: UIViewRepresentable {
                deleteButton.alpha > 0.01 {
                 return deleteButton.hitTest(deleteButton.convert(point, from: self), with: event)
             }
+            if attachment?.isCodeSnippet == true,
+               bounds.contains(point),
+               point.x >= bounds.maxX - effectiveSettingsCornerResizeHitWidth,
+               point.y <= bounds.minY + effectiveSettingsCornerResizeHitWidth {
+                // Keep a dedicated top-right vertex available even though the
+                // settings button intentionally has a larger transparent hit target.
+                return self
+            }
+            if settingsButton.frame.contains(point),
+               !settingsButton.isHidden,
+               settingsButton.alpha > 0.01 {
+                return settingsButton.hitTest(settingsButton.convert(point, from: self), with: event)
+            }
 
-            let resizeRegion = bounds.insetBy(dx: -resizeHitWidth, dy: -resizeHitWidth)
-            return resizeRegion.contains(point) ? self : nil
+            let hitWidth = effectiveResizeHitWidth
+            let resizeRegion = bounds.insetBy(dx: -hitWidth, dy: -hitWidth)
+            guard resizeRegion.contains(point) else { return nil }
+            guard attachment?.isCodeSnippet == true else { return self }
+
+            // Let the live text view own the snippet body for cursor placement,
+            // keyboard input, and Apple Pencil Scribble. The border resizes and the
+            // header area remains a generous move handle.
+            let isOnResizeEdge = point.x <= hitWidth
+                || point.x >= bounds.width - hitWidth
+                || point.y <= hitWidth
+                || point.y >= bounds.height - hitWidth
+            let isInMoveHeader = bounds.contains(point)
+                && point.y <= effectiveMoveHeaderHeight
+            return isOnResizeEdge || isInMoveHeader ? self : nil
         }
 
         private func configureView() {
@@ -6324,6 +7154,23 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
             deleteButton.addTarget(self, action: #selector(requestDeletion), for: .touchUpInside)
             addSubview(deleteButton)
+
+            settingsVisualView.image = UIImage(systemName: "gearshape.fill")
+            settingsVisualView.tintColor = .white
+            settingsVisualView.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.94)
+            settingsVisualView.contentMode = .center
+            settingsVisualView.isUserInteractionEnabled = false
+            settingsVisualView.isHidden = true
+            settingsVisualView.accessibilityIdentifier = "codeSnippet.settings.visual"
+            settingsVisualView.accessibilityElementsHidden = true
+            addSubview(settingsVisualView)
+
+            settingsButton.configuration = .plain()
+            settingsButton.backgroundColor = .clear
+            settingsButton.isAccessibilityElement = true
+            settingsButton.showsMenuAsPrimaryAction = true
+            settingsButton.isHidden = true
+            addSubview(settingsButton)
 
             let editingGesture = UIPanGestureRecognizer(target: self, action: #selector(handleEditingPan(_:)))
             editingGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -6357,6 +7204,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard let touchedView = touch.view else { return true }
             return touchedView !== deleteButton
                 && !touchedView.isDescendant(of: deleteButton)
+                && touchedView !== settingsButton
+                && !touchedView.isDescendant(of: settingsButton)
         }
 
         func gestureRecognizer(
@@ -6408,7 +7257,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                         from: resizeStart,
                         translation: translation,
                         pageSize: pageSize,
-                        handle: activeResizeHandle
+                        handle: activeResizeHandle,
+                        minimumLongEdge: attachment.isCodeSnippet
+                            ? CodeSnippetLayout.minimumFrameLongEdge
+                            : AttachmentEditingGeometry.minimumResizeLongEdge,
+                        minimumSize: attachment.isCodeSnippet
+                            ? CodeSnippetLayout.minimumFrameSize
+                            : nil,
+                        resizesEdgesIndependently: attachment.isCodeSnippet
                     ))
                 } else if let dragStart {
                     applyPreview(AttachmentEditingGeometry.movedFrame(
@@ -6418,10 +7274,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                     ))
                 }
             case .ended:
-                commitPreview(startingAt: resizeStart ?? dragStart)
+                let wasResizing = resizeStart != nil
+                let didCommit = commitPreview(startingAt: resizeStart ?? dragStart)
                 dragStart = nil
                 activeResizeHandle = nil
                 resizeStart = nil
+                if wasResizing, didCommit {
+                    resizeCommitted?()
+                }
             case .cancelled, .failed:
                 if let startFrame = resizeStart ?? dragStart {
                     applyPreview(startFrame)
@@ -6436,10 +7296,21 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func resizeHandle(at point: CGPoint) -> AttachmentResizeHandle? {
-            let isNearLeft = point.x <= resizeHitWidth
-            let isNearRight = point.x >= bounds.width - resizeHitWidth
-            let isNearTop = point.y <= resizeHitWidth
-            let isNearBottom = point.y >= bounds.height - resizeHitWidth
+            let hitWidth = effectiveResizeHitWidth
+            let isNearLeft = point.x <= hitWidth
+            let isNearRight = point.x >= bounds.width - hitWidth
+            let isNearTop = point.y <= hitWidth
+            let isNearBottom = point.y >= bounds.height - hitWidth
+
+            if attachment?.isCodeSnippet == true,
+               point.y <= effectiveMoveHeaderHeight,
+               !isNearLeft,
+               !isNearRight,
+               point.y > effectiveTopResizeHitHeight {
+                // The center of the header moves the snippet. Its shallow top strip
+                // remains available for vertical-only resizing.
+                return nil
+            }
 
             switch (isNearLeft, isNearRight, isNearTop, isNearBottom) {
             case (true, _, true, _): return .topLeft
@@ -6452,6 +7323,63 @@ struct DrawingCanvasView: UIViewRepresentable {
             case (true, _, _, _): return .left
             default: return nil
             }
+        }
+
+        private var effectiveResizeHitWidth: CGFloat {
+            guard bounds.width > 0, bounds.height > 0 else { return resizeHitWidth }
+            let scale = localToScreenScale(horizontal: true)
+            let screenCompensatedWidth = resizeHitWidth / max(scale, 0.05)
+            return min(
+                max(resizeHitWidth, screenCompensatedWidth),
+                min(bounds.width, bounds.height) * 0.32
+            )
+        }
+
+        private var effectiveSettingsCornerResizeHitWidth: CGFloat {
+            let horizontalScale = localToScreenScale(horizontal: true)
+            let verticalScale = localToScreenScale(horizontal: false)
+            let screenScale = max(min(horizontalScale, verticalScale), 0.05)
+            return min(max(10, 12 / screenScale), effectiveResizeHitWidth)
+        }
+
+        private var effectiveTopResizeHitHeight: CGFloat {
+            let scale = max(localToScreenScale(horizontal: false), 0.05)
+            return min(
+                max(10, 12 / scale),
+                effectiveResizeHitWidth,
+                effectiveMoveHeaderHeight * 0.4
+            )
+        }
+
+        private var effectiveMoveHeaderHeight: CGFloat {
+            guard bounds.height > 0 else { return CodeSnippetLayout.headerHeight }
+            let scale = localToScreenScale(horizontal: false)
+            let accessibleScreenHeight: CGFloat = 44
+            let requestedHeight = max(
+                CodeSnippetLayout.headerHeight,
+                accessibleScreenHeight / max(scale, 0.05)
+            )
+            // At minimum size and a distant zoom, independently compensating the
+            // header and bottom resize edge can make their hit regions overlap and
+            // swallow every tap intended for the UITextView. Always preserve at
+            // least one logical header-height of body content for cursor placement.
+            let maximumHeightLeavingEditableBody = max(
+                CodeSnippetLayout.headerHeight,
+                bounds.height
+                    - effectiveResizeHitWidth
+                    - CodeSnippetLayout.headerHeight
+            )
+            return min(requestedHeight, maximumHeightLeavingEditableBody, bounds.height)
+        }
+
+        private func localToScreenScale(horizontal: Bool) -> CGFloat {
+            let origin = convert(CGPoint.zero, to: nil)
+            let unitPoint = convert(
+                horizontal ? CGPoint(x: 1, y: 0) : CGPoint(x: 0, y: 1),
+                to: nil
+            )
+            let scale = hypot(unitPoint.x - origin.x, unitPoint.y - origin.y)
+            return scale.isFinite && scale > 0 ? scale : 1
         }
 
         private func nudge(by translation: CGPoint) -> Bool {
@@ -6473,10 +7401,20 @@ struct DrawingCanvasView: UIViewRepresentable {
                 from: startFrame,
                 translation: translation,
                 pageSize: pageSize,
-                handle: .bottomRight
+                handle: .bottomRight,
+                minimumLongEdge: attachment.isCodeSnippet
+                    ? CodeSnippetLayout.minimumFrameLongEdge
+                    : AttachmentEditingGeometry.minimumResizeLongEdge,
+                minimumSize: attachment.isCodeSnippet
+                    ? CodeSnippetLayout.minimumFrameSize
+                    : nil,
+                resizesEdgesIndependently: attachment.isCodeSnippet
             ))
-            commitPreview(startingAt: startFrame)
-            return true
+            let didCommit = commitPreview(startingAt: startFrame)
+            if didCommit {
+                resizeCommitted?()
+            }
+            return didCommit
         }
 
         /// Updates only UIKit state while a gesture is active. Writing SwiftData here
@@ -6488,18 +7426,20 @@ struct DrawingCanvasView: UIViewRepresentable {
             frameChanged?(frame)
         }
 
-        func commitPreview(startingAt startFrame: CGRect?) {
+        @discardableResult
+        func commitPreview(startingAt startFrame: CGRect?) -> Bool {
             guard let attachment,
                   let startFrame,
                   let previewFrame,
                   previewFrame != startFrame else {
                 self.previewFrame = nil
-                return
+                return false
             }
 
             attachment.frame = previewFrame
             self.previewFrame = nil
             changeCommitted?()
+            return true
         }
     }
 
@@ -6560,6 +7500,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var isImageLoadingEnabled = true
         private var isDocumentTraversalActive = false
         private var isDrawingInteractionActive = false
+        private var selectionRequested: (() -> Void)?
 
         var isRasterImageLoaded: Bool {
             imageView.image != nil
@@ -6637,10 +7578,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageSize: CGSize,
             vectorSourceURL: URL? = nil,
             vectorPageIndex: Int? = nil,
-            changed: @escaping () -> Void
+            changed: @escaping () -> Void,
+            selectionRequested: (() -> Void)? = nil
         ) {
             self.attachment = attachment
             self.pageSize = pageSize
+            self.selectionRequested = selectionRequested
 
             // Establish final logical geometry before starting the source PDF render.
             // Every quality tier is displayed in this same immutable attachment frame.
@@ -6706,10 +7649,22 @@ struct DrawingCanvasView: UIViewRepresentable {
             // Image pixels are document content only. Selection chrome and editing
             // gestures live in a separate layer above PencilKit.
             isUserInteractionEnabled = false
+            isAccessibilityElement = attachment.isCodeSnippet && !attachment.isLocked
+            accessibilityTraits = attachment.isCodeSnippet ? [.button] : []
+            accessibilityLabel = attachment.isCodeSnippet ? attachment.displayName : nil
+            accessibilityHint = attachment.isCodeSnippet
+                ? "Selects this code snippet for typing, Apple Pencil writing, moving, resizing, and settings"
+                : nil
             layer.borderWidth = 0
             layer.borderColor = nil
             backgroundColor = .clear
             setNeedsLayout()
+        }
+
+        override func accessibilityActivate() -> Bool {
+            guard isAccessibilityElement, let selectionRequested else { return false }
+            selectionRequested()
+            return true
         }
 
         override func layoutSubviews() {
@@ -7149,6 +8104,21 @@ struct DrawingCanvasView: UIViewRepresentable {
             return parent.saveCodeSnippet(draft, attachment)
         }
 
+        func saveCodeSnippetSource(
+            _ draft: CodeSnippetDraft,
+            attachment: Attachment
+        ) -> Bool {
+            guard attachment.isCodeSnippet else { return false }
+            return parent.saveCodeSnippetSource(draft, attachment)
+        }
+
+        func failExportPreparationForUnsavedCodeSnippet(requestID: Int) {
+            let exportPreparationCompleted = parent.exportPreparationCompleted
+            dispatchToSwiftUI {
+                exportPreparationCompleted(requestID, .failure(ImportExportError.exportFailed))
+            }
+        }
+
         func requestPageAction(_ action: NotePageContextAction, for pageID: UUID) {
             let pageActionRequested = parent.pageActionRequested
             dispatchToSwiftUI {
@@ -7166,7 +8136,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             let snapshot = NotePageRenderSnapshot(
                 page: page,
                 theme: parent.theme,
-                showsBeanArtwork: parent.showsBeanArtwork
+                showsBeanArtwork: parent.showsBeanArtwork,
+                automaticInterfaceStyle: parent.isDarkAppearance ? .dark : .light
             )
             let rootURL = parent.drawingStorage.storage.rootURL
             let captureFailed = parent.captureFailed
@@ -8410,6 +9381,19 @@ struct DrawingCanvasView: UIViewRepresentable {
             let id = ObjectIdentifier(canvasView)
             activeToolCanvasIDs.insert(id)
             let activePageView = canvasPageViews[id]?.value
+            let registeredPage = canvasPages[id]
+            let activePageID: UUID? = if containerView?.isContinuousCanvas(canvasView) == true {
+                containerView?.currentSelectedPageID ?? registeredPage?.id
+            } else {
+                registeredPage?.id
+            }
+            if containerView?.isContinuousCanvas(canvasView) == true {
+                // Pencil input inside a selected snippet is intercepted by its live
+                // text editor for Scribble. Reaching the document canvas therefore
+                // means the user started ordinary page ink outside the snippet.
+                containerView?.clearAttachmentSelectionsForContinuousDrawing()
+            }
+            containerView?.setActiveDrawingPage(id: activePageID)
             containerView?.setDrawingInteractionActive(
                 true,
                 prioritizing: activePageView
@@ -8417,7 +9401,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             if parent.toolState.temporaryEraserActive {
                 temporaryEraserCanvasIDs.insert(id)
             }
-            if let page = canvasPages[id] {
+            if let page = registeredPage {
                 let affectedPageIDs = containerView?.isContinuousCanvas(canvasView) == true
                     ? containerView?.continuousPageIDs ?? [page.id]
                     : [page.id]
@@ -8426,7 +9410,6 @@ struct DrawingCanvasView: UIViewRepresentable {
                     pendingSaves[pageID] = nil
                     pendingSaveTokens[pageID] = nil
                 }
-                containerView?.setActiveDrawingPage(id: page.id)
             }
             activePageView?.setLiveDrawingActive(true)
         }

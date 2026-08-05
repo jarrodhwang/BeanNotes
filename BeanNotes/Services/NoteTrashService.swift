@@ -146,7 +146,7 @@ private extension LocalStorageCleanupTarget {
         var cleanupTarget = self
         cleanupTarget.relativePaths.subtract(retainedTarget.relativePaths)
         cleanupTarget.drawingFileNames.subtract(retainedTarget.drawingFileNames)
-        cleanupTarget.exportedNoteTitlePrefixes.subtract(retainedTarget.exportedNoteTitlePrefixes)
+        cleanupTarget.exportedNoteIDs.subtract(retainedTarget.exportedNoteIDs)
         return cleanupTarget
     }
 }

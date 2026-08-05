@@ -11,6 +11,7 @@ struct PenPaletteView: View {
     var availableSize: CGSize = UIScreen.main.bounds.size
     var zoomScale: CGFloat = 1
     var strokeZoomBehavior: DrawingStrokeZoomBehavior = .pageWidth
+    var showsCodeSnippetButton = true
     var createCodeSnippet: () -> Void = {}
 
     @AppStorage(PenPaletteLayoutMetrics.isCollapsedStorageKey) private var isCollapsed = false
@@ -182,21 +183,22 @@ struct PenPaletteView: View {
                 toolButton(tool)
             }
 
-            Button {
-                performSelectionFeedback()
-                createCodeSnippet()
-            } label: {
-                Image(systemName: "curlybraces.square")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, height: 38)
+            if showsCodeSnippetButton {
+                Button {
+                    performSelectionFeedback()
+                    createCodeSnippet()
+                } label: {
+                    Image(systemName: "curlybraces.square")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 38, height: 38)
+                }
+                .buttonStyle(.plain)
+                .palettePrimaryHitTarget()
+                .accessibilityLabel("Add code snippet")
+                .accessibilityHint("Opens an editor for highlighted code, pasted text, or Apple Pencil handwriting")
+                .accessibilityIdentifier("penPalette.codeSnippet")
             }
-            .buttonStyle(.plain)
-            .palettePrimaryHitTarget()
-            .accessibilityLabel("Add code snippet")
-            .accessibilityHint("Opens an editor for highlighted code, pasted text, or Apple Pencil handwriting")
-            .accessibilityIdentifier("penPalette.codeSnippet")
-
         }
     }
 
