@@ -712,7 +712,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         var activeCanvasView: PKCanvasView? {
-            if pageFlowMode == .seamless {
+            if pageFlowMode.usesDocumentWideCanvas {
                 return continuousPageView?.canvasView
             }
 
@@ -800,7 +800,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private var isContinuousDrawingEnabled: Bool {
-            pageFlowMode == .seamless && continuousPageView != nil
+            pageFlowMode.usesDocumentWideCanvas && continuousPageView != nil
         }
 
         func setTopContentView(_ view: UIView?) {
@@ -851,7 +851,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             self.pageFlowMode = pageFlowMode
-            seamlessAttachmentSelectionGesture?.isEnabled = pageFlowMode == .seamless
+            seamlessAttachmentSelectionGesture?.isEnabled = pageFlowMode.usesDocumentWideCanvas
             self.inputMode = inputMode
             self.renderQuality = renderQuality
             self.theme = theme
@@ -1554,7 +1554,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             var y: CGFloat = 0
             var frames: [UUID: CGRect] = [:]
-            let pageGap = pageFlowMode == .seamless ? 0 : separatedPageGap
+            let pageGap = pageFlowMode.usesFlushPageLayout ? 0 : separatedPageGap
 
             if let topContentView {
                 topContentView.frame = CGRect(x: 0, y: 0, width: maxWidth, height: topContentHeight)
@@ -1585,12 +1585,12 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             let footerY = y + addPageFooterTopPadding
             addPageFooterButton.isHidden = false
-            let extendsContinuousCanvas = pageFlowMode == .seamless
-            addPageFooterButton.accessibilityLabel = extendsContinuousCanvas
+            let extendsScrollableDocument = pageFlowMode.usesFlushPageLayout
+            addPageFooterButton.accessibilityLabel = extendsScrollableDocument
                 ? "Add drawing space"
                 : "Add page"
-            addPageFooterButton.accessibilityHint = extendsContinuousCanvas
-                ? "Extends the continuous drawing canvas"
+            addPageFooterButton.accessibilityHint = extendsScrollableDocument
+                ? "Adds drawing space to the end of this note"
                 : "Adds a new page to the end of this note"
             addPageFooterButton.frame = CGRect(
                 x: (maxWidth - addPageFooterSize) / 2,
@@ -1621,7 +1621,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func configureContinuousPageViewIfNeeded(reloadsDrawing: Bool) {
-            guard pageFlowMode == .seamless,
+            guard pageFlowMode.usesDocumentWideCanvas,
                   let drawingStorage,
                   let coordinator,
                   let representativePage = orderedPageIDs.first.flatMap({ pagesByID[$0] }),
@@ -1835,7 +1835,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             for pageView in pageViews.values {
                 pageView.setCaptureInteractionEnabled(isCaptureToolEnabled)
             }
-            seamlessAttachmentSelectionGesture?.isEnabled = pageFlowMode == .seamless && !isCaptureToolEnabled
+            seamlessAttachmentSelectionGesture?.isEnabled = pageFlowMode.usesDocumentWideCanvas
+                && !isCaptureToolEnabled
         }
 
         private func updateCaptureSelectionOverlay(resetSelection: Bool = false) {
@@ -2233,7 +2234,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         /// so their local tap recognizers cannot receive the touch directly.
         @discardableResult
         func selectSeamlessAttachment(at documentPoint: CGPoint) -> Bool {
-            guard pageFlowMode == .seamless else { return false }
+            guard pageFlowMode.usesDocumentWideCanvas else { return false }
 
             guard let target = seamlessAttachmentTarget(at: documentPoint) else {
                 for pageView in pageViews.values {
@@ -2293,7 +2294,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             shouldReceive touch: UITouch
         ) -> Bool {
             guard gestureRecognizer === seamlessAttachmentSelectionGesture,
-                  pageFlowMode == .seamless else {
+                  pageFlowMode.usesDocumentWideCanvas else {
                 return true
             }
 
@@ -2401,8 +2402,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                     },
                     isDarkAppearance: coordinator.parent.isDarkAppearance,
                     canRemovePage: orderedPageIDs.count > 1,
-                    drawingEnabled: pageFlowMode != .seamless,
-                    seamlessAppearance: pageFlowMode == .seamless,
+                    drawingEnabled: !pageFlowMode.usesDocumentWideCanvas,
+                    flushAppearance: pageFlowMode.usesFlushPageLayout,
                     pageActionRequested: { [weak coordinator] pageID, action in
                         coordinator?.requestPageAction(action, for: pageID)
                     },
@@ -2422,7 +2423,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             // editor and controls remain above the continuous PencilKit canvas.
             pageView.accessibilityAttachmentSelectionRequested = { [weak self, weak pageView] attachment in
                 guard let self, let pageView else { return }
-                if self.pageFlowMode == .seamless,
+                if self.pageFlowMode.usesDocumentWideCanvas,
                    let documentFrame = self.pageFrames[id] {
                     _ = self.selectSeamlessAttachment(
                         pageView: pageView,
@@ -4454,7 +4455,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             isDarkAppearance: Bool = false,
             canRemovePage: Bool = false,
             drawingEnabled: Bool = true,
-            seamlessAppearance: Bool = false,
+            flushAppearance: Bool = false,
             pageActionRequested: @escaping (UUID, NotePageContextAction) -> Void = { _, _ in },
             pageContextMenuWillOpen: @escaping (UUID) -> Void = { _ in }
         ) {
@@ -4489,7 +4490,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             self.pageContextMenuWillOpen = pageContextMenuWillOpen
             self.pageIDForPageAction = { _ in page.id }
             activePageActionPageID = nil
-            layer.shadowOpacity = seamlessAppearance ? 0 : 0.12
+            layer.shadowOpacity = flushAppearance ? 0 : 0.12
             backgroundView.isHidden = false
             behindImageContainerView.isHidden = false
             foregroundImageContainerView.isHidden = false

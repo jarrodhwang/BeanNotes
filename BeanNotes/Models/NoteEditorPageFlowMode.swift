@@ -27,7 +27,7 @@ enum NoteEditorPageLayoutMode: String, CaseIterable, Identifiable {
         case .singlePage:
             "Keep each page visually separate while scrolling through the note."
         case .scroll:
-            "Scroll through lazily loaded pages and extend the note with the add button."
+            "Scroll through lazily loaded drawing sections and extend the note with the add-space button."
         }
     }
 
@@ -83,6 +83,23 @@ enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Page sections visually meet in scrolling layouts, regardless of whether each
+    /// section owns a bounded canvas or the legacy mode uses one document-wide canvas.
+    var usesFlushPageLayout: Bool {
+        switch self {
+        case .continuous, .infinite, .seamless:
+            true
+        case .singlePage, .separated:
+            false
+        }
+    }
+
+    /// Only the legacy seamless mode joins every page's ink into one PencilKit view.
+    /// Keep this separate from visual layout so Scrollable can remain virtualized.
+    var usesDocumentWideCanvas: Bool {
+        self == .seamless
+    }
+
     var migratedLayoutMode: NoteEditorPageLayoutMode {
         switch self {
         case .singlePage, .separated:
@@ -93,7 +110,7 @@ enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
     }
 
     func pageStatusText(currentPage: Int, totalPages: Int) -> String {
-        if self == .seamless {
+        if usesDocumentWideCanvas {
             return "Continuous canvas"
         }
         return "Page \(currentPage) / \(totalPages)"

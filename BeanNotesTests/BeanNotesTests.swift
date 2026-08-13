@@ -2974,6 +2974,9 @@ struct BeanNotesTests {
         #expect(NoteEditorPageLayoutMode.allCases.map(\.label) == ["One Page", "Scrollable"])
         #expect(NoteEditorPageLayoutMode.singlePage.pageFlowMode == .separated)
         #expect(NoteEditorPageLayoutMode.scroll.pageFlowMode == .continuous)
+        #expect(NoteEditorPageFlowMode.continuous.usesFlushPageLayout)
+        #expect(!NoteEditorPageFlowMode.continuous.usesDocumentWideCanvas)
+        #expect(NoteEditorPageFlowMode.seamless.usesDocumentWideCanvas)
         #expect(NoteEditorPageFlowMode.singlePage.migratedLayoutMode == .singlePage)
         #expect(NoteEditorPageFlowMode.continuous.migratedLayoutMode == .scroll)
         #expect(NoteEditorPageFlowMode.infinite.migratedLayoutMode == .scroll)
@@ -6525,7 +6528,7 @@ struct BeanNotesTests {
         #expect(canvas.drawingGestureRecognizer.isEnabled)
     }
 
-    @Test @MainActor func paginationModesUseFlushOrSeparatedPageSpacing() throws {
+    @Test @MainActor func publicPaginationModesUseFlushDistinctOrSeparatedPages() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesPaginationSpacing-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -6567,7 +6570,7 @@ struct BeanNotesTests {
         container.configure(
             pages: pages,
             selectedPageID: pages[0].id,
-            pageFlowMode: .separated,
+            pageFlowMode: NoteEditorPageLayoutMode.singlePage.pageFlowMode,
             inputMode: .pencilOnly,
             renderQuality: .balanced,
             drawingStorage: drawingStorage,
@@ -6576,14 +6579,20 @@ struct BeanNotesTests {
         container.setNeedsLayout()
         container.layoutIfNeeded()
         let separatedFrames = try pageFrames()
+        let separatedPageViews = try pages.map {
+            try #require(container.pageCanvasViewForTesting(pageID: $0.id))
+        }
         #expect(abs(separatedFrames[1].minY - separatedFrames[0].maxY - 28) < 0.01)
+        #expect(separatedPageViews.allSatisfy { $0.layer.shadowOpacity > 0 })
+        #expect(separatedPageViews.allSatisfy { !container.isContinuousCanvas($0.canvasView) })
+        #expect(separatedPageViews[0].canvasView !== separatedPageViews[1].canvasView)
         #expect(!container.addPageFooterButton.isHidden)
         #expect(container.addPageFooterButton.accessibilityIdentifier == "editor.addPageFooter")
 
         container.configure(
             pages: pages,
             selectedPageID: pages[0].id,
-            pageFlowMode: .seamless,
+            pageFlowMode: NoteEditorPageLayoutMode.scroll.pageFlowMode,
             inputMode: .pencilOnly,
             renderQuality: .balanced,
             drawingStorage: drawingStorage,
@@ -6591,11 +6600,86 @@ struct BeanNotesTests {
         )
         container.setNeedsLayout()
         container.layoutIfNeeded()
-        let seamlessFrames = try pageFrames()
-        #expect(abs(seamlessFrames[1].minY - seamlessFrames[0].maxY) < 0.01)
+        let scrollableFrames = try pageFrames()
+        let scrollablePageViews = try pages.map {
+            try #require(container.pageCanvasViewForTesting(pageID: $0.id))
+        }
+        #expect(abs(scrollableFrames[1].minY - scrollableFrames[0].maxY) < 0.01)
+        #expect(scrollablePageViews.allSatisfy { $0.layer.shadowOpacity == 0 })
+        #expect(scrollablePageViews.allSatisfy { !container.isContinuousCanvas($0.canvasView) })
+        #expect(scrollablePageViews[0].canvasView !== scrollablePageViews[1].canvasView)
         #expect(!container.addPageFooterButton.isHidden)
-        #expect(abs(container.addPageFooterButton.frame.minY - seamlessFrames[1].maxY - 36) < 0.01)
+        #expect(abs(container.addPageFooterButton.frame.minY - scrollableFrames[1].maxY - 36) < 0.01)
         #expect(container.addPageFooterButton.accessibilityLabel == "Add drawing space")
+    }
+
+    @Test @MainActor func largeScrollableDocumentBoundsMaterializationAndDirtySaveScope() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesLargeScrollableCanvas-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let drawingStorage = DrawingStorageService(storage: storage)
+        let pages = (0..<50).map { index in
+            NotePage(
+                pageOrder: index,
+                drawingFileName: "large-scrollable-\(index).drawing",
+                width: 612,
+                height: 792
+            )
+        }
+        let editedPage = pages[25]
+        var changedPageIDs: [UUID] = []
+        let parent = makeDrawingCanvasView(
+            page: editedPage,
+            drawingStorage: drawingStorage,
+            pages: pages,
+            drawingChanged: { changedPageIDs.append($0) }
+        )
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 500)
+        )
+        coordinator.containerView = container
+        defer {
+            container.releaseAllMaterializedPages(flushDrawingsBeforeRelease: false)
+            DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
+        }
+
+        container.configure(
+            pages: pages,
+            selectedPageID: editedPage.id,
+            pageFlowMode: NoteEditorPageLayoutMode.scroll.pageFlowMode,
+            inputMode: .pencilOnly,
+            renderQuality: .balanced,
+            drawingStorage: drawingStorage,
+            coordinator: coordinator
+        )
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        container.scrollToPage(id: editedPage.id, animated: false)
+
+        let materializedCanvases = container.canvasPagePairs
+        #expect(!materializedCanvases.isEmpty)
+        #expect(materializedCanvases.count <= 8)
+        #expect(materializedCanvases.count < pages.count)
+        #expect(Set(materializedCanvases.map { ObjectIdentifier($0.1) }).count == materializedCanvases.count)
+        #expect(materializedCanvases.allSatisfy { !container.isContinuousCanvas($0.1) })
+
+        let editedPageView = try #require(
+            container.pageCanvasViewForTesting(pageID: editedPage.id)
+        )
+        editedPageView.canvasView.drawing = makeTestDrawing(color: .systemBlue, xOffset: 48)
+        coordinator.canvasViewDrawingDidChange(editedPageView.canvasView)
+        await Task.yield()
+
+        #expect(coordinator.dirtyPageIDs == [editedPage.id])
+        #expect(Set(coordinator.pendingSaves.keys) == [editedPage.id])
+        #expect(changedPageIDs == [editedPage.id])
     }
 
     @Test @MainActor func scrollablePaginationUsesOneCanvasAcrossSectionBoundaries() throws {
