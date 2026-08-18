@@ -2973,14 +2973,28 @@ struct BeanNotesTests {
     @Test func paginationSettingsMapToEditorFlowModes() {
         #expect(NoteEditorPageLayoutMode.allCases.map(\.label) == ["One Page", "Scrollable"])
         #expect(NoteEditorPageLayoutMode.singlePage.pageFlowMode == .separated)
-        #expect(NoteEditorPageLayoutMode.scroll.pageFlowMode == .continuous)
+        #expect(NoteEditorPageLayoutMode.scroll.pageFlowMode == .seamless)
         #expect(NoteEditorPageFlowMode.continuous.usesFlushPageLayout)
         #expect(!NoteEditorPageFlowMode.continuous.usesDocumentWideCanvas)
+        #expect(NoteEditorPageFlowMode.seamless.usesFlushPageLayout)
         #expect(NoteEditorPageFlowMode.seamless.usesDocumentWideCanvas)
         #expect(NoteEditorPageFlowMode.singlePage.migratedLayoutMode == .singlePage)
         #expect(NoteEditorPageFlowMode.continuous.migratedLayoutMode == .scroll)
         #expect(NoteEditorPageFlowMode.infinite.migratedLayoutMode == .scroll)
         #expect(NoteEditorPageFlowMode.seamless.pageStatusText(currentPage: 2, totalPages: 4) == "Continuous canvas")
+    }
+
+    @Test func connectedBackgroundPatternKeepsItsPhaseAcrossSections() {
+        let spacing: CGFloat = 32
+        let firstPageLastLine: CGFloat = 288
+        let secondPageFirstLocalLine = NoteBackgroundRenderer.alignedPatternCoordinate(
+            atOrAfter: 0,
+            origin: -300,
+            spacing: spacing
+        )
+
+        #expect(secondPageFirstLocalLine == 20)
+        #expect(300 + secondPageFirstLocalLine - firstPageLastLine == spacing)
     }
 
     @Test func drawingRenderQualityExposesSharperZoomBudget() {
@@ -6528,7 +6542,7 @@ struct BeanNotesTests {
         #expect(canvas.drawingGestureRecognizer.isEnabled)
     }
 
-    @Test @MainActor func publicPaginationModesUseFlushDistinctOrSeparatedPages() throws {
+    @Test @MainActor func publicPaginationModesUseConnectedOrSeparatedDrawingSurfaces() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesPaginationSpacing-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -6604,16 +6618,23 @@ struct BeanNotesTests {
         let scrollablePageViews = try pages.map {
             try #require(container.pageCanvasViewForTesting(pageID: $0.id))
         }
+        let connectedCanvas = try #require(container.activeCanvasView)
+        let connectedPageView = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .first { $0.accessibilityLabel == "Continuous drawing canvas" })
         #expect(abs(scrollableFrames[1].minY - scrollableFrames[0].maxY) < 0.01)
         #expect(scrollablePageViews.allSatisfy { $0.layer.shadowOpacity == 0 })
-        #expect(scrollablePageViews.allSatisfy { !container.isContinuousCanvas($0.canvasView) })
+        #expect(scrollablePageViews.allSatisfy { !$0.canvasView.isUserInteractionEnabled })
         #expect(scrollablePageViews[0].canvasView !== scrollablePageViews[1].canvasView)
+        #expect(container.isContinuousCanvas(connectedCanvas))
+        #expect(connectedCanvas !== separatedPageViews[0].canvasView)
+        #expect(connectedPageView.canvasView === connectedCanvas)
         #expect(!container.addPageFooterButton.isHidden)
         #expect(abs(container.addPageFooterButton.frame.minY - scrollableFrames[1].maxY - 36) < 0.01)
         #expect(container.addPageFooterButton.accessibilityLabel == "Add drawing space")
     }
 
-    @Test @MainActor func largeScrollableDocumentBoundsMaterializationAndDirtySaveScope() async throws {
+    @Test @MainActor func largeConnectedDocumentKeepsDrawingSaveScopePageLocal() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesLargeScrollableCanvas-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -6663,23 +6684,77 @@ struct BeanNotesTests {
         container.layoutIfNeeded()
         container.scrollToPage(id: editedPage.id, animated: false)
 
-        let materializedCanvases = container.canvasPagePairs
-        #expect(!materializedCanvases.isEmpty)
-        #expect(materializedCanvases.count <= 8)
-        #expect(materializedCanvases.count < pages.count)
-        #expect(Set(materializedCanvases.map { ObjectIdentifier($0.1) }).count == materializedCanvases.count)
-        #expect(materializedCanvases.allSatisfy { !container.isContinuousCanvas($0.1) })
-
-        let editedPageView = try #require(
-            container.pageCanvasViewForTesting(pageID: editedPage.id)
+        let connectedCanvas = try #require(container.activeCanvasView)
+        #expect(container.isContinuousCanvas(connectedCanvas))
+        let materializedSections = container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .filter { $0.accessibilityIdentifier == "noteCanvasSection" }
+        #expect(!materializedSections.isEmpty)
+        #expect(materializedSections.count <= 8)
+        #expect(materializedSections.count < pages.count)
+        let localizedStroke = makeTestStroke(
+            from: CGPoint(x: 80, y: CGFloat(editedPage.pageOrder) * 792 + 100),
+            to: CGPoint(x: 180, y: CGFloat(editedPage.pageOrder) * 792 + 180),
+            width: 8
         )
-        editedPageView.canvasView.drawing = makeTestDrawing(color: .systemBlue, xOffset: 48)
-        coordinator.canvasViewDrawingDidChange(editedPageView.canvasView)
+        let movedPage = pages[26]
+        let movedStroke = try #require(PKDrawing(strokes: [localizedStroke]).transformed(
+            using: CGAffineTransform(translationX: 0, y: 792)
+        ).strokes.first)
+
+        connectedCanvas.drawing = PKDrawing(strokes: [localizedStroke])
+        coordinator.canvasViewDrawingDidChange(connectedCanvas)
         await Task.yield()
 
         #expect(coordinator.dirtyPageIDs == [editedPage.id])
         #expect(Set(coordinator.pendingSaves.keys) == [editedPage.id])
         #expect(changedPageIDs == [editedPage.id])
+
+        let splitCountBeforeCachedSave = container.continuousAggregateSplitCount
+        let cachedSnapshots = try #require(container.continuousPageDrawings(
+            from: connectedCanvas.drawing,
+            pageIDs: [editedPage.id]
+        ))
+        #expect(container.continuousAggregateSplitCount == splitCountBeforeCachedSave)
+        #expect(cachedSnapshots.count == 1)
+        #expect(cachedSnapshots[0].1.strokes.count == 1)
+
+        coordinator.saveAllCanvases()
+        changedPageIDs.removeAll()
+        parent.toolState.select(.lasso)
+        connectedCanvas.drawing = PKDrawing(strokes: [movedStroke])
+        coordinator.canvasViewDrawingDidChange(connectedCanvas)
+        await Task.yield()
+
+        #expect(coordinator.dirtyPageIDs == [editedPage.id, movedPage.id])
+        #expect(Set(coordinator.pendingSaves.keys) == [editedPage.id, movedPage.id])
+        #expect(Set(changedPageIDs) == [editedPage.id, movedPage.id])
+
+        coordinator.saveAllCanvases()
+        #expect(drawingStorage.loadDrawing(for: editedPage).strokes.isEmpty)
+        #expect(drawingStorage.loadDrawing(for: movedPage).strokes.count == 1)
+
+        let partiallyErasedStroke = try #require(
+            DrawingCanvasView.PartialEraserStrokeProcessor.strokesByErasing(
+                [movedStroke],
+                along: [CGPoint(
+                    x: 130,
+                    y: CGFloat(movedPage.pageOrder) * 792 + 140
+                )],
+                diameter: 12
+            )?.first
+        )
+        changedPageIDs.removeAll()
+        parent.toolState.select(.eraser)
+        connectedCanvas.drawing = PKDrawing(strokes: [partiallyErasedStroke])
+        coordinator.canvasViewDrawingDidChange(connectedCanvas)
+        await Task.yield()
+
+        #expect(coordinator.dirtyPageIDs == [movedPage.id])
+        #expect(Set(coordinator.pendingSaves.keys) == [movedPage.id])
+        #expect(changedPageIDs == [movedPage.id])
+        coordinator.saveAllCanvases()
+        #expect(drawingStorage.loadDrawing(for: movedPage).strokes.first?.mask != nil)
     }
 
     @Test @MainActor func scrollablePaginationUsesOneCanvasAcrossSectionBoundaries() throws {
@@ -6751,6 +6826,8 @@ struct BeanNotesTests {
             strokes: continuousPageView.canvasView.drawing.strokes + [boundaryStroke]
         )
         coordinator.canvasViewDrawingDidChange(continuousPageView.canvasView)
+        #expect(coordinator.dirtyPageIDs == Set(pages.map(\.id)))
+        #expect(Set(coordinator.pendingSaves.keys) == Set(pages.map(\.id)))
         coordinator.saveAllCanvases(force: true)
 
         let firstSavedDrawing = drawingStorage.loadDrawing(for: pages[0])
@@ -10720,6 +10797,18 @@ struct BeanNotesTests {
         )
         #expect(excludedHit.isEmpty)
         #expect(session.preparedStrokeCount == 1)
+
+        var viewportSession = DrawingCanvasView.ObjectEraserHitTester.Session(
+            strokes: [touchedStroke, distantStroke],
+            diameter: 32,
+            candidateBounds: CGRect(x: 0, y: 0, width: 220, height: 180)
+        )
+        let offscreenHit = viewportSession.intersectedStrokeIndexes(
+            eraserPath: [CGPoint(x: 100, y: 300)]
+        )
+        #expect(offscreenHit.isEmpty)
+        #expect(viewportSession.lastBroadPhaseCandidateCount == 0)
+        #expect(viewportSession.preparedStrokeCount == 0)
     }
 
     @Test @MainActor func objectEraserIncludesTheLargestAffineStrokeScale() {

@@ -27,7 +27,7 @@ enum NoteEditorPageLayoutMode: String, CaseIterable, Identifiable {
         case .singlePage:
             "Keep each page visually separate while scrolling through the note."
         case .scroll:
-            "Scroll through lazily loaded drawing sections and extend the note with the add-space button."
+            "Use one connected drawing surface and extend it with the add-space button."
         }
     }
 
@@ -36,7 +36,7 @@ enum NoteEditorPageLayoutMode: String, CaseIterable, Identifiable {
         case .singlePage:
             .separated
         case .scroll:
-            .continuous
+            .seamless
         }
     }
 }
@@ -84,7 +84,7 @@ enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
     }
 
     /// Page sections visually meet in scrolling layouts, regardless of whether each
-    /// section owns a bounded canvas or the legacy mode uses one document-wide canvas.
+    /// section owns a bounded canvas or the mode uses one document-wide canvas.
     var usesFlushPageLayout: Bool {
         switch self {
         case .continuous, .infinite, .seamless:
@@ -94,8 +94,8 @@ enum NoteEditorPageFlowMode: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Only the legacy seamless mode joins every page's ink into one PencilKit view.
-    /// Keep this separate from visual layout so Scrollable can remain virtualized.
+    /// Only seamless mode joins every page's ink into one PencilKit view. Keep this
+    /// separate from visual layout so internal page-local modes stay unambiguous.
     var usesDocumentWideCanvas: Bool {
         self == .seamless
     }

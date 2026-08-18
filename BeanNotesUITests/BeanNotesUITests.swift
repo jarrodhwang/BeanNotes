@@ -173,7 +173,7 @@ final class BeanNotesUITests: XCTestCase {
     }
 
     @MainActor
-    func testBottomPlusExtendsVirtualizedContinuousDocument() throws {
+    func testBottomPlusExtendsConnectedContinuousCanvas() throws {
         app.launch()
 
         let createNoteButton = app.buttons["Create note"]
@@ -201,19 +201,16 @@ final class BeanNotesUITests: XCTestCase {
 
         let pageStatus = app.staticTexts["editor.pageStatus"]
         XCTAssertTrue(pageStatus.waitForExistence(timeout: 4))
-        let continuousDocumentStatus = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", "Page 2 / 2"),
+        let continuousCanvasStatus = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Continuous canvas"),
             object: pageStatus
         )
-        wait(for: [continuousDocumentStatus], timeout: 4)
+        wait(for: [continuousCanvasStatus], timeout: 4)
 
         let pageCanvases = app.descendants(matching: .any).matching(identifier: "notePageCanvas")
-        XCTAssertEqual(pageCanvases.count, 2)
+        XCTAssertEqual(pageCanvases.count, 1)
         XCTAssertTrue(pageCanvases.matching(
-            NSPredicate(format: "label == %@", "Page 1 canvas")
-        ).firstMatch.exists)
-        XCTAssertTrue(pageCanvases.matching(
-            NSPredicate(format: "label == %@", "Page 2 canvas")
+            NSPredicate(format: "label == %@", "Continuous drawing canvas")
         ).firstMatch.exists)
     }
 

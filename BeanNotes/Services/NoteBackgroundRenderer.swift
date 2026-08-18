@@ -30,6 +30,7 @@ enum NoteBackgroundRenderer {
         theme: BeanNotesTheme = .standard,
         showsBeanArtwork: Bool = false,
         pageID: UUID? = nil,
+        patternOrigin: CGPoint? = nil,
         in rect: CGRect,
         context: inout GraphicsContext
     ) {
@@ -47,11 +48,26 @@ enum NoteBackgroundRenderer {
         case .plain:
             return
         case .grid:
-            drawGrid(background: background, in: rect, context: &context)
+            drawGrid(
+                background: background,
+                patternOrigin: patternOrigin,
+                in: rect,
+                context: &context
+            )
         case .dotted:
-            drawDots(background: background, in: rect, context: &context)
+            drawDots(
+                background: background,
+                patternOrigin: patternOrigin,
+                in: rect,
+                context: &context
+            )
         case .lined:
-            drawLines(background: background, in: rect, context: &context)
+            drawLines(
+                background: background,
+                patternOrigin: patternOrigin,
+                in: rect,
+                context: &context
+            )
             drawMargin(background: background, in: rect, context: &context)
         case .cornell:
             drawCornell(background: background, in: rect, context: &context)
@@ -69,6 +85,7 @@ enum NoteBackgroundRenderer {
         theme: BeanNotesTheme = .standard,
         showsBeanArtwork: Bool = false,
         pageID: UUID? = nil,
+        patternOrigin: CGPoint? = nil,
         in rect: CGRect,
         context: CGContext
     ) {
@@ -92,11 +109,26 @@ enum NoteBackgroundRenderer {
         case .plain:
             return
         case .grid:
-            drawGrid(background: background, in: rect, context: context)
+            drawGrid(
+                background: background,
+                patternOrigin: patternOrigin,
+                in: rect,
+                context: context
+            )
         case .dotted:
-            drawDots(background: background, in: rect, context: context)
+            drawDots(
+                background: background,
+                patternOrigin: patternOrigin,
+                in: rect,
+                context: context
+            )
         case .lined:
-            drawLines(background: background, in: rect, context: context)
+            drawLines(
+                background: background,
+                patternOrigin: patternOrigin,
+                in: rect,
+                context: context
+            )
             drawMargin(background: background, in: rect, context: context)
         case .cornell:
             drawCornell(background: background, in: rect, context: context)
@@ -192,6 +224,18 @@ enum NoteBackgroundRenderer {
             width: width,
             height: height
         )
+    }
+
+    nonisolated static func alignedPatternCoordinate(
+        atOrAfter minimum: CGFloat,
+        origin: CGFloat,
+        spacing: CGFloat
+    ) -> CGFloat {
+        guard minimum.isFinite,
+              origin.isFinite,
+              spacing.isFinite,
+              spacing > 0 else { return minimum }
+        return origin + ceil((minimum - origin) / spacing) * spacing
     }
 }
 
@@ -534,16 +578,30 @@ private extension NoteBackgroundRenderer {
         max(0.5, min(1, min(rect.width, rect.height) * 0.0015))
     }
 
-    static func drawGrid(background: NoteBackground, in rect: CGRect, context: inout GraphicsContext) {
+    static func drawGrid(
+        background: NoteBackground,
+        patternOrigin: CGPoint? = nil,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
         let spacing = CGFloat(background.resolvedSpacing)
+        let origin = patternOrigin ?? rect.origin
         var path = Path()
 
-        stride(from: rect.minX, through: rect.maxX, by: spacing).forEach { x in
+        stride(
+            from: firstPatternCoordinate(atOrAfter: rect.minX, origin: origin.x, spacing: spacing),
+            through: rect.maxX,
+            by: spacing
+        ).forEach { x in
             path.move(to: CGPoint(x: x, y: rect.minY))
             path.addLine(to: CGPoint(x: x, y: rect.maxY))
         }
 
-        stride(from: rect.minY, through: rect.maxY, by: spacing).forEach { y in
+        stride(
+            from: firstPatternCoordinate(atOrAfter: rect.minY, origin: origin.y, spacing: spacing),
+            through: rect.maxY,
+            by: spacing
+        ).forEach { y in
             path.move(to: CGPoint(x: rect.minX, y: y))
             path.addLine(to: CGPoint(x: rect.maxX, y: y))
         }
@@ -552,16 +610,30 @@ private extension NoteBackgroundRenderer {
         drawMargin(background: background, in: rect, context: &context)
     }
 
-    nonisolated static func drawGrid(background: NoteBackground, in rect: CGRect, context: CGContext) {
+    nonisolated static func drawGrid(
+        background: NoteBackground,
+        patternOrigin: CGPoint? = nil,
+        in rect: CGRect,
+        context: CGContext
+    ) {
         let spacing = CGFloat(background.resolvedSpacing)
+        let origin = patternOrigin ?? rect.origin
         context.beginPath()
 
-        stride(from: rect.minX, through: rect.maxX, by: spacing).forEach { x in
+        stride(
+            from: firstPatternCoordinate(atOrAfter: rect.minX, origin: origin.x, spacing: spacing),
+            through: rect.maxX,
+            by: spacing
+        ).forEach { x in
             context.move(to: CGPoint(x: x, y: rect.minY))
             context.addLine(to: CGPoint(x: x, y: rect.maxY))
         }
 
-        stride(from: rect.minY, through: rect.maxY, by: spacing).forEach { y in
+        stride(
+            from: firstPatternCoordinate(atOrAfter: rect.minY, origin: origin.y, spacing: spacing),
+            through: rect.maxY,
+            by: spacing
+        ).forEach { y in
             context.move(to: CGPoint(x: rect.minX, y: y))
             context.addLine(to: CGPoint(x: rect.maxX, y: y))
         }
@@ -572,11 +644,21 @@ private extension NoteBackgroundRenderer {
         drawMargin(background: background, in: rect, context: context)
     }
 
-    static func drawLines(background: NoteBackground, in rect: CGRect, context: inout GraphicsContext) {
+    static func drawLines(
+        background: NoteBackground,
+        patternOrigin: CGPoint? = nil,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
         let spacing = CGFloat(background.resolvedSpacing)
+        let originY = (patternOrigin ?? rect.origin).y + spacing
         var path = Path()
 
-        stride(from: rect.minY + spacing, through: rect.maxY, by: spacing).forEach { y in
+        stride(
+            from: firstPatternCoordinate(atOrAfter: rect.minY, origin: originY, spacing: spacing),
+            through: rect.maxY,
+            by: spacing
+        ).forEach { y in
             path.move(to: CGPoint(x: rect.minX, y: y))
             path.addLine(to: CGPoint(x: rect.maxX, y: y))
         }
@@ -584,11 +666,21 @@ private extension NoteBackgroundRenderer {
         context.stroke(path, with: .color(lineColor), lineWidth: 1)
     }
 
-    nonisolated static func drawLines(background: NoteBackground, in rect: CGRect, context: CGContext) {
+    nonisolated static func drawLines(
+        background: NoteBackground,
+        patternOrigin: CGPoint? = nil,
+        in rect: CGRect,
+        context: CGContext
+    ) {
         let spacing = CGFloat(background.resolvedSpacing)
+        let originY = (patternOrigin ?? rect.origin).y + spacing
         context.beginPath()
 
-        stride(from: rect.minY + spacing, through: rect.maxY, by: spacing).forEach { y in
+        stride(
+            from: firstPatternCoordinate(atOrAfter: rect.minY, origin: originY, spacing: spacing),
+            through: rect.maxY,
+            by: spacing
+        ).forEach { y in
             context.move(to: CGPoint(x: rect.minX, y: y))
             context.addLine(to: CGPoint(x: rect.maxX, y: y))
         }
@@ -598,12 +690,28 @@ private extension NoteBackgroundRenderer {
         context.strokePath()
     }
 
-    static func drawDots(background: NoteBackground, in rect: CGRect, context: inout GraphicsContext) {
+    static func drawDots(
+        background: NoteBackground,
+        patternOrigin: CGPoint? = nil,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
         let spacing = CGFloat(background.resolvedSpacing)
+        let origin = patternOrigin ?? rect.origin
+        let firstX = firstPatternCoordinate(
+            atOrAfter: rect.minX,
+            origin: origin.x + spacing,
+            spacing: spacing
+        )
+        let firstY = firstPatternCoordinate(
+            atOrAfter: rect.minY,
+            origin: origin.y + spacing,
+            spacing: spacing
+        )
         let dotSize: CGFloat = 2.6
 
-        stride(from: rect.minX + spacing, through: rect.maxX, by: spacing).forEach { x in
-            stride(from: rect.minY + spacing, through: rect.maxY, by: spacing).forEach { y in
+        stride(from: firstX, through: rect.maxX, by: spacing).forEach { x in
+            stride(from: firstY, through: rect.maxY, by: spacing).forEach { y in
                 let dotRect = CGRect(x: x - dotSize / 2, y: y - dotSize / 2, width: dotSize, height: dotSize)
                 context.fill(Path(ellipseIn: dotRect), with: .color(dotColor))
             }
@@ -612,18 +720,46 @@ private extension NoteBackgroundRenderer {
         drawMargin(background: background, in: rect, context: &context)
     }
 
-    nonisolated static func drawDots(background: NoteBackground, in rect: CGRect, context: CGContext) {
+    nonisolated static func drawDots(
+        background: NoteBackground,
+        patternOrigin: CGPoint? = nil,
+        in rect: CGRect,
+        context: CGContext
+    ) {
         let spacing = CGFloat(background.resolvedSpacing)
+        let origin = patternOrigin ?? rect.origin
+        let firstX = firstPatternCoordinate(
+            atOrAfter: rect.minX,
+            origin: origin.x + spacing,
+            spacing: spacing
+        )
+        let firstY = firstPatternCoordinate(
+            atOrAfter: rect.minY,
+            origin: origin.y + spacing,
+            spacing: spacing
+        )
         let dotSize: CGFloat = 2.4
 
         context.setFillColor(uiDotColor.cgColor)
-        stride(from: rect.minX + spacing, through: rect.maxX, by: spacing).forEach { x in
-            stride(from: rect.minY + spacing, through: rect.maxY, by: spacing).forEach { y in
+        stride(from: firstX, through: rect.maxX, by: spacing).forEach { x in
+            stride(from: firstY, through: rect.maxY, by: spacing).forEach { y in
                 context.fillEllipse(in: CGRect(x: x - dotSize / 2, y: y - dotSize / 2, width: dotSize, height: dotSize))
             }
         }
 
         drawMargin(background: background, in: rect, context: context)
+    }
+
+    nonisolated static func firstPatternCoordinate(
+        atOrAfter minimum: CGFloat,
+        origin: CGFloat,
+        spacing: CGFloat
+    ) -> CGFloat {
+        alignedPatternCoordinate(
+            atOrAfter: minimum,
+            origin: origin,
+            spacing: spacing
+        )
     }
 
     static func drawCornell(background: NoteBackground, in rect: CGRect, context: inout GraphicsContext) {

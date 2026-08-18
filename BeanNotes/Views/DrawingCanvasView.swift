@@ -558,6 +558,31 @@ struct DrawingCanvasView: UIViewRepresentable {
             var masks: [ContinuousStrokeMaskSignature]
         }
 
+        /// Stable across document/page translations and lasso transforms. Reading two
+        /// endpoint samples avoids hashing every PencilKit point after each erase.
+        private struct ContinuousStrokeIdentity: Hashable {
+            var inkType: String
+            var creationTime: UInt64
+            var pointCount: Int
+            var firstX: Int64
+            var firstY: Int64
+            var lastX: Int64
+            var lastY: Int64
+        }
+
+        /// Cheap mutable state used to distinguish an unchanged stroke from an erase
+        /// mask or lasso transform without walking its complete point path.
+        private struct ContinuousStrokeState: Hashable {
+            var transform: [Int64]
+            var renderBounds: [Int64]
+            var masks: [ContinuousStrokeMaskSignature]
+        }
+
+        private struct ContinuousStrokeMutation {
+            var previous: PKStroke?
+            var current: PKStroke?
+        }
+
         private struct DrawingPrefetchSignature: Equatable {
             var rootPath: String
             var fileNames: [String]
@@ -572,6 +597,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private var pageViews: [UUID: PageCanvasView] = [:]
         private var continuousPageView: PageCanvasView?
+        private var continuousPageDrawingCache: [UUID: PKDrawing] = [:]
         private(set) var captureSelectionOverlay: NoteCaptureSelectionOverlayView?
         private var captureSelectionPageID: UUID?
         private var isCaptureToolEnabled = false
@@ -632,6 +658,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var lastDrawingPrefetchSignature: DrawingPrefetchSignature?
         private(set) var viewportResourceRefreshCount = 0
         private(set) var viewportVisibilityRefreshCount = 0
+        private(set) var continuousAggregateSplitCount = 0
         private let separatedPageGap: CGFloat = 28
         private let pageMargin: CGFloat = 52
         private let addPageFooterSize: CGFloat = 56
@@ -1651,6 +1678,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             releaseContinuousPageView(flushDrawingBeforeRelease: false)
+            continuousPageDrawingCache = Dictionary(
+                uniqueKeysWithValues: loadBundle.results.map { page, result in
+                    (page.id, result.drawing)
+                }
+            )
             let pageView = PageCanvasView(frame: drawingFrame)
             continuousPageView = pageView
             contentView.addSubview(pageView)
@@ -1736,15 +1768,18 @@ struct DrawingCanvasView: UIViewRepresentable {
                   continuousPageView.canvasView === canvasView,
                   let drawingStorage else { return nil }
 
-            return continuousDrawingLoadBundle(storage: drawingStorage)
+            let bundle = continuousDrawingLoadBundle(storage: drawingStorage)
+            if bundle.drawing != nil {
+                continuousPageDrawingCache = Dictionary(
+                    uniqueKeysWithValues: bundle.results.map { page, result in
+                        (page.id, result.drawing)
+                    }
+                )
+            }
+            return bundle
         }
 
         private func continuousStrokeSignature(_ stroke: PKStroke) -> ContinuousStrokeSignature {
-            func quantized(_ value: CGFloat) -> Int64 {
-                guard value.isFinite else { return 0 }
-                return Int64((value * 10_000).rounded())
-            }
-
             let transform = stroke.transform
             var points: [ContinuousStrokePointSignature] = []
             points.reserveCapacity(stroke.path.count)
@@ -1753,19 +1788,19 @@ struct DrawingCanvasView: UIViewRepresentable {
                 let location = point.location.applying(transform)
                 points.append(
                     ContinuousStrokePointSignature(
-                        x: quantized(location.x),
-                        y: quantized(location.y),
-                        width: quantized(point.size.width),
-                        height: quantized(point.size.height),
-                        opacity: quantized(point.opacity),
-                        force: quantized(point.force)
+                        x: quantizedContinuousValue(location.x),
+                        y: quantizedContinuousValue(location.y),
+                        width: quantizedContinuousValue(point.size.width),
+                        height: quantizedContinuousValue(point.size.height),
+                        opacity: quantizedContinuousValue(point.opacity),
+                        force: quantizedContinuousValue(point.force)
                     )
                 )
             }
             let masks = stroke.maskedPathRanges.map {
                 ContinuousStrokeMaskSignature(
-                    lowerBound: quantized($0.lowerBound),
-                    upperBound: quantized($0.upperBound)
+                    lowerBound: quantizedContinuousValue($0.lowerBound),
+                    upperBound: quantizedContinuousValue($0.upperBound)
                 )
             }
             return ContinuousStrokeSignature(
@@ -1778,12 +1813,359 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
         }
 
-        func continuousPageDrawings(from drawing: PKDrawing) -> [(NotePage, PKDrawing)]? {
+        private func quantizedContinuousValue(_ value: CGFloat) -> Int64 {
+            guard value.isFinite else { return 0 }
+            return Int64((value * 10_000).rounded())
+        }
+
+        private func continuousStrokeIdentity(_ stroke: PKStroke) -> ContinuousStrokeIdentity {
+            let firstLocation = stroke.path.isEmpty ? .zero : stroke.path[0].location
+            let lastLocation = stroke.path.isEmpty
+                ? .zero
+                : stroke.path[stroke.path.count - 1].location
+            return ContinuousStrokeIdentity(
+                inkType: stroke.ink.inkType.rawValue,
+                creationTime: stroke.path.creationDate.timeIntervalSinceReferenceDate.bitPattern,
+                pointCount: stroke.path.count,
+                firstX: quantizedContinuousValue(firstLocation.x),
+                firstY: quantizedContinuousValue(firstLocation.y),
+                lastX: quantizedContinuousValue(lastLocation.x),
+                lastY: quantizedContinuousValue(lastLocation.y)
+            )
+        }
+
+        private func continuousStrokeState(_ stroke: PKStroke) -> ContinuousStrokeState {
+            let transform = stroke.transform
+            let bounds = stroke.renderBounds
+            return ContinuousStrokeState(
+                transform: [
+                    transform.a,
+                    transform.b,
+                    transform.c,
+                    transform.d,
+                    transform.tx,
+                    transform.ty
+                ].map(quantizedContinuousValue),
+                renderBounds: [
+                    bounds.minX,
+                    bounds.minY,
+                    bounds.maxX,
+                    bounds.maxY
+                ].map(quantizedContinuousValue),
+                masks: stroke.maskedPathRanges.map {
+                    ContinuousStrokeMaskSignature(
+                        lowerBound: quantizedContinuousValue($0.lowerBound),
+                        upperBound: quantizedContinuousValue($0.upperBound)
+                    )
+                }
+            )
+        }
+
+        /// Resolves the page sections changed by a document-wide PencilKit update.
+        /// The common pen/highlighter path examines only the appended stroke. Erase,
+        /// lasso, and undo compare lightweight stroke identities/mutable state without
+        /// hashing every point in the document on the main input thread.
+        func changedContinuousPageIDs(
+            from previousDrawing: PKDrawing,
+            to drawing: PKDrawing,
+            allowsSingleStrokeFastPath: Bool
+        ) -> Set<UUID> {
+            guard isContinuousDrawingEnabled else { return [] }
+
+            let previousStrokes = previousDrawing.strokes
+            let strokes = drawing.strokes
+            var mutations: [ContinuousStrokeMutation] = []
+            let preservesStrokeOrder = strokes.count == previousStrokes.count
+                && zip(previousStrokes, strokes).allSatisfy { previous, current in
+                    continuousStrokeIdentity(previous) == continuousStrokeIdentity(current)
+                }
+
+            if allowsSingleStrokeFastPath,
+               strokes.count == previousStrokes.count + 1,
+               continuousDrawingPrefixIsUnchanged(
+                   previousStrokes: previousStrokes,
+                   strokes: strokes
+               ),
+               let appendedStroke = strokes.last {
+                mutations = [ContinuousStrokeMutation(previous: nil, current: appendedStroke)]
+            } else if allowsSingleStrokeFastPath,
+                      previousStrokes.count == strokes.count + 1,
+                      continuousDrawingPrefixIsUnchanged(
+                          previousStrokes: strokes,
+                          strokes: previousStrokes
+                      ),
+                      let removedStroke = previousStrokes.last {
+                mutations = [ContinuousStrokeMutation(previous: removedStroke, current: nil)]
+            } else if preservesStrokeOrder {
+                for (previous, current) in zip(previousStrokes, strokes) {
+                    if continuousStrokeState(previous) != continuousStrokeState(current) {
+                        mutations.append(ContinuousStrokeMutation(
+                            previous: previous,
+                            current: current
+                        ))
+                    }
+                }
+            } else {
+                var previousByIdentity: [ContinuousStrokeIdentity: [PKStroke]] = [:]
+                previousByIdentity.reserveCapacity(previousStrokes.count)
+                for stroke in previousStrokes {
+                    previousByIdentity[continuousStrokeIdentity(stroke), default: []]
+                        .append(stroke)
+                }
+
+                for stroke in strokes {
+                    let identity = continuousStrokeIdentity(stroke)
+                    if var candidates = previousByIdentity[identity],
+                       !candidates.isEmpty {
+                        let currentState = continuousStrokeState(stroke)
+                        let matchIndex = candidates.firstIndex {
+                            continuousStrokeState($0) == currentState
+                        } ?? (candidates.count - 1)
+                        let previousStroke = candidates.remove(at: matchIndex)
+                        previousByIdentity[identity] = candidates.isEmpty
+                            ? nil
+                            : candidates
+                        if continuousStrokeState(previousStroke) != currentState {
+                            mutations.append(ContinuousStrokeMutation(
+                                previous: previousStroke,
+                                current: stroke
+                            ))
+                        }
+                    } else {
+                        mutations.append(ContinuousStrokeMutation(previous: nil, current: stroke))
+                    }
+                }
+                for removedStroke in previousByIdentity.values.flatMap({ $0 }) {
+                    mutations.append(ContinuousStrokeMutation(previous: removedStroke, current: nil))
+                }
+            }
+
+            var changedPageIDs: Set<UUID> = []
+            for mutation in mutations {
+                if let previous = mutation.previous {
+                    changedPageIDs.formUnion(continuousPageIDs(intersecting: previous.renderBounds))
+                }
+                if let current = mutation.current {
+                    changedPageIDs.formUnion(continuousPageIDs(intersecting: current.renderBounds))
+                }
+            }
+            if changedPageIDs.isEmpty,
+               !mutations.isEmpty,
+               let fallbackPageID = currentSelectedPageID ?? orderedPageIDs.first {
+                changedPageIDs.insert(fallbackPageID)
+            }
+            if !mutations.isEmpty {
+                updateContinuousPageDrawingCache(
+                    mutations: mutations,
+                    currentDrawing: drawing,
+                    changedPageIDs: changedPageIDs
+                )
+            }
+            return changedPageIDs
+        }
+
+        private func continuousDrawingPrefixIsUnchanged(
+            previousStrokes: [PKStroke],
+            strokes: [PKStroke]
+        ) -> Bool {
+            guard strokes.count == previousStrokes.count + 1 else { return false }
+            guard let previousFirst = previousStrokes.first,
+                  let previousLast = previousStrokes.last else {
+                return previousStrokes.isEmpty
+            }
+            return continuousStrokeIdentity(previousFirst)
+                    == continuousStrokeIdentity(strokes[0])
+                && continuousStrokeState(previousFirst)
+                    == continuousStrokeState(strokes[0])
+                && continuousStrokeIdentity(previousLast)
+                    == continuousStrokeIdentity(strokes[previousStrokes.count - 1])
+                && continuousStrokeState(previousLast)
+                    == continuousStrokeState(strokes[previousStrokes.count - 1])
+        }
+
+        private func continuousPageIDs(intersecting drawingBounds: CGRect) -> Set<UUID> {
+            guard let drawingFrame = continuousDrawingFrame,
+                  drawingBounds.minX.isFinite,
+                  drawingBounds.minY.isFinite,
+                  drawingBounds.maxX.isFinite,
+                  drawingBounds.maxY.isFinite else { return [] }
+            let documentBounds = drawingBounds
+                .insetBy(dx: -0.5, dy: -0.5)
+                .offsetBy(dx: drawingFrame.minX, dy: drawingFrame.minY)
+            return Set(pageIDsIntersecting(documentBounds))
+        }
+
+        /// Applies the small stroke delta to page-local snapshots. Autosave can then
+        /// persist one or two immutable page drawings without rescanning the aggregate
+        /// canvas during the next user's first stroke after an idle interval.
+        private func updateContinuousPageDrawingCache(
+            mutations: [ContinuousStrokeMutation],
+            currentDrawing: PKDrawing,
+            changedPageIDs: Set<UUID>
+        ) {
+            guard !changedPageIDs.isEmpty else { return }
+
+            var strokesByPageID: [UUID: [PKStroke]] = [:]
+            var pageIDsNeedingRebuild: Set<UUID> = []
+            for pageID in changedPageIDs {
+                if let drawing = continuousPageDrawingCache[pageID] {
+                    strokesByPageID[pageID] = drawing.strokes
+                } else {
+                    pageIDsNeedingRebuild.insert(pageID)
+                }
+            }
+
+            for mutation in mutations {
+                let previousPageIDs = mutation.previous
+                    .map { continuousPageIDs(intersecting: $0.renderBounds) }
+                    ?? []
+                let currentPageIDs = mutation.current
+                    .map { continuousPageIDs(intersecting: $0.renderBounds) }
+                    ?? []
+                let sharedPageIDs = previousPageIDs.intersection(currentPageIDs)
+
+                if let previous = mutation.previous,
+                   let current = mutation.current {
+                    let previousIdentity = continuousStrokeIdentity(previous)
+                    for pageID in sharedPageIDs where !pageIDsNeedingRebuild.contains(pageID) {
+                        guard var pageStrokes = strokesByPageID[pageID],
+                              let localizedPrevious = localizedContinuousStroke(
+                                  previous,
+                                  for: pageID
+                              ),
+                              let localizedCurrent = localizedContinuousStroke(
+                                  current,
+                                  for: pageID
+                              ) else {
+                            pageIDsNeedingRebuild.insert(pageID)
+                            continue
+                        }
+                        let previousState = continuousStrokeState(localizedPrevious)
+                        let index = pageStrokes.firstIndex {
+                            continuousStrokeIdentity($0) == previousIdentity
+                                && continuousStrokeState($0) == previousState
+                        } ?? pageStrokes.firstIndex {
+                            continuousStrokeIdentity($0) == previousIdentity
+                        }
+                        if let index {
+                            pageStrokes[index] = localizedCurrent
+                        } else {
+                            pageIDsNeedingRebuild.insert(pageID)
+                        }
+                        strokesByPageID[pageID] = pageStrokes
+                    }
+                }
+
+                if let previous = mutation.previous {
+                    let previousIdentity = continuousStrokeIdentity(previous)
+                    for pageID in previousPageIDs.subtracting(currentPageIDs)
+                    where !pageIDsNeedingRebuild.contains(pageID) {
+                        guard var pageStrokes = strokesByPageID[pageID],
+                              let localizedPrevious = localizedContinuousStroke(
+                                  previous,
+                                  for: pageID
+                              ) else {
+                            pageIDsNeedingRebuild.insert(pageID)
+                            continue
+                        }
+                        let previousState = continuousStrokeState(localizedPrevious)
+                        let index = pageStrokes.firstIndex {
+                            continuousStrokeIdentity($0) == previousIdentity
+                                && continuousStrokeState($0) == previousState
+                        } ?? pageStrokes.firstIndex {
+                            continuousStrokeIdentity($0) == previousIdentity
+                        }
+                        guard let index else {
+                            pageIDsNeedingRebuild.insert(pageID)
+                            continue
+                        }
+                        pageStrokes.remove(at: index)
+                        strokesByPageID[pageID] = pageStrokes
+                    }
+                }
+
+                if let current = mutation.current {
+                    for pageID in currentPageIDs.subtracting(previousPageIDs)
+                    where !pageIDsNeedingRebuild.contains(pageID) {
+                        guard let localizedCurrent = localizedContinuousStroke(
+                            current,
+                            for: pageID
+                        ) else {
+                            pageIDsNeedingRebuild.insert(pageID)
+                            continue
+                        }
+                        strokesByPageID[pageID, default: []].append(localizedCurrent)
+                    }
+                }
+            }
+
+            for (pageID, strokes) in strokesByPageID
+            where !pageIDsNeedingRebuild.contains(pageID) {
+                continuousPageDrawingCache[pageID] = PKDrawing(strokes: strokes)
+            }
+
+            if !pageIDsNeedingRebuild.isEmpty,
+               let rebuilt = splitContinuousPageDrawings(
+                   from: currentDrawing,
+                   pageIDs: pageIDsNeedingRebuild
+               ) {
+                for (page, drawing) in rebuilt {
+                    continuousPageDrawingCache[page.id] = drawing
+                }
+            }
+        }
+
+        private func localizedContinuousStroke(
+            _ stroke: PKStroke,
+            for pageID: UUID
+        ) -> PKStroke? {
+            guard let drawingFrame = continuousDrawingFrame,
+                  let pageFrame = pageFrames[pageID] else { return nil }
+            let localSegmentFrame = pageFrame.offsetBy(
+                dx: -drawingFrame.minX,
+                dy: -drawingFrame.minY
+            )
+            return PKDrawing(strokes: [stroke]).transformed(
+                using: CGAffineTransform(
+                    translationX: -localSegmentFrame.minX,
+                    y: -localSegmentFrame.minY
+                )
+            ).strokes.first
+        }
+
+        func continuousPageDrawings(
+            from drawing: PKDrawing,
+            pageIDs requestedPageIDs: Set<UUID>? = nil
+        ) -> [(NotePage, PKDrawing)]? {
+            guard isContinuousDrawingEnabled else { return nil }
+
+            let orderedTargetPageIDs = orderedPageIDs.filter {
+                requestedPageIDs?.contains($0) ?? true
+            }
+            let cached = orderedTargetPageIDs.compactMap { pageID -> (NotePage, PKDrawing)? in
+                guard let page = pagesByID[pageID],
+                      let drawing = continuousPageDrawingCache[pageID] else { return nil }
+                return (page, drawing)
+            }
+            if cached.count == orderedTargetPageIDs.count {
+                return cached
+            }
+            return splitContinuousPageDrawings(from: drawing, pageIDs: requestedPageIDs)
+        }
+
+        private func splitContinuousPageDrawings(
+            from drawing: PKDrawing,
+            pageIDs requestedPageIDs: Set<UUID>? = nil
+        ) -> [(NotePage, PKDrawing)]? {
             guard isContinuousDrawingEnabled,
                   let drawingFrame = continuousDrawingFrame else { return nil }
+            continuousAggregateSplitCount += 1
 
+            let orderedTargetPageIDs = orderedPageIDs.filter {
+                requestedPageIDs?.contains($0) ?? true
+            }
             var strokesByPageID: [UUID: [PKStroke]] = Dictionary(
-                uniqueKeysWithValues: orderedPageIDs.map { ($0, []) }
+                uniqueKeysWithValues: orderedTargetPageIDs.map { ($0, []) }
             )
             for stroke in drawing.strokes {
                 let bounds = stroke.renderBounds.insetBy(dx: -0.5, dy: -0.5)
@@ -1791,12 +2173,20 @@ struct DrawingCanvasView: UIViewRepresentable {
                     dx: drawingFrame.minX,
                     dy: drawingFrame.minY
                 )
-                for id in pageIDsIntersecting(documentBounds) {
+                let intersectingIDs: [UUID]
+                if requestedPageIDs == nil {
+                    intersectingIDs = pageIDsIntersecting(documentBounds)
+                } else {
+                    intersectingIDs = orderedTargetPageIDs.filter {
+                        pageFrames[$0]?.intersects(documentBounds) == true
+                    }
+                }
+                for id in intersectingIDs {
                     strokesByPageID[id, default: []].append(stroke)
                 }
             }
 
-            return orderedPageIDs.compactMap { id in
+            return orderedTargetPageIDs.compactMap { id in
                 guard let page = pagesByID[id], let frame = pageFrames[id] else { return nil }
                 let localSegmentFrame = frame.offsetBy(
                     dx: -drawingFrame.minX,
@@ -1936,6 +2326,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             continuousPageView.releaseHeavyResources()
             continuousPageView.removeFromSuperview()
             self.continuousPageView = nil
+            continuousPageDrawingCache.removeAll(keepingCapacity: false)
         }
 
         /// Resizes the zoomable document without assigning `frame` while UIKit owns a
@@ -2363,6 +2754,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             }()
 
             pageView.frame = frame
+            pageView.setBackgroundPatternOrigin(
+                pageFlowMode.usesDocumentWideCanvas
+                    ? CGPoint(x: -frame.minX, y: -frame.minY)
+                    : nil
+            )
             // Apply interaction state before attachments are configured so a page
             // materialized mid-scroll or mid-stroke stays consistent with the editor.
             pageView.setDocumentTraversalActive(
@@ -3254,18 +3650,33 @@ struct DrawingCanvasView: UIViewRepresentable {
             private static let maximumCoordinateMagnitude = 1_000_000
 
             private let cellSize: CGFloat
-            private let allStrokeIndexes: IndexSet
+            private var allStrokeIndexes = IndexSet()
             private var strokeIndexesByCell: [Cell: IndexSet] = [:]
             private var fallbackStrokeIndexes = IndexSet()
 
-            init(strokes: [PKStroke], diameter: CGFloat) {
+            init(strokes: [PKStroke], diameter: CGFloat, candidateBounds: CGRect?) {
                 let requestedCellSize = diameter.isFinite && diameter > 0
                     ? diameter * 2
                     : 64
                 cellSize = min(max(requestedCellSize, 64), 256)
-                allStrokeIndexes = IndexSet(integersIn: strokes.indices)
+                let boundedCandidateRegion = candidateBounds.flatMap { bounds -> CGRect? in
+                    let standardized = bounds.standardized
+                    guard !standardized.isNull,
+                          !standardized.isInfinite,
+                          standardized.minX.isFinite,
+                          standardized.minY.isFinite,
+                          standardized.maxX.isFinite,
+                          standardized.maxY.isFinite else { return nil }
+                    return standardized
+                }
+                var includedStrokeIndexes = IndexSet()
 
                 for (index, stroke) in strokes.enumerated() {
+                    if let boundedCandidateRegion,
+                       !stroke.renderBounds.intersects(boundedCandidateRegion) {
+                        continue
+                    }
+                    includedStrokeIndexes.insert(index)
                     guard let span = cellSpan(for: stroke.renderBounds) else {
                         fallbackStrokeIndexes.insert(index)
                         continue
@@ -3280,6 +3691,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                         }
                     }
                 }
+                allStrokeIndexes = includedStrokeIndexes
             }
 
             func strokeIndexes(intersecting bounds: CGRect) -> IndexSet {
@@ -3356,10 +3768,18 @@ struct DrawingCanvasView: UIViewRepresentable {
             private var sampleRunsByStrokeIndex: [Int: [[StrokeSample]]] = [:]
             private(set) var lastBroadPhaseCandidateCount = 0
 
-            init(strokes: [PKStroke], diameter: CGFloat) {
+            init(
+                strokes: [PKStroke],
+                diameter: CGFloat,
+                candidateBounds: CGRect? = nil
+            ) {
                 self.strokes = strokes
                 self.diameter = diameter
-                spatialIndex = SpatialIndex(strokes: strokes, diameter: diameter)
+                spatialIndex = SpatialIndex(
+                    strokes: strokes,
+                    diameter: diameter,
+                    candidateBounds: candidateBounds
+                )
             }
 
             var preparedStrokeCount: Int {
@@ -4574,6 +4994,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             // Repainting the background must not alter the PencilKit and attachment
             // layer order, and must not require rebuilding the live drawing.
             restoreDrawingLayerOrder()
+        }
+
+        func setBackgroundPatternOrigin(_ origin: CGPoint?) {
+            backgroundView.patternOrigin = origin
         }
 
         func configureContinuousDrawingOverlay(
@@ -6197,9 +6621,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                let diameter = eraserPreviewDiameter,
                diameter.isFinite,
                diameter > 0 {
+                let candidateBounds = activeDrawingViewportRect.isNull
+                    || activeDrawingViewportRect.isEmpty
+                    ? nil
+                    : activeDrawingViewportRect.insetBy(dx: -diameter, dy: -diameter)
                 objectEraserHitTestSession = ObjectEraserHitTester.Session(
                     strokes: canvasView.drawing.strokes,
-                    diameter: diameter
+                    diameter: diameter,
+                    candidateBounds: candidateBounds
                 )
             } else {
                 objectEraserHitTestSession = nil
@@ -6244,7 +6673,12 @@ struct DrawingCanvasView: UIViewRepresentable {
                 objectEraserPendingPath.append(currentLocation)
             }
 
-            flushPendingObjectEraserPath(forcesEvaluation: forcesEvaluation)
+            // Whole-stroke deletion rebuilds PencilKit's immutable drawing. Cap that
+            // work at one batch per display interval so coalesced Pencil samples can
+            // remove several touched strokes with one aggregate replacement.
+            if forcesEvaluation || !usesCustomObjectEraser || rubEraserConfiguration != nil {
+                flushPendingObjectEraserPath(forcesEvaluation: forcesEvaluation)
+            }
             schedulePendingObjectEraserFlushIfNeeded()
         }
 
@@ -6264,7 +6698,10 @@ struct DrawingCanvasView: UIViewRepresentable {
                 self.flushPendingObjectEraserPath(forcesEvaluation: true)
             }
             objectEraserPendingFlushWorkItem = workItem
-            DispatchQueue.main.async(execute: workItem)
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + (1.0 / 60.0),
+                execute: workItem
+            )
         }
 
         private func flushPendingObjectEraserPath(forcesEvaluation: Bool) {
@@ -6509,6 +6946,13 @@ struct DrawingCanvasView: UIViewRepresentable {
         var theme: BeanNotesTheme = .defaultTheme
         var showsBeanArtwork = false
         var pageID: UUID?
+        var patternOrigin: CGPoint? {
+            didSet {
+                guard patternOrigin != oldValue else { return }
+                patternedContentView?.patternOrigin = patternOrigin
+                patternedContentView?.setNeedsDisplay()
+            }
+        }
         var isCoveredByOpaquePDF = false
         private(set) var usesSolidColorRendering = false
         private var patternedContentView: PatternedPageBackgroundView?
@@ -6576,7 +7020,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                     background: background,
                     theme: theme,
                     showsBeanArtwork: showsBeanArtwork,
-                    pageID: pageID
+                    pageID: pageID,
+                    patternOrigin: patternOrigin
                 )
                 patternedContentView.frame = bounds
                 patternedContentView.setNeedsDisplay()
@@ -6601,6 +7046,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             private var theme: BeanNotesTheme = .defaultTheme
             private var showsBeanArtwork = false
             private var pageID: UUID?
+            var patternOrigin: CGPoint?
 
             override init(frame: CGRect) {
                 super.init(frame: frame)
@@ -6624,12 +7070,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                 background: NoteBackground,
                 theme: BeanNotesTheme,
                 showsBeanArtwork: Bool,
-                pageID: UUID?
+                pageID: UUID?,
+                patternOrigin: CGPoint?
             ) {
                 self.background = background
                 self.theme = theme
                 self.showsBeanArtwork = showsBeanArtwork
                 self.pageID = pageID
+                self.patternOrigin = patternOrigin
             }
 
             func updateRenderScale(_ scale: CGFloat) {
@@ -6646,6 +7094,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     theme: theme,
                     showsBeanArtwork: showsBeanArtwork,
                     pageID: pageID,
+                    patternOrigin: patternOrigin,
                     in: bounds,
                     context: context
                 )
@@ -8027,6 +8476,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var deferredDrawingChangeNotifications: Set<UUID> = []
         private var loadedDrawingDataByPageID: [UUID: Data] = [:]
         private var drawingChangeRevisionsByPageID: [UUID: UInt64] = [:]
+        private var continuousDrawingBaselinesByCanvasID: [ObjectIdentifier: PKDrawing] = [:]
+        private var continuousCanvasesWithDeferredChanges: Set<ObjectIdentifier> = []
         private var registeredPageIDsByCanvasID: [ObjectIdentifier: Set<UUID>] = [:]
         private var drawingLoadPagesByPageID: [UUID: NotePage] = [:]
         private var unavailableDrawingErrorsByPageID: [UUID: Error] = [:]
@@ -8464,6 +8915,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             if !registeredCanvasIDs.contains(id) {
                 registeredCanvasIDs.insert(id)
             }
+            if containerView?.isContinuousCanvas(canvasView) == true {
+                continuousDrawingBaselinesByCanvasID[id] = canvasView.drawing
+                continuousCanvasesWithDeferredChanges.remove(id)
+            }
             if parent.paletteMode == .applePencil,
                toolPickerObservedCanvasIDs.insert(id).inserted {
                 toolPicker.addObserver(canvasView)
@@ -8498,6 +8953,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
             }
             registeredPageIDsByCanvasID[id] = nil
+            continuousDrawingBaselinesByCanvasID[id] = nil
+            continuousCanvasesWithDeferredChanges.remove(id)
             cancelDrawingLoadRetry(for: id)
             if toolPickerObservedCanvasIDs.remove(id) != nil {
                 toolPicker.removeObserver(canvasView)
@@ -8590,6 +9047,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                     canvasView.delegate = nil
                     canvasView.drawing = drawing
                     canvasView.delegate = delegate
+                    continuousDrawingBaselinesByCanvasID[canvasID] = drawing
+                    continuousCanvasesWithDeferredChanges.remove(canvasID)
                     resolved = true
                 } else {
                     resolved = false
@@ -8924,35 +9383,61 @@ struct DrawingCanvasView: UIViewRepresentable {
             )
         }
 
+        /// Converts one document-wide PencilKit mutation into page-local dirty state.
+        /// This is the key scalability boundary: normal ink updates never mark every
+        /// page merely because the visible canvas spans the full note.
+        @discardableResult
+        private func reconcileContinuousDrawingChange(
+            _ canvasView: PKCanvasView
+        ) -> Set<UUID> {
+            let canvasID = ObjectIdentifier(canvasView)
+            guard containerView?.isContinuousCanvas(canvasView) == true,
+                  let containerView else { return [] }
+
+            let previousDrawing = continuousDrawingBaselinesByCanvasID[canvasID]
+                ?? PKDrawing()
+            let drawing = canvasView.drawing
+            let changedPageIDs = containerView.changedContinuousPageIDs(
+                from: previousDrawing,
+                to: drawing,
+                allowsSingleStrokeFastPath: parent.toolState.selectedTool == .pen
+                    || parent.toolState.selectedTool == .pencil
+                    || parent.toolState.selectedTool == .highlighter
+            )
+            continuousDrawingBaselinesByCanvasID[canvasID] = drawing
+            continuousCanvasesWithDeferredChanges.remove(canvasID)
+            guard !changedPageIDs.isEmpty else { return [] }
+
+            advanceDrawingChangeRevisions(for: changedPageIDs)
+            let newlyDirtyPageIDs = changedPageIDs.filter { pageID in
+                !dirtyPageIDs.contains(pageID)
+                    && pendingSaves[pageID] == nil
+                    && !hasInFlightSave(for: pageID)
+            }
+            markDirty(changedPageIDs)
+            canvasPageViews[canvasID]?.value?.drawingDidChange()
+            for pageID in newlyDirtyPageIDs {
+                notifyDrawingChanged(pageID: pageID)
+            }
+            if !newlyDirtyPageIDs.isEmpty {
+                notifySaveStarted()
+            }
+            return changedPageIDs
+        }
+
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             let key = ObjectIdentifier(canvasView)
             guard let page = canvasPages[key] else { return }
 
             if containerView?.isContinuousCanvas(canvasView) == true {
-                let pageIDs = containerView?.continuousPageIDs ?? [page.id]
-                advanceDrawingChangeRevisions(for: pageIDs)
-                let wasAlreadyDirty = pageIDs.contains {
-                    dirtyPageIDs.contains($0)
-                        || pendingSaves[$0] != nil
-                        || hasInFlightSave(for: $0)
-                }
-                markDirty(pageIDs)
-
                 if activeToolCanvasIDs.contains(key) {
-                    if !wasAlreadyDirty {
-                        deferredDrawingChangeNotifications.insert(page.id)
-                    }
+                    continuousCanvasesWithDeferredChanges.insert(key)
                     return
                 }
 
-                canvasPageViews[key]?.value?.drawingDidChange()
-                if !wasAlreadyDirty {
-                    for pageID in pageIDs {
-                        notifyDrawingChanged(pageID: pageID)
-                    }
-                    notifySaveStarted()
+                if !reconcileContinuousDrawingChange(canvasView).isEmpty {
+                    scheduleContinuousDrawingSave(canvasView)
                 }
-                scheduleContinuousDrawingSave(canvasView)
                 publishUndoRedoAvailability()
                 return
             }
@@ -8981,11 +9466,21 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func scheduleContinuousDrawingSave(_ canvasView: PKCanvasView) {
-            guard let pageIDs = containerView?.continuousPageIDs, !pageIDs.isEmpty else { return }
-            if let error = unavailableDrawingError(for: pageIDs) {
+            guard let continuousPageIDs = containerView?.continuousPageIDs,
+                  !continuousPageIDs.isEmpty else { return }
+            // A shared canvas is only trustworthy when every page archive that
+            // contributed to it loaded successfully. Keep the existing all-or-none
+            // recovery guarantee even though the eventual writes are page-scoped.
+            if let error = unavailableDrawingError(for: continuousPageIDs) {
                 notifySaveFailed(error)
                 return
             }
+            let pageIDs = continuousPageIDs.filter { pageID in
+                dirtyPageIDs.contains(pageID)
+                    || pendingSaves[pageID] != nil
+                    || pendingSaveTokens[pageID] != nil
+            }
+            guard !pageIDs.isEmpty else { return }
             notifySaveStarted()
 
             let token = UUID()
@@ -9005,7 +9500,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 guard !activePageIDs.isEmpty else { return }
                 guard let canvasView,
                       let pageDrawings = self.containerView?.continuousPageDrawings(
-                          from: canvasView.drawing
+                          from: canvasView.drawing,
+                          pageIDs: activePageIDs
                       ) else {
                     self.failPendingSave(
                         pageIDs: activePageIDs,
@@ -9393,6 +9889,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                 // text editor for Scribble. Reaching the document canvas therefore
                 // means the user started ordinary page ink outside the snippet.
                 containerView?.clearAttachmentSelectionsForContinuousDrawing()
+                continuousDrawingBaselinesByCanvasID[id] = canvasView.drawing
+                continuousCanvasesWithDeferredChanges.remove(id)
             }
             containerView?.setActiveDrawingPage(id: activePageID)
             containerView?.setDrawingInteractionActive(
@@ -9404,7 +9902,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
             if let page = registeredPage {
                 let affectedPageIDs = containerView?.isContinuousCanvas(canvasView) == true
-                    ? containerView?.continuousPageIDs ?? [page.id]
+                    ? Array(dirtyPageIDs)
                     : [page.id]
                 for pageID in affectedPageIDs {
                     pendingSaves[pageID]?.cancel()
@@ -9423,22 +9921,23 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasPageViews[id]?.value?.setLiveDrawingActive(false)
 
             if let page = canvasPages[id] {
-                if deferredDrawingChangeNotifications.remove(page.id) != nil {
-                    canvasPageViews[id]?.value?.drawingDidChange()
-                    let changedPageIDs = containerView?.isContinuousCanvas(canvasView) == true
-                        ? containerView?.continuousPageIDs ?? [page.id]
-                        : [page.id]
-                    for pageID in changedPageIDs {
-                        notifyDrawingChanged(pageID: pageID)
+                if containerView?.isContinuousCanvas(canvasView) == true {
+                    if continuousCanvasesWithDeferredChanges.contains(id) {
+                        _ = reconcileContinuousDrawingChange(canvasView)
                     }
-                }
-                if containerView?.isContinuousCanvas(canvasView) == true,
-                   (containerView?.continuousPageIDs.contains(where: dirtyPageIDs.contains) == true) {
-                    scheduleContinuousDrawingSave(canvasView)
-                    publishUndoRedoAvailability()
-                } else if dirtyPageIDs.contains(page.id) {
-                    scheduleDrawingSave(for: page, canvasView: canvasView)
-                    publishUndoRedoAvailability()
+                    if containerView?.continuousPageIDs.contains(where: dirtyPageIDs.contains) == true {
+                        scheduleContinuousDrawingSave(canvasView)
+                        publishUndoRedoAvailability()
+                    }
+                } else {
+                    if deferredDrawingChangeNotifications.remove(page.id) != nil {
+                        canvasPageViews[id]?.value?.drawingDidChange()
+                        notifyDrawingChanged(pageID: page.id)
+                    }
+                    if dirtyPageIDs.contains(page.id) {
+                        scheduleDrawingSave(for: page, canvasView: canvasView)
+                        publishUndoRedoAvailability()
+                    }
                 }
             }
 
@@ -9753,14 +10252,26 @@ struct DrawingCanvasView: UIViewRepresentable {
             if let canvasView = containerView?.activeCanvasView,
                containerView?.isContinuousCanvas(canvasView) == true {
                 let canvasID = ObjectIdentifier(canvasView)
-                let pageIDs = registeredPageIDsByCanvasID[canvasID]
+                let registeredPageIDs = registeredPageIDsByCanvasID[canvasID]
                     ?? Set(containerView?.continuousPageIDs ?? [])
-                if let error = unavailableDrawingError(for: pageIDs) {
+                if force
+                    || continuousCanvasesWithDeferredChanges.contains(canvasID)
+                    || continuousDrawingBaselinesByCanvasID[canvasID] == nil {
+                    _ = reconcileContinuousDrawingChange(canvasView)
+                }
+                if let error = unavailableDrawingError(for: registeredPageIDs) {
                     notifySaveFailed(error)
                     return []
                 }
+                let trackedPageIDs = Set(registeredPageIDs.filter { pageID in
+                    dirtyPageIDs.contains(pageID)
+                        || pendingSaves[pageID] != nil
+                        || pendingSaveTokens[pageID] != nil
+                })
+                guard !trackedPageIDs.isEmpty else { return [] }
                 guard let continuousSnapshots = containerView?.continuousPageDrawings(
-                    from: canvasView.drawing
+                    from: canvasView.drawing,
+                    pageIDs: trackedPageIDs
                 ) else {
                     return []
                 }
