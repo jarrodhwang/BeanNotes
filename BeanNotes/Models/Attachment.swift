@@ -12,6 +12,8 @@ enum AttachmentKind: String, Codable, CaseIterable, Sendable {
     case pdf
     case image
     case codeSnippet
+    case chemicalStructure
+    case molecularFormula
     case docx
     case csv
     case presentation
@@ -25,6 +27,10 @@ enum AttachmentKind: String, Codable, CaseIterable, Sendable {
             "Image"
         case .codeSnippet:
             "Code Snippet"
+        case .chemicalStructure:
+            "Chemical Structure"
+        case .molecularFormula:
+            "Molecular Formula"
         case .docx:
             "Word"
         case .csv:
@@ -445,6 +451,10 @@ final class Attachment {
     var codeSnippetSyntaxThemeRaw: String?
     /// Lets old flattened previews be refreshed after their live editor/header design changes.
     var codeSnippetPreviewVersion: Int?
+    /// Versioned semantic source for study blocks. Optional fields keep existing
+    /// SwiftData stores compatible without manufacturing payloads.
+    var semanticPayloadData: Data?
+    var semanticPreviewVersion: Int?
     var createdAt: Date
     var updatedAt: Date
     var page: NotePage?
@@ -477,6 +487,8 @@ final class Attachment {
         codeSnippetBackgroundRaw: String? = nil,
         codeSnippetSyntaxThemeRaw: String? = nil,
         codeSnippetPreviewVersion: Int? = nil,
+        semanticPayloadData: Data? = nil,
+        semanticPreviewVersion: Int? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         page: NotePage? = nil
@@ -515,6 +527,8 @@ final class Attachment {
         self.codeSnippetBackgroundRaw = codeSnippetBackgroundRaw
         self.codeSnippetSyntaxThemeRaw = codeSnippetSyntaxThemeRaw
         self.codeSnippetPreviewVersion = codeSnippetPreviewVersion
+        self.semanticPayloadData = semanticPayloadData
+        self.semanticPreviewVersion = semanticPreviewVersion
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.page = page
@@ -535,6 +549,10 @@ final class Attachment {
 
     var isCodeSnippet: Bool {
         kind == .codeSnippet
+    }
+
+    var isSemanticStudyBlock: Bool {
+        kind == .chemicalStructure || kind == .molecularFormula
     }
 
     /// Non-versioned attachments are always visible. Version-managed attachments

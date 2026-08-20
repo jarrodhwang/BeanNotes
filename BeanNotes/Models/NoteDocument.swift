@@ -87,11 +87,25 @@ final class NoteDocument {
                         : ""
                     return NoteSearchText.join([
                         "\($0.displayName) \($0.originalFileName) \($0.kind.displayName) \(language)",
-                        source
+                        source,
+                        Self.semanticSearchText(for: $0)
                     ])
                 }
             }
         )
+    }
+
+    private static func semanticSearchText(for attachment: Attachment) -> String {
+        switch attachment.kind {
+        case .chemicalStructure:
+            let draft = ChemicalSemanticPayload.structure(from: attachment.semanticPayloadData)?.draft
+            return NoteSearchText.join([draft?.molecularFormula ?? "", draft?.canonicalSMILES ?? ""])
+        case .molecularFormula:
+            let draft = ChemicalSemanticPayload.formula(from: attachment.semanticPayloadData)?.draft
+            return NoteSearchText.join([draft?.sourceText ?? "", draft?.normalizedFormula ?? ""])
+        default:
+            return ""
+        }
     }
 
     func matchesSearch(_ rawQuery: String) -> Bool {

@@ -11,11 +11,13 @@ struct SettingsView: View {
         case theme
         case noteStyle
         case pencilStyle
+        case focusFeatures
         case backup
     }
 
     @Query(sort: \NotebookFolder.name) private var folders: [NotebookFolder]
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     @AppStorage(BeanNotesTheme.storageKey) private var beanNotesThemeRaw = BeanNotesTheme.defaultTheme.rawValue
@@ -46,6 +48,16 @@ struct SettingsView: View {
     private var codeSnippetDefaultHeight = CodeSnippetPreferences.defaultHeight
     @AppStorage(CodeSnippetPreferences.showsInPencilPaletteKey)
     private var showsCodeSnippetInPencilPalette = CodeSnippetPreferences.defaultShowsInPencilPalette
+    @AppStorage(FocusFeaturePreferences.computerScienceEnabledKey)
+    private var computerScienceFeaturesEnabled = FocusFeaturePreferences.defaultComputerScienceEnabled
+    @AppStorage(FocusFeaturePreferences.chemistryEnabledKey)
+    private var chemistryFeaturesEnabled = FocusFeaturePreferences.defaultChemistryEnabled
+    @AppStorage(FocusFeaturePreferences.codeSnippetsEnabledKey)
+    private var codeSnippetsFeatureEnabled = FocusFeaturePreferences.defaultCodeSnippetsEnabled
+    @AppStorage(FocusFeaturePreferences.chemicalStructureEnabledKey)
+    private var chemicalStructureFeatureEnabled = FocusFeaturePreferences.defaultChemicalStructureEnabled
+    @AppStorage(FocusFeaturePreferences.molecularFormulaEnabledKey)
+    private var molecularFormulaFeatureEnabled = FocusFeaturePreferences.defaultMolecularFormulaEnabled
     @AppStorage(NoteEditorPageLayoutMode.storageKey) private var pageLayoutModeRaw = NoteEditorPageLayoutMode.scroll.rawValue
     @AppStorage(PaperSize.storageKey) private var paperSizeRaw = PaperSize.defaultPaperSize.rawValue
     @AppStorage(CustomPaperSize.widthStorageKey) private var customPaperWidth = Double(CustomPaperSize.defaultDimensions.width)
@@ -111,6 +123,7 @@ struct SettingsView: View {
             migrateLegacyPaginationSettingIfNeeded()
             restorePaletteColorCount()
             CodeSnippetPreferences.normalizePersistedValues()
+            FocusFeaturePreferences.normalizePersistedValues()
         }
         .task {
             await refreshStorageUsage()
@@ -192,19 +205,19 @@ struct SettingsView: View {
     }
 
     private var settingsTabPicker: some View {
-        Picker("Settings section", selection: $selectedTab) {
-            Label("Theme", systemImage: "paintpalette")
-                .tag(SettingsTab.theme)
-            Label("Note Style", systemImage: "doc.text")
-                .tag(SettingsTab.noteStyle)
-            Label("Pencil Style", systemImage: "pencil")
-                .tag(SettingsTab.pencilStyle)
-            Label("Backup", systemImage: "externaldrive")
-                .tag(SettingsTab.backup)
+        ScrollView(.horizontal, showsIndicators: false) {
+            Picker("Settings section", selection: $selectedTab) {
+                Label("Theme", systemImage: "paintpalette").tag(SettingsTab.theme)
+                Label("Note Style", systemImage: "doc.text").tag(SettingsTab.noteStyle)
+                Label("Pencil Style", systemImage: "pencil").tag(SettingsTab.pencilStyle)
+                Label("Focus Features", systemImage: "graduationcap").tag(SettingsTab.focusFeatures)
+                Label("Backup", systemImage: "externaldrive").tag(SettingsTab.backup)
+            }
+            .pickerStyle(.segmented)
+            .frame(minWidth: horizontalSizeClass == .compact ? 620 : nil)
+            .accessibilityIdentifier("settings.sectionPicker")
         }
-        .pickerStyle(.segmented)
         .frame(maxWidth: .infinity)
-        .accessibilityIdentifier("settings.sectionPicker")
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
     }
@@ -218,6 +231,8 @@ struct SettingsView: View {
             noteStyleSettings
         case .pencilStyle:
             pencilStyleSettings
+        case .focusFeatures:
+            focusFeatureSettings
         case .backup:
             backupSettings
         }
@@ -373,79 +388,101 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Code Snippets") {
-                Toggle("Show in Pencil Palette", isOn: $showsCodeSnippetInPencilPalette)
-                    .accessibilityIdentifier("settings.codeSnippetPaletteVisibility")
+        }
+        .scrollContentBackground(.hidden)
+    }
 
-                Picker("Default Language", selection: $codeSnippetLanguageRaw) {
-                    ForEach(CodeSnippetLanguage.allCases) { language in
-                        Text(language.label).tag(language.rawValue)
+    private var focusFeatureSettings: some View {
+        Form {
+            Section("Computer Science") {
+                Toggle("Enable Computer Science Features", isOn: $computerScienceFeaturesEnabled)
+                    .accessibilityIdentifier("settings.computerScienceFeatures")
+                Toggle("Code Snippets", isOn: $codeSnippetsFeatureEnabled)
+                    .disabled(!computerScienceFeaturesEnabled)
+                    .accessibilityIdentifier("settings.codeSnippetsFeature")
+            }
+
+            if computerScienceFeaturesEnabled && codeSnippetsFeatureEnabled {
+                codeSnippetSettings
+            }
+
+            Section("Chemistry & MBB") {
+                Toggle("Enable Chemistry & MBB Features", isOn: $chemistryFeaturesEnabled)
+                    .accessibilityIdentifier("settings.chemistryFeatures")
+                Toggle("Chemical Structure", isOn: $chemicalStructureFeatureEnabled)
+                    .disabled(!chemistryFeaturesEnabled)
+                    .accessibilityIdentifier("settings.chemicalStructureFeature")
+                Toggle("Molecular Formula", isOn: $molecularFormulaFeatureEnabled)
+                    .disabled(!chemistryFeaturesEnabled)
+                    .accessibilityIdentifier("settings.molecularFormulaFeature")
+
+                if chemistryFeaturesEnabled && chemicalStructureFeatureEnabled {
+                    if FocusFeaturePreferences.isChemicalStructureRecognitionQualified {
+                        Picker("Structure Input", selection: .constant(ChemicalStructureInputMode.smartEditor.rawValue)) {
+                            ForEach(ChemicalStructureInputMode.allCases) { mode in
+                                Text(mode.label).tag(mode.rawValue)
+                            }
+                        }
+                    } else {
+                        LabeledContent("Structure Input", value: ChemicalStructureInputMode.smartEditor.label)
                     }
+                    Text("Drag with Apple Pencil to create snapped bonds, tap to place or label atoms, and use ring templates. Everything stays on this device.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .accessibilityIdentifier("settings.codeSnippetLanguage")
 
-                Picker("Default Font", selection: $codeSnippetFontRaw) {
-                    ForEach(CodeSnippetFontChoice.allCases) { font in
-                        Text(font.label).tag(font.rawValue)
-                    }
+                if chemistryFeaturesEnabled && molecularFormulaFeatureEnabled {
+                    Text("Write or type a formula, review validation feedback, then save it with chemical subscripts and charge superscripts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .accessibilityIdentifier("settings.codeSnippetFont")
-
-                Stepper(
-                    value: $codeSnippetFontSize,
-                    in: CodeSnippetPreferences.supportedFontSize,
-                    step: 1
-                ) {
-                    LabeledContent("Default Font Size", value: "\(Int(codeSnippetFontSize.rounded())) pt")
-                }
-                .accessibilityIdentifier("settings.codeSnippetFontSize")
-
-                Picker("Default Box Appearance", selection: $codeSnippetBackgroundRaw) {
-                    ForEach(CodeSnippetBackgroundStyle.allCases) { style in
-                        Text(style.label).tag(style.rawValue)
-                    }
-                }
-                .accessibilityIdentifier("settings.codeSnippetBackground")
-
-                Picker("Default Syntax Theme", selection: $codeSnippetSyntaxThemeRaw) {
-                    ForEach(CodeSnippetSyntaxTheme.allCases) { theme in
-                        Text(theme.label).tag(theme.rawValue)
-                    }
-                }
-                .accessibilityIdentifier("settings.codeSnippetSyntaxTheme")
-
-                Stepper(
-                    value: $codeSnippetDefaultWidth,
-                    in: CodeSnippetPreferences.supportedWidth,
-                    step: 20
-                ) {
-                    LabeledContent(
-                        "Default Width",
-                        value: "\(Int(codeSnippetDefaultWidth.rounded())) pt"
-                    )
-                }
-                .accessibilityIdentifier("settings.codeSnippetDefaultWidth")
-
-                Stepper(
-                    value: $codeSnippetDefaultHeight,
-                    in: CodeSnippetPreferences.supportedHeight,
-                    step: 20
-                ) {
-                    LabeledContent(
-                        "Default Height",
-                        value: "\(Int(codeSnippetDefaultHeight.rounded())) pt"
-                    )
-                }
-                .accessibilityIdentifier("settings.codeSnippetDefaultHeight")
-
-                LabeledContent("Apple Pencil Input", value: "Scribble directly")
-
-                Text("The palette toggle controls the add-code shortcut in the custom pencil palette. New snippets use these defaults. App Appearance follows the selected box appearance and the app's light or dark tint. Named syntax themes include their own editor surface. The gear inside a selected code box changes only that snippet. After selecting a snippet, write directly in its code area with Apple Pencil Scribble or tap again for the keyboard.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .scrollContentBackground(.hidden)
+    }
+
+    private var codeSnippetSettings: some View {
+        Section("Code Snippet Defaults") {
+            Toggle("Show in Pencil Palette", isOn: $showsCodeSnippetInPencilPalette)
+                .accessibilityIdentifier("settings.codeSnippetPaletteVisibility")
+
+            Picker("Default Language", selection: $codeSnippetLanguageRaw) {
+                ForEach(CodeSnippetLanguage.allCases) { language in Text(language.label).tag(language.rawValue) }
+            }
+            .accessibilityIdentifier("settings.codeSnippetLanguage")
+
+            Picker("Default Font", selection: $codeSnippetFontRaw) {
+                ForEach(CodeSnippetFontChoice.allCases) { font in Text(font.label).tag(font.rawValue) }
+            }
+            .accessibilityIdentifier("settings.codeSnippetFont")
+
+            Stepper(value: $codeSnippetFontSize, in: CodeSnippetPreferences.supportedFontSize, step: 1) {
+                LabeledContent("Default Font Size", value: "\(Int(codeSnippetFontSize.rounded())) pt")
+            }
+            .accessibilityIdentifier("settings.codeSnippetFontSize")
+
+            Picker("Default Box Appearance", selection: $codeSnippetBackgroundRaw) {
+                ForEach(CodeSnippetBackgroundStyle.allCases) { style in Text(style.label).tag(style.rawValue) }
+            }
+            .accessibilityIdentifier("settings.codeSnippetBackground")
+
+            Picker("Default Syntax Theme", selection: $codeSnippetSyntaxThemeRaw) {
+                ForEach(CodeSnippetSyntaxTheme.allCases) { theme in Text(theme.label).tag(theme.rawValue) }
+            }
+            .accessibilityIdentifier("settings.codeSnippetSyntaxTheme")
+
+            Stepper(value: $codeSnippetDefaultWidth, in: CodeSnippetPreferences.supportedWidth, step: 20) {
+                LabeledContent("Default Width", value: "\(Int(codeSnippetDefaultWidth.rounded())) pt")
+            }
+            .accessibilityIdentifier("settings.codeSnippetDefaultWidth")
+
+            Stepper(value: $codeSnippetDefaultHeight, in: CodeSnippetPreferences.supportedHeight, step: 20) {
+                LabeledContent("Default Height", value: "\(Int(codeSnippetDefaultHeight.rounded())) pt")
+            }
+            .accessibilityIdentifier("settings.codeSnippetDefaultHeight")
+
+            LabeledContent("Apple Pencil Input", value: "Scribble directly")
+        }
     }
 
     private var backupSettings: some View {

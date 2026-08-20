@@ -101,7 +101,7 @@ final class NotePage {
     var visualAttachments: [Attachment] {
         attachments
             .filter {
-                ($0.kind == .image || $0.kind == .codeSnippet)
+                ($0.kind == .image || $0.kind == .codeSnippet || $0.isSemanticStudyBlock)
                     && $0.isVisibleInCurrentDocumentVersion
             }
             .sorted { $0.createdAt < $1.createdAt }

@@ -97,6 +97,7 @@ struct AttachmentListView: View {
     var toggleLock: (Attachment) -> Void
     var setDrawingLayer: (Attachment, Bool) -> Void
     var editCodeSnippet: (Attachment) -> Void
+    var editSemanticStudyBlock: (Attachment) -> Void = { _ in }
 
     @State private var renamingAttachment: Attachment?
     @State private var renameDraft = ""
@@ -181,6 +182,14 @@ struct AttachmentListView: View {
                     }
                 }
 
+                if attachment.isSemanticStudyBlock {
+                    Button {
+                        editSemanticStudyBlock(attachment)
+                    } label: {
+                        Label("Edit \(attachment.kind.displayName)", systemImage: icon(for: attachment.kind))
+                    }
+                }
+
                 Button {
                     renameDraft = attachment.displayName
                     renamingAttachment = attachment
@@ -249,6 +258,10 @@ struct AttachmentListView: View {
             "photo"
         case .codeSnippet:
             "curlybraces.square"
+        case .chemicalStructure:
+            "hexagon"
+        case .molecularFormula:
+            "textformat.subscript"
         case .docx:
             "doc.text"
         case .csv:

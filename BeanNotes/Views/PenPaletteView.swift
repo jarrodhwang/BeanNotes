@@ -13,6 +13,10 @@ struct PenPaletteView: View {
     var strokeZoomBehavior: DrawingStrokeZoomBehavior = .pageWidth
     var showsCodeSnippetButton = true
     var createCodeSnippet: () -> Void = {}
+    var showsChemicalStructureButton = false
+    var showsMolecularFormulaButton = false
+    var createChemicalStructure: () -> Void = {}
+    var createMolecularFormula: () -> Void = {}
 
     @AppStorage(PenPaletteLayoutMetrics.isCollapsedStorageKey) private var isCollapsed = false
     @AppStorage(PenPaletteLayoutMetrics.committedPositionStorageKey) private var committedPositionRaw = ""
@@ -199,7 +203,65 @@ struct PenPaletteView: View {
                 .accessibilityHint("Opens an editor for highlighted code, pasted text, or Apple Pencil handwriting")
                 .accessibilityIdentifier("penPalette.codeSnippet")
             }
+
+            if showsChemicalStructureButton || showsMolecularFormulaButton {
+                if showsChemicalStructureButton && showsMolecularFormulaButton {
+                    Menu {
+                        Button(action: createChemicalStructure) {
+                            Label("Chemical Structure", systemImage: "hexagon")
+                        }
+                        Button(action: createMolecularFormula) {
+                            Label("Molecular Formula", systemImage: "textformat.subscript")
+                        }
+                    } label: {
+                        Image(systemName: "flask")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 38, height: 38)
+                    }
+                    .buttonStyle(.plain)
+                    .palettePrimaryHitTarget()
+                    .accessibilityLabel("Add chemistry block")
+                    .accessibilityIdentifier("penPalette.chemistry")
+                } else if showsChemicalStructureButton {
+                    chemistryButton(
+                        title: "Add chemical structure",
+                        icon: "hexagon",
+                        identifier: "penPalette.chemicalStructure",
+                        action: createChemicalStructure
+                    )
+                } else {
+                    chemistryButton(
+                        title: "Add molecular formula",
+                        icon: "textformat.subscript",
+                        identifier: "penPalette.molecularFormula",
+                        action: createMolecularFormula
+                    )
+                }
+            }
         }
+    }
+
+    private func chemistryButton(
+        title: String,
+        icon: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            performSelectionFeedback()
+            action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 38, height: 38)
+        }
+        .buttonStyle(.plain)
+        .palettePrimaryHitTarget()
+        .accessibilityLabel(title)
+        .accessibilityHint("Creates an editable chemistry block on the selected page")
+        .accessibilityIdentifier(identifier)
     }
 
     private var colorControls: some View {

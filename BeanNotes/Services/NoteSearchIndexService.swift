@@ -108,10 +108,25 @@ struct NoteSearchIndexService {
                 )?.label ?? ""
                 return NoteSearchText.join([
                     "\($0.displayName) \($0.originalFileName) \($0.kind.displayName) \(language)",
-                    CodeSnippetSearchIndex.sourceProjection($0.codeSnippetText ?? "")
+                    CodeSnippetSearchIndex.sourceProjection($0.codeSnippetText ?? ""),
+                    Self.semanticSearchText(for: $0)
                 ])
             }
         )
+    }
+
+    @MainActor
+    private static func semanticSearchText(for attachment: Attachment) -> String {
+        switch attachment.kind {
+        case .chemicalStructure:
+            guard let draft = ChemicalSemanticPayload.structure(from: attachment.semanticPayloadData)?.draft else { return "" }
+            return NoteSearchText.join([draft.molecularFormula ?? "", draft.canonicalSMILES ?? ""])
+        case .molecularFormula:
+            guard let draft = ChemicalSemanticPayload.formula(from: attachment.semanticPayloadData)?.draft else { return "" }
+            return NoteSearchText.join([draft.sourceText, draft.normalizedFormula])
+        default:
+            return ""
+        }
     }
 
     nonisolated private static func recognizePageText(

@@ -53,7 +53,7 @@ nonisolated struct LibraryBackupManifest: Codable, Equatable, Sendable {
             }
             .map(FolderSnapshot.init(folder:))
 
-        self.formatVersion = 4
+        self.formatVersion = 5
         self.appName = "BeanNotes"
         self.archiveExtension = "beannotes"
         self.createdAt = createdAt
@@ -180,6 +180,8 @@ nonisolated struct LibraryBackupManifest: Codable, Equatable, Sendable {
         var codeSnippetBackgroundRaw: String?
         var codeSnippetSyntaxThemeRaw: String?
         var codeSnippetPreviewVersion: Int?
+        var semanticPayloadData: Data?
+        var semanticPreviewVersion: Int?
         var createdAt: Date
         var updatedAt: Date
 
@@ -212,6 +214,8 @@ nonisolated struct LibraryBackupManifest: Codable, Equatable, Sendable {
             self.codeSnippetBackgroundRaw = attachment.codeSnippetBackgroundRaw
             self.codeSnippetSyntaxThemeRaw = attachment.codeSnippetSyntaxThemeRaw
             self.codeSnippetPreviewVersion = attachment.codeSnippetPreviewVersion
+            self.semanticPayloadData = attachment.semanticPayloadData
+            self.semanticPreviewVersion = attachment.semanticPreviewVersion
             self.createdAt = attachment.createdAt
             self.updatedAt = attachment.updatedAt
         }

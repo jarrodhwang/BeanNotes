@@ -590,6 +590,10 @@ struct ExportView: View {
             "photo"
         case .codeSnippet:
             "curlybraces.square"
+        case .chemicalStructure:
+            "hexagon"
+        case .molecularFormula:
+            "textformat.subscript"
         case .docx:
             "doc.text"
         case .csv:

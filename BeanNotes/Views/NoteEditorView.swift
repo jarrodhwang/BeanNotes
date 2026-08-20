@@ -108,6 +108,23 @@ private enum ResolvedCodeSnippetSaveTarget {
     }
 }
 
+private enum SemanticAttachmentTarget {
+    case new(pageID: UUID)
+    case existing(attachmentID: UUID)
+}
+
+private struct ChemicalStructureEditingSession: Identifiable {
+    let id = UUID()
+    var target: SemanticAttachmentTarget
+    var draft: ChemicalStructureDraft
+}
+
+private struct MolecularFormulaEditingSession: Identifiable {
+    let id = UUID()
+    var target: SemanticAttachmentTarget
+    var draft: MolecularFormulaDraft
+}
+
 struct NoteEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -124,6 +141,16 @@ struct NoteEditorView: View {
     @AppStorage("penPaletteMode") private var penPaletteModeRaw = PenPaletteMode.custom.rawValue
     @AppStorage(CodeSnippetPreferences.showsInPencilPaletteKey)
     private var showsCodeSnippetInPencilPalette = CodeSnippetPreferences.defaultShowsInPencilPalette
+    @AppStorage(FocusFeaturePreferences.computerScienceEnabledKey)
+    private var computerScienceFeaturesEnabled = FocusFeaturePreferences.defaultComputerScienceEnabled
+    @AppStorage(FocusFeaturePreferences.chemistryEnabledKey)
+    private var chemistryFeaturesEnabled = FocusFeaturePreferences.defaultChemistryEnabled
+    @AppStorage(FocusFeaturePreferences.codeSnippetsEnabledKey)
+    private var codeSnippetsFeatureEnabled = FocusFeaturePreferences.defaultCodeSnippetsEnabled
+    @AppStorage(FocusFeaturePreferences.chemicalStructureEnabledKey)
+    private var chemicalStructureFeatureEnabled = FocusFeaturePreferences.defaultChemicalStructureEnabled
+    @AppStorage(FocusFeaturePreferences.molecularFormulaEnabledKey)
+    private var molecularFormulaFeatureEnabled = FocusFeaturePreferences.defaultMolecularFormulaEnabled
     @AppStorage(DrawingInputMode.storageKey) private var drawingInputModeRaw = DrawingInputMode.defaultMode.rawValue
     @AppStorage(DrawingStrokeZoomBehavior.storageKey) private var strokeZoomBehaviorRaw = DrawingStrokeZoomBehavior.defaultBehavior.rawValue
     @AppStorage("pencilDoubleTapAction") private var doubleTapRaw = PencilDoubleTapAction.switchToEraser.rawValue
@@ -166,6 +193,8 @@ struct NoteEditorView: View {
     @State private var draftTitle = ""
     @State private var attachmentPendingDeletion: Attachment?
     @State private var codeSnippetEditingSession: CodeSnippetEditingSession?
+    @State private var chemicalStructureEditingSession: ChemicalStructureEditingSession?
+    @State private var molecularFormulaEditingSession: MolecularFormulaEditingSession?
     @State private var pagePendingDeletion: NotePage?
     @State private var pageUndoToast: PageUndoToast?
     @State private var pageUndoToastDismissTask: Task<Void, Never>?
@@ -191,6 +220,18 @@ struct NoteEditorView: View {
         case .blueberry:
             showsBlueberryArtwork
         }
+    }
+
+    private var canCreateCodeSnippets: Bool {
+        computerScienceFeaturesEnabled && codeSnippetsFeatureEnabled
+    }
+
+    private var canCreateChemicalStructures: Bool {
+        chemistryFeaturesEnabled && chemicalStructureFeatureEnabled
+    }
+
+    private var canCreateMolecularFormulas: Bool {
+        chemistryFeaturesEnabled && molecularFormulaFeatureEnabled
     }
 
     init(
@@ -373,6 +414,16 @@ struct NoteEditorView: View {
                 saveCodeSnippet(draft, target: session.target)
             }
         }
+        .sheet(item: $chemicalStructureEditingSession) { session in
+            ChemicalStructureEditorSheet(initialDraft: session.draft) { draft in
+                saveChemicalStructure(draft, target: session.target)
+            }
+        }
+        .sheet(item: $molecularFormulaEditingSession) { session in
+            MolecularFormulaEditorSheet(initialDraft: session.draft) { draft in
+                saveMolecularFormula(draft, target: session.target)
+            }
+        }
         .sheet(isPresented: $isShowingPageReorder) {
             PageReorderSheet(
                 pages: note.sortedPages,
@@ -389,6 +440,7 @@ struct NoteEditorView: View {
                     deleteAttachment: deleteAttachment(_:),
                     toggleLock: toggleAttachmentLock(_:),
                     setDrawingLayer: setAttachmentDrawingLayer(_:behindDrawing:),
+                    editSemanticStudyBlock: beginEditingSemanticAttachment(_:),
                     saveCodeSnippet: { draft, attachment in
                         saveCodeSnippet(
                             draft,
@@ -545,8 +597,12 @@ struct NoteEditorView: View {
                             availableSize: proxy.size,
                             zoomScale: currentZoomScale,
                             strokeZoomBehavior: strokeZoomBehavior,
-                            showsCodeSnippetButton: showsCodeSnippetInPencilPalette,
-                            createCodeSnippet: beginCreatingCodeSnippet
+                            showsCodeSnippetButton: canCreateCodeSnippets && showsCodeSnippetInPencilPalette,
+                            createCodeSnippet: beginCreatingCodeSnippet,
+                            showsChemicalStructureButton: canCreateChemicalStructures,
+                            showsMolecularFormulaButton: canCreateMolecularFormulas,
+                            createChemicalStructure: beginCreatingChemicalStructure,
+                            createMolecularFormula: beginCreatingMolecularFormula
                         )
                     }
                     .zIndex(2)
@@ -1150,10 +1206,28 @@ struct NoteEditorView: View {
 
     private func pageActionsMenu(page: NotePage) -> some View {
         Menu {
-            Button {
-                beginCreatingCodeSnippet()
-            } label: {
-                Label("Add Code Snippet", systemImage: "curlybraces.square")
+            if canCreateCodeSnippets {
+                Button {
+                    beginCreatingCodeSnippet()
+                } label: {
+                    Label("Add Code Snippet", systemImage: "curlybraces.square")
+                }
+            }
+
+            if canCreateChemicalStructures {
+                Button {
+                    beginCreatingChemicalStructure()
+                } label: {
+                    Label("Add Chemical Structure", systemImage: "hexagon")
+                }
+            }
+
+            if canCreateMolecularFormulas {
+                Button {
+                    beginCreatingMolecularFormula()
+                } label: {
+                    Label("Add Molecular Formula", systemImage: "textformat.subscript")
+                }
             }
 
             Button {
@@ -1446,6 +1520,31 @@ struct NoteEditorView: View {
         )
     }
 
+    private func beginCreatingChemicalStructure() {
+        guard canCreateChemicalStructures, let page = selectedPage else { return }
+        chemicalStructureEditingSession = .init(target: .new(pageID: page.id), draft: ChemicalStructureDraft())
+    }
+
+    private func beginCreatingMolecularFormula() {
+        guard canCreateMolecularFormulas, let page = selectedPage else { return }
+        molecularFormulaEditingSession = .init(target: .new(pageID: page.id), draft: MolecularFormulaDraft())
+    }
+
+    private func beginEditingSemanticAttachment(_ attachment: Attachment) {
+        switch attachment.kind {
+        case .chemicalStructure:
+            let draft = ChemicalSemanticPayload.structure(from: attachment.semanticPayloadData)?.draft
+                ?? ChemicalStructureDraft(id: attachment.id)
+            chemicalStructureEditingSession = .init(target: .existing(attachmentID: attachment.id), draft: draft)
+        case .molecularFormula:
+            let draft = ChemicalSemanticPayload.formula(from: attachment.semanticPayloadData)?.draft
+                ?? MolecularFormulaDraft(id: attachment.id)
+            molecularFormulaEditingSession = .init(target: .existing(attachmentID: attachment.id), draft: draft)
+        default:
+            break
+        }
+    }
+
     private func beginEditingCodeSnippet(_ attachment: Attachment) {
         guard attachment.isCodeSnippet else { return }
         let defaults = CodeSnippetPreferences.defaultDraft()
@@ -1666,6 +1765,152 @@ struct NoteEditorView: View {
         }
     }
 
+    private func saveChemicalStructure(
+        _ draft: ChemicalStructureDraft,
+        target: SemanticAttachmentTarget
+    ) -> Bool {
+        guard let payload = try? ChemicalSemanticPayload.encode(.init(draft: draft)),
+              let preview = ChemistryPreviewRenderer.structurePNG(for: draft) else {
+            errorMessage = "BeanNotes could not prepare the chemical structure."
+            return false
+        }
+        return saveSemanticAttachment(
+            kind: .chemicalStructure,
+            displayName: draft.molecularFormula.map { "\($0) Structure" } ?? "Chemical Structure",
+            payload: payload,
+            preview: preview,
+            preferredFileName: "Chemical Structure.png",
+            defaultSize: ChemistryPreviewRenderer.defaultStructureSize,
+            target: target
+        )
+    }
+
+    private func saveMolecularFormula(
+        _ draft: MolecularFormulaDraft,
+        target: SemanticAttachmentTarget
+    ) -> Bool {
+        guard case .success(let result) = MolecularFormulaParser.parse(draft.sourceText),
+              let payload = try? ChemicalSemanticPayload.encode(.init(draft: draft)),
+              let preview = ChemistryPreviewRenderer.formulaPNG(for: result) else {
+            errorMessage = "BeanNotes could not prepare the molecular formula."
+            return false
+        }
+        return saveSemanticAttachment(
+            kind: .molecularFormula,
+            displayName: result.formatted,
+            payload: payload,
+            preview: preview,
+            preferredFileName: "Molecular Formula.png",
+            defaultSize: ChemistryPreviewRenderer.defaultFormulaSize,
+            target: target
+        )
+    }
+
+    private func saveSemanticAttachment(
+        kind: AttachmentKind,
+        displayName: String,
+        payload: Data,
+        preview: Data,
+        preferredFileName: String,
+        defaultSize: CGSize,
+        target: SemanticAttachmentTarget
+    ) -> Bool {
+        let page: NotePage
+        let existing: Attachment?
+        let frame: CGRect
+        switch target {
+        case .new(let pageID):
+            guard let foundPage = note.pages.first(where: { $0.id == pageID }) else {
+                errorMessage = "The page for this chemistry block is no longer available."
+                return false
+            }
+            page = foundPage
+            existing = nil
+            frame = AttachmentEditingGeometry.initialImageFrame(
+                sourceSize: defaultSize,
+                pageSize: page.pageSize,
+                occupiedFrames: page.visualAttachments.map { $0.normalizedFrame(for: page.pageSize) },
+                maximumLongEdge: max(defaultSize.width, defaultSize.height)
+            )
+        case .existing(let attachmentID):
+            guard let foundPage = note.pages.first(where: { page in
+                page.attachments.contains { $0.id == attachmentID && $0.kind == kind }
+            }), let foundAttachment = foundPage.attachments.first(where: { $0.id == attachmentID && $0.kind == kind }) else {
+                errorMessage = "This chemistry block is no longer available."
+                return false
+            }
+            page = foundPage
+            existing = foundAttachment
+            frame = foundAttachment.normalizedFrame(for: page.pageSize)
+        }
+
+        let storage = importExportService.storage
+        let staging = storage.beginImportStagingTransaction()
+        let stored: StoredFile
+        do {
+            stored = try staging.saveData(preview, preferredName: preferredFileName, contentType: .png)
+            try staging.commit()
+        } catch {
+            staging.rollback()
+            errorMessage = "BeanNotes could not store the chemistry preview. \(error.localizedDescription)"
+            return false
+        }
+
+        if let existing {
+            let oldPath = existing.storedFileName
+            let oldName = existing.originalFileName
+            let oldType = existing.contentTypeIdentifier
+            let oldDisplayName = existing.displayName
+            let oldPayload = existing.semanticPayloadData
+            let oldVersion = existing.semanticPreviewVersion
+            existing.storedFileName = stored.relativePath
+            existing.originalFileName = stored.fileName
+            existing.contentTypeIdentifier = stored.contentTypeIdentifier
+            existing.displayName = displayName
+            existing.semanticPayloadData = payload
+            existing.semanticPreviewVersion = ChemistryPreviewRenderer.currentVersion
+            existing.rendersBehindDrawing = true
+            existing.touch()
+            guard saveEditorChanges("save the chemistry block") else {
+                existing.storedFileName = oldPath
+                existing.originalFileName = oldName
+                existing.contentTypeIdentifier = oldType
+                existing.displayName = oldDisplayName
+                existing.semanticPayloadData = oldPayload
+                existing.semanticPreviewVersion = oldVersion
+                _ = try? storage.removeFile(relativePath: stored.relativePath)
+                return false
+            }
+            if oldPath != stored.relativePath { _ = try? storage.removeFile(relativePath: oldPath) }
+            return true
+        }
+
+        let attachment = Attachment(
+            kind: kind,
+            displayName: displayName,
+            originalFileName: stored.fileName,
+            storedFileName: stored.relativePath,
+            contentTypeIdentifier: stored.contentTypeIdentifier,
+            fileExtension: "png",
+            x: Double(frame.minX),
+            y: Double(frame.minY),
+            width: Double(frame.width),
+            height: Double(frame.height),
+            rendersBehindDrawing: true,
+            semanticPayloadData: payload,
+            semanticPreviewVersion: ChemistryPreviewRenderer.currentVersion
+        )
+        page.attachments.append(attachment)
+        page.touch()
+        guard saveEditorChanges("save the chemistry block") else {
+            page.attachments.removeAll { $0.id == attachment.id }
+            modelContext.delete(attachment)
+            _ = try? storage.removeFile(relativePath: stored.relativePath)
+            return false
+        }
+        return true
+    }
+
     private func renameAttachment(_ attachment: Attachment, to name: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, trimmedName != attachment.displayName else { return }
@@ -1822,6 +2067,8 @@ struct NoteEditorView: View {
                     codeSnippetBackgroundRaw: sourceAttachment.codeSnippetBackgroundRaw,
                     codeSnippetSyntaxThemeRaw: sourceAttachment.codeSnippetSyntaxThemeRaw,
                     codeSnippetPreviewVersion: sourceAttachment.codeSnippetPreviewVersion,
+                    semanticPayloadData: sourceAttachment.semanticPayloadData,
+                    semanticPreviewVersion: sourceAttachment.semanticPreviewVersion,
                     createdAt: sourceAttachment.createdAt,
                     updatedAt: sourceAttachment.updatedAt
                 )
@@ -3302,6 +3549,7 @@ private struct AttachmentManagerSheet: View {
     var deleteAttachment: (Attachment) -> Void
     var toggleLock: (Attachment) -> Void
     var setDrawingLayer: (Attachment, Bool) -> Void
+    var editSemanticStudyBlock: (Attachment) -> Void
     var saveCodeSnippet: (CodeSnippetDraft, Attachment) -> Bool
 
     @State private var previewAttachment: Attachment?
@@ -3317,7 +3565,8 @@ private struct AttachmentManagerSheet: View {
                 deleteAttachment: deleteAttachment,
                 toggleLock: toggleLock,
                 setDrawingLayer: setDrawingLayer,
-                editCodeSnippet: { editingCodeSnippet = $0 }
+                editCodeSnippet: { editingCodeSnippet = $0 },
+                editSemanticStudyBlock: editSemanticStudyBlock
             )
             .navigationTitle("Attachments")
             .navigationBarTitleDisplayMode(.inline)

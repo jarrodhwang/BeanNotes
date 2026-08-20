@@ -518,7 +518,7 @@ struct ImportExportService {
                     staging: activeStaging,
                     commitBeforeApplying: commitOwnedStagingBeforeApplying
                 )
-            case .codeSnippet, .docx, .csv, .presentation, .other:
+            case .codeSnippet, .chemicalStructure, .molecularFormula, .docx, .csv, .presentation, .other:
                 imported = try await importPreviewableDocumentPage(
                     from: sourceURL,
                     kind: kind,
@@ -634,7 +634,7 @@ struct ImportExportService {
                 staging: staging
             )
             return .image(result)
-        case .codeSnippet, .docx, .csv, .presentation, .other:
+        case .codeSnippet, .chemicalStructure, .molecularFormula, .docx, .csv, .presentation, .other:
             throw ImportExportError.unsupportedVersionDocument
         }
     }
@@ -947,6 +947,7 @@ struct ImportExportService {
             in: [page],
             automaticInterfaceStyle: automaticInterfaceStyle
         )
+        try await refreshChemistryPreviews(in: [page])
         let snapshot = options.applying(to: NotePageRenderSnapshot(
             page: page,
             theme: .currentFromDefaults(),
@@ -986,6 +987,7 @@ struct ImportExportService {
             in: pages,
             automaticInterfaceStyle: automaticInterfaceStyle
         )
+        try await refreshChemistryPreviews(in: pages)
         let snapshots = pages.map {
             options.applying(to: NotePageRenderSnapshot(
                 page: $0,
@@ -1062,6 +1064,7 @@ struct ImportExportService {
             in: [page],
             automaticInterfaceStyle: automaticInterfaceStyle
         )
+        try await refreshChemistryPreviews(in: [page])
 
         let snapshot = options.applying(to: NotePageRenderSnapshot(
             page: page,
@@ -1112,6 +1115,7 @@ struct ImportExportService {
             in: pages,
             automaticInterfaceStyle: automaticInterfaceStyle
         )
+        try await refreshChemistryPreviews(in: pages)
         let snapshots = pages.map {
             options.applying(to: NotePageRenderSnapshot(
                 page: $0,
@@ -2294,6 +2298,50 @@ struct ImportExportService {
                     relativePath: attachment.storedFileName
                 )
                 attachment.codeSnippetPreviewVersion = expectedVersion
+                await Task.yield()
+            }
+        }
+    }
+
+    /// Semantic chemistry data remains the source of truth. Refreshing the PNG
+    /// here keeps the existing page renderer simple while allowing its visual
+    /// representation to evolve independently of stored notes.
+    private func refreshChemistryPreviews(in pages: [NotePage]) async throws {
+        for page in pages {
+            for attachment in page.visualAttachments where attachment.isSemanticStudyBlock {
+                try Task.checkCancellation()
+                guard attachment.semanticPreviewVersion != ChemistryPreviewRenderer.currentVersion else {
+                    continue
+                }
+                guard let payload = attachment.semanticPayloadData else {
+                    throw ImportExportError.exportFailed
+                }
+                let size = attachment.normalizedFrame(for: page.pageSize).size
+                let previewData: Data?
+                switch attachment.kind {
+                case .chemicalStructure:
+                    guard let decoded = ChemicalSemanticPayload.structure(from: payload) else {
+                        throw ImportExportError.exportFailed
+                    }
+                    previewData = ChemistryPreviewRenderer.structurePNG(for: decoded.draft, size: size)
+                case .molecularFormula:
+                    guard let decoded = ChemicalSemanticPayload.formula(from: payload),
+                          case let .success(result) = MolecularFormulaParser.parse(
+                            decoded.draft.normalizedFormula.isEmpty
+                                ? decoded.draft.sourceText
+                                : decoded.draft.normalizedFormula
+                          ) else {
+                        throw ImportExportError.exportFailed
+                    }
+                    previewData = ChemistryPreviewRenderer.formulaPNG(for: result, size: size)
+                default:
+                    continue
+                }
+                guard let previewData, !previewData.isEmpty else {
+                    throw ImportExportError.exportFailed
+                }
+                try storage.replaceStoredData(previewData, relativePath: attachment.storedFileName)
+                attachment.semanticPreviewVersion = ChemistryPreviewRenderer.currentVersion
                 await Task.yield()
             }
         }

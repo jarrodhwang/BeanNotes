@@ -1767,7 +1767,7 @@ struct BeanNotesTests {
 
         let manifest = LibraryBackupManifest(folders: [folder], createdAt: createdAt)
 
-        #expect(manifest.formatVersion == 4)
+        #expect(manifest.formatVersion == 5)
         #expect(manifest.folderCount == 1)
         #expect(manifest.noteCount == 1)
         #expect(manifest.pageCount == 1)
@@ -4890,7 +4890,7 @@ struct BeanNotesTests {
         folder.notes.append(note)
         let manifest = LibraryBackupManifest(folders: [folder])
         let snapshot = manifest.folders.first?.notes.first?.pages.first?.attachments.first
-        #expect(manifest.formatVersion == 4)
+        #expect(manifest.formatVersion == 5)
         #expect(snapshot?.kindRaw == AttachmentKind.codeSnippet.rawValue)
         #expect(snapshot?.codeSnippetText == snippet.codeSnippetText)
         #expect(snapshot?.codeSnippetLanguageRaw == "python")
@@ -13739,4 +13739,98 @@ struct BeanNotesTests {
         }
     }
 
+    @Test func focusFeatureDefaultsAndParentTogglesPreserveChildChoices() throws {
+        let suiteName = "BeanNotesFocusFeatures-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(FocusFeaturePreferences.isFeatureEnabled(.codeSnippets, in: defaults))
+        #expect(!FocusFeaturePreferences.isFeatureEnabled(.chemicalStructure, in: defaults))
+        #expect(!FocusFeaturePreferences.isFeatureEnabled(.molecularFormula, in: defaults))
+
+        defaults.set(true, forKey: FocusFeaturePreferences.chemistryEnabledKey)
+        defaults.set(false, forKey: FocusFeaturePreferences.chemicalStructureEnabledKey)
+        #expect(!FocusFeaturePreferences.isFeatureEnabled(.chemicalStructure, in: defaults))
+        #expect(FocusFeaturePreferences.isFeatureEnabled(.molecularFormula, in: defaults))
+
+        defaults.set(false, forKey: FocusFeaturePreferences.chemistryEnabledKey)
+        #expect(!FocusFeaturePreferences.isFeatureEnabled(.molecularFormula, in: defaults))
+        defaults.set(true, forKey: FocusFeaturePreferences.chemistryEnabledKey)
+        #expect(FocusFeaturePreferences.isFeatureEnabled(.molecularFormula, in: defaults))
+        #expect(!FocusFeaturePreferences.isFeatureEnabled(.chemicalStructure, in: defaults))
+
+        defaults.set(ChemicalStructureInputMode.onDeviceRecognition.rawValue, forKey: FocusFeaturePreferences.chemicalStructureInputModeKey)
+        FocusFeaturePreferences.normalizePersistedValues(in: defaults)
+        #expect(defaults.string(forKey: FocusFeaturePreferences.chemicalStructureInputModeKey) == ChemicalStructureInputMode.smartEditor.rawValue)
+    }
+
+    @Test func molecularFormulaParserFormatsCommonMBBNotation() throws {
+        let glucose = try MolecularFormulaParser.parse("C6H12O6").get()
+        #expect(glucose.normalized == "C6H12O6")
+        #expect(glucose.formatted == "C₆H₁₂O₆")
+
+        let sulfate = try MolecularFormulaParser.parse("SO4^2-").get()
+        #expect(sulfate.normalized == "SO4^2-")
+        #expect(sulfate.formatted == "SO₄²⁻")
+
+        let hydrate = try MolecularFormulaParser.parse("CuSO4 · 5H2O").get()
+        #expect(hydrate.normalized == "CuSO4·5H2O")
+        #expect(hydrate.formatted == "CuSO₄·5H₂O")
+
+        let grouped = try MolecularFormulaParser.parse("Ca(OH)2").get()
+        #expect(grouped.formatted == "Ca(OH)₂")
+    }
+
+    @Test func molecularFormulaParserRejectsUnknownAndMalformedInput() {
+        #expect(MolecularFormulaParser.parse("Xx2").isFailure)
+        #expect(MolecularFormulaParser.parse("Ca(OH2").isFailure)
+        #expect(MolecularFormulaParser.parse("H0O").isFailure)
+        #expect(MolecularFormulaParser.parse("SO4^2").isFailure)
+        #expect(MolecularFormulaParser.parse("SO4^+-").isFailure)
+    }
+
+    @Test func semanticChemistryPayloadsRoundTripWithoutLosingGraphIdentity() throws {
+        let carbon = ChemicalAtom(element: "C", x: 0.25, y: 0.5)
+        let oxygen = ChemicalAtom(element: "O", formalCharge: -1, x: 0.75, y: 0.5)
+        let bond = ChemicalBond(startAtomID: carbon.id, endAtomID: oxygen.id, type: .double)
+        let draft = ChemicalStructureDraft(
+            graph: ChemicalGraph(atoms: [carbon, oxygen], bonds: [bond]),
+            validationWarnings: ["fixture"]
+        )
+        let data = try ChemicalSemanticPayload.encode(.init(draft: draft))
+        let decoded = try #require(ChemicalSemanticPayload.structure(from: data))
+        #expect(decoded.schemaVersion == ChemicalStructurePayload.currentSchemaVersion)
+        #expect(decoded.draft == draft)
+
+        let formula = MolecularFormulaDraft(sourceText: "C6H12O6", normalizedFormula: "C6H12O6", recognitionConfidence: 0.9)
+        let formulaData = try ChemicalSemanticPayload.encode(.init(draft: formula))
+        #expect(ChemicalSemanticPayload.formula(from: formulaData)?.draft == formula)
+    }
+
+    @Test func localChemicalToolkitReportsDisconnectedGraphsAndProducesMolBlock() async throws {
+        let first = ChemicalAtom(element: "C", x: 0.2, y: 0.5)
+        let second = ChemicalAtom(element: "O", x: 0.8, y: 0.5)
+        let toolkit = LocalChemicalToolkit()
+        let disconnected = ChemicalGraph(atoms: [first, second])
+        let warnings = await toolkit.validate(disconnected)
+        #expect(warnings.contains { $0.contains("disconnected") })
+
+        let connected = ChemicalGraph(
+            atoms: [first, second],
+            bonds: [.init(startAtomID: first.id, endAtomID: second.id, type: .double)]
+        )
+        #expect(await toolkit.validate(connected).isEmpty)
+        let molBlock = try await toolkit.molBlock(for: connected)
+        #expect(molBlock.contains("V2000"))
+        #expect(molBlock.contains("M  END"))
+        #expect(try await toolkit.molecularFormula(for: connected) == "CH2O")
+    }
+
+}
+
+private extension Result {
+    var isFailure: Bool {
+        if case .failure = self { return true }
+        return false
+    }
 }
