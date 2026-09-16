@@ -4032,6 +4032,8 @@ struct BeanNotesTests {
 
         #expect(container.scrollView.scrollsToTop)
         #expect(!DrawingCanvasView.PageCanvasView().canvasView.scrollsToTop)
+        #expect(!container.scrollView.delaysContentTouches)
+        #expect(!DrawingCanvasView.PageCanvasView().canvasView.delaysContentTouches)
         #expect(!container.scrollViewShouldScrollToTop(container.scrollView))
         #expect(container.scrollViewShouldScrollToTop(container.scrollView))
         #expect(container.isDocumentTraversalActive)
@@ -6718,6 +6720,9 @@ struct BeanNotesTests {
         #expect(container.continuousAggregateSplitCount == splitCountBeforeCachedSave)
         #expect(cachedSnapshots.count == 1)
         #expect(cachedSnapshots[0].1.strokes.count == 1)
+        #expect(container.continuousPageIDs(in: [movedPage.id, editedPage.id, UUID()])
+            == [editedPage.id, movedPage.id])
+        #expect(container.continuousPageIDs(in: []).isEmpty)
 
         coordinator.saveAllCanvases()
         changedPageIDs.removeAll()
@@ -6858,6 +6863,29 @@ struct BeanNotesTests {
 
         let rejoinedCanvas = try #require(container.activeCanvasView)
         #expect(rejoinedCanvas.drawing.strokes.count == 3)
+
+        // A layout edit must invalidate the cached drawing bounds and page ordering.
+        // The resized page changes both the aggregate width and the next page's origin.
+        pages[0].width = 800
+        pages[0].height = 500
+        container.configure(
+            pages: pages, selectedPageID: pages[0].id, pageFlowMode: .seamless,
+            inputMode: .pencilOnly, renderQuality: .balanced,
+            drawingStorage: drawingStorage, coordinator: coordinator
+        )
+        let resizedCanvas = try #require(container.activeCanvasView)
+        let resizedPageView = try #require(container.contentView.subviews
+            .compactMap { $0 as? DrawingCanvasView.PageCanvasView }
+            .first { $0.canvasView === resizedCanvas })
+        #expect(resizedPageView.frame.size == CGSize(width: 800, height: 800))
+        let addedStroke = makeTestStroke(
+            from: CGPoint(x: 160, y: 620), to: CGPoint(x: 220, y: 640), width: 4
+        )
+        #expect(container.changedContinuousPageIDs(
+            from: resizedCanvas.drawing,
+            to: PKDrawing(strokes: resizedCanvas.drawing.strokes + [addedStroke]),
+            allowsSingleStrokeFastPath: true
+        ) == [pages[1].id])
     }
 
     @Test @MainActor func scrollableCanvasRoutesImageSelectionAndControlsAbovePencilKit() throws {
@@ -10932,7 +10960,7 @@ struct BeanNotesTests {
         #expect(changeCount == 1)
     }
 
-    @Test @MainActor func customObjectEraserUpdatesDrawingBeforePencilLift() throws {
+    @Test @MainActor func customObjectEraserUpdatesDrawingBeforePencilLift() async throws {
         let fixture = try makePageCanvasFixture(name: "LiveObjectEraser")
         defer { fixture.cleanup() }
 
@@ -10977,6 +11005,13 @@ struct BeanNotesTests {
             CGPoint(x: 100, y: 180)
         ]))
 
+        // Live whole-stroke erasure is batched once per display interval. Let that
+        // batch run while the tool is still down, then verify the visible result.
+        let eraseDeadline = ContinuousClock.now + .seconds(1)
+        while fixture.pageView.canvasView.drawing.strokes.count > 1,
+              ContinuousClock.now < eraseDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
         #expect(fixture.pageView.canvasView.drawing.strokes.count == 1)
         #expect(
             fixture.pageView.canvasView.drawing.strokes.first?.renderBounds
@@ -12622,6 +12657,101 @@ struct BeanNotesTests {
         #expect(versionService.attachments(for: adoptedLegacyVersion.id, in: imported.note).allSatisfy {
             FileManager.default.fileExists(atPath: storage.url(forRelativePath: $0.storedFileName).path)
         })
+    }
+
+    @Test @MainActor func PDFTraversalRasterMemoryIsBoundedForLargePages() {
+        for size in [CGSize(width: 612, height: 792), CGSize(width: 1_024, height: 4_096),
+                     CGSize(width: 4_096, height: 4_096)] {
+            let view = DrawingCanvasView.NativePDFPageView(frame: CGRect(origin: .zero, size: size))
+            view.setInteractionRenderingDeferred(true, rasterScale: 12)
+            let scale = view.layer.rasterizationScale
+            #expect(size.width * size.height * scale * scale <= 4_000_001)
+            #expect(max(size.width, size.height) * scale <= 4_096)
+            #expect(view.layer.shouldRasterize)
+            view.setInteractionRenderingDeferred(false, rasterScale: 12)
+            #expect(!view.layer.shouldRasterize)
+        }
+        let scale = DrawingCanvasView.NativePDFPageView.interactionRasterScale(
+            for: CGSize(width: 612, height: 792), requestedScale: .infinity
+        )
+        #expect(scale.isFinite && scale > 0 && scale <= 2)
+
+        // A small resize can exceed the pixel budget even when the scale delta is
+        // below normal zoom hysteresis. Bounds changes must recompute the surface.
+        let resizingView = DrawingCanvasView.NativePDFPageView(
+            frame: CGRect(x: 0, y: 0, width: 2_000, height: 2_000)
+        )
+        resizingView.setInteractionRenderingDeferred(true, rasterScale: 2)
+        resizingView.frame.size = CGSize(width: 2_040, height: 2_040)
+        resizingView.setNeedsLayout()
+        resizingView.layoutIfNeeded()
+        let resizedScale = resizingView.layer.rasterizationScale
+        #expect(2_040 * 2_040 * resizedScale * resizedScale <= 4_000_001)
+    }
+
+    @Test @MainActor func nativePDFBackgroundUsesOneVectorPageAndInvalidatesReplacedFiles() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesSinglePDFPage-\(UUID()).pdf")
+        let bounds = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let view = DrawingCanvasView.NativePDFPageView(frame: bounds)
+        let secondView = DrawingCanvasView.NativePDFPageView(frame: bounds)
+        defer {
+            view.releaseDocument()
+            secondView.releaseDocument()
+            DrawingCanvasView.NativePDFPageView.removeAllCachedDocuments()
+            try? FileManager.default.removeItem(at: url)
+        }
+        try UIGraphicsPDFRenderer(bounds: bounds).writePDF(to: url) { context in
+            for index in 0..<120 {
+                context.beginPage()
+                "Page \(index + 1)".draw(
+                    at: CGPoint(x: 40, y: 60),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 20)]
+                )
+            }
+        }
+        let source = try #require(PDFDocument(url: url))
+        let lastPage = try #require(source.page(at: 119))
+        let cropBox = CGRect(x: 20, y: 30, width: 500, height: 700)
+        lastPage.setBounds(cropBox, for: .cropBox)
+        lastPage.rotation = 90
+        lastPage.addAnnotation(PDFAnnotation(
+            bounds: CGRect(x: 30, y: 40, width: 40, height: 40),
+            forType: .square, withProperties: nil
+        ))
+        try #require(source.dataRepresentation()).write(to: url, options: .atomic)
+
+        #expect(view.configure(url: url, pageIndex: 119))
+        #expect(view.document?.pageCount == 1)
+        #expect(view.sourcePageIndex == 119)
+        let displayedPage = try #require(view.document?.page(at: 0))
+        #expect(displayedPage.string?.contains("Page 120") == true)
+        #expect(displayedPage.bounds(for: .cropBox) == cropBox)
+        #expect(displayedPage.rotation == 90)
+        #expect(displayedPage.annotations.count == 1)
+
+        let stableDocument = view.document
+        #expect(view.configure(url: url, pageIndex: 119))
+        #expect(view.document === stableDocument)
+        #expect(secondView.configure(url: url, pageIndex: 0))
+        #expect(secondView.document?.pageCount == 1)
+        #expect(secondView.document?.page(at: 0)?.string?.contains("Page 1") == true)
+        // Copying a display page must leave all original pages available for export.
+        #expect(PDFDocument(url: url)?.pageCount == 120)
+        #expect(!view.configure(url: url, pageIndex: 120))
+        #expect(view.document == nil)
+
+        try UIGraphicsPDFRenderer(bounds: bounds).writePDF(to: url) { context in
+            context.beginPage()
+            "Replacement document".draw(
+                at: CGPoint(x: 40, y: 60),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 20)]
+            )
+        }
+        #expect(secondView.configure(url: url, pageIndex: 0))
+        #expect(secondView.document?.page(at: 0)?.string?.contains("Replacement document") == true)
+        #expect(!secondView.configure(url: url, pageIndex: -1))
+        #expect(secondView.document == nil)
     }
 
     @Test @MainActor func rotatedPDFImportUsesDisplayedPageAspect() async throws {

@@ -605,7 +605,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         private weak var fingerDoubleTapGesture: UITapGestureRecognizer?
         private var pagesByID: [UUID: NotePage] = [:]
         private var orderedPageIDs: [UUID] = []
+        private var pageIndexesByID: [UUID: Int] = [:]
         private var pageFrames: [UUID: CGRect] = [:]
+        private var continuousDrawingFrame: CGRect?
         private var documentSize: CGSize = .zero
         private weak var topContentView: UIView?
         private var pageFlowMode: NoteEditorPageFlowMode = .seamless
@@ -826,6 +828,18 @@ struct DrawingCanvasView: UIViewRepresentable {
             isContinuousDrawingEnabled ? orderedPageIDs : []
         }
 
+        /// Ink usually changes just one or two pages, even in a long PDF. Order that
+        /// small set directly instead of scanning the complete document after every stroke.
+        func continuousPageIDs(in requestedIDs: Set<UUID>) -> [UUID] {
+            guard isContinuousDrawingEnabled else { return [] }
+            return requestedIDs.compactMap { id -> (UUID, Int)? in
+                guard let index = pageIndexesByID[id] else { return nil }
+                return (id, index)
+            }
+            .sorted { $0.1 < $1.1 }
+            .map(\.0)
+        }
+
         private var isContinuousDrawingEnabled: Bool {
             pageFlowMode.usesDocumentWideCanvas && continuousPageView != nil
         }
@@ -904,6 +918,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
 
                 orderedPageIDs = pages.map(\.id)
+                pageIndexesByID = Dictionary(uniqueKeysWithValues: orderedPageIDs.enumerated().map {
+                    ($0.element, $0.offset)
+                })
                 pagesByID = Dictionary(uniqueKeysWithValues: pages.map { ($0.id, $0) })
 
                 layoutDocument()
@@ -1568,6 +1585,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func layoutDocument() {
             lastViewportResourceRefreshRect = nil
             guard !orderedPageIDs.isEmpty else {
+                pageFrames.removeAll()
+                continuousDrawingFrame = nil
                 documentSize = .zero
                 addPageFooterButton.isHidden = true
                 addPageFooterButton.frame = .zero
@@ -1581,6 +1600,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
             var y: CGFloat = 0
             var frames: [UUID: CGRect] = [:]
+            var drawingFrame = CGRect.null
             let pageGap = pageFlowMode.usesFlushPageLayout ? 0 : separatedPageGap
 
             if let topContentView {
@@ -1603,6 +1623,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 }
 
                 frames[id] = frame
+                drawingFrame = drawingFrame.union(frame)
                 y += size.height + pageGap
             }
 
@@ -1628,23 +1649,13 @@ struct DrawingCanvasView: UIViewRepresentable {
             y = footerY + addPageFooterSize + addPageFooterBottomPadding
 
             pageFrames = frames
+            continuousDrawingFrame = drawingFrame.isNull ? nil : drawingFrame
             documentSize = CGSize(width: maxWidth, height: y)
             updateDocumentGeometry(to: documentSize)
             centerDocument()
             if isCaptureToolEnabled {
                 updateCaptureSelectionOverlay()
             }
-        }
-
-        private var continuousDrawingFrame: CGRect? {
-            guard let firstID = orderedPageIDs.first,
-                  var drawingFrame = pageFrames[firstID] else { return nil }
-            for id in orderedPageIDs.dropFirst() {
-                if let frame = pageFrames[id] {
-                    drawingFrame = drawingFrame.union(frame)
-                }
-            }
-            return drawingFrame
         }
 
         private func configureContinuousPageViewIfNeeded(reloadsDrawing: Bool) {
@@ -1748,7 +1759,17 @@ struct DrawingCanvasView: UIViewRepresentable {
                     y: frame.minY - drawingFrame.minY
                 )
                 let translatedDrawing = loadResult.drawing.transformed(using: translation)
+                let pageInterior = frame.offsetBy(
+                    dx: -drawingFrame.minX,
+                    dy: -drawingFrame.minY
+                ).insetBy(dx: 0.5, dy: 0.5)
                 for stroke in translatedDrawing.strokes {
+                    // Only boundary strokes can be duplicated across page archives.
+                    // Ordinary handwriting needs no full path hashing at document open.
+                    if pageInterior.contains(stroke.renderBounds) {
+                        joinedStrokes.append(stroke)
+                        continue
+                    }
                     let signature = continuousStrokeSignature(stroke)
                     if seenStrokes.insert(signature).inserted {
                         joinedStrokes.append(stroke)
@@ -2139,9 +2160,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         ) -> [(NotePage, PKDrawing)]? {
             guard isContinuousDrawingEnabled else { return nil }
 
-            let orderedTargetPageIDs = orderedPageIDs.filter {
-                requestedPageIDs?.contains($0) ?? true
-            }
+            let orderedTargetPageIDs = requestedPageIDs.map { continuousPageIDs(in: $0) }
+                ?? orderedPageIDs
             let cached = orderedTargetPageIDs.compactMap { pageID -> (NotePage, PKDrawing)? in
                 guard let page = pagesByID[pageID],
                       let drawing = continuousPageDrawingCache[pageID] else { return nil }
@@ -2161,9 +2181,8 @@ struct DrawingCanvasView: UIViewRepresentable {
                   let drawingFrame = continuousDrawingFrame else { return nil }
             continuousAggregateSplitCount += 1
 
-            let orderedTargetPageIDs = orderedPageIDs.filter {
-                requestedPageIDs?.contains($0) ?? true
-            }
+            let orderedTargetPageIDs = requestedPageIDs.map { continuousPageIDs(in: $0) }
+                ?? orderedPageIDs
             var strokesByPageID: [UUID: [PKStroke]] = Dictionary(
                 uniqueKeysWithValues: orderedTargetPageIDs.map { ($0, []) }
             )
@@ -2661,23 +2680,15 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func seamlessAttachmentTarget(
             at documentPoint: CGPoint
         ) -> (pageView: PageCanvasView, attachment: Attachment, documentFrame: CGRect)? {
-            for id in orderedPageIDs.reversed() {
-                guard let documentFrame = pageFrames[id],
-                      documentFrame.contains(documentPoint),
-                      let pageView = pageViews[id] else {
-                    continue
-                }
-
-                let pagePoint = CGPoint(
-                    x: documentPoint.x - documentFrame.minX,
-                    y: documentPoint.y - documentFrame.minY
-                )
-                if let attachment = pageView.editableAttachment(at: pagePoint) {
-                    return (pageView, attachment, documentFrame)
-                }
-            }
-
-            return nil
+            guard let id = pageID(containing: documentPoint),
+                  let documentFrame = pageFrames[id],
+                  let pageView = pageViews[id] else { return nil }
+            let pagePoint = CGPoint(
+                x: documentPoint.x - documentFrame.minX,
+                y: documentPoint.y - documentFrame.minY
+            )
+            guard let attachment = pageView.editableAttachment(at: pagePoint) else { return nil }
+            return (pageView, attachment, documentFrame)
         }
 
         func gestureRecognizer(
@@ -3088,7 +3099,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func pageID(containing documentPoint: CGPoint) -> UUID? {
-            orderedPageIDs.first { pageFrames[$0]?.contains(documentPoint) == true }
+            let index = firstPageIndex(endingAfter: documentPoint.y)
+            guard orderedPageIDs.indices.contains(index) else { return nil }
+            let id = orderedPageIDs[index]
+            guard pageFrames[id]?.contains(documentPoint) == true else { return nil }
+            return id
         }
 
         private func updateImageLoading(in rect: CGRect) {
@@ -3371,23 +3386,25 @@ struct DrawingCanvasView: UIViewRepresentable {
             publishPendingTraversalVisiblePage()
         }
 
-        private func pageIDsIntersecting(_ rect: CGRect) -> [UUID] {
-            guard !orderedPageIDs.isEmpty else { return [] }
-
+        private func firstPageIndex(endingAfter y: CGFloat) -> Int {
             var low = 0
             var high = orderedPageIDs.count
-
             while low < high {
                 let mid = (low + high) / 2
                 let frame = pageFrames[orderedPageIDs[mid]] ?? .zero
-                if frame.maxY < rect.minY {
+                if frame.maxY <= y {
                     low = mid + 1
                 } else {
                     high = mid
                 }
             }
+            return low
+        }
 
-            var index = low
+        private func pageIDsIntersecting(_ rect: CGRect) -> [UUID] {
+            guard !orderedPageIDs.isEmpty else { return [] }
+
+            var index = firstPageIndex(endingAfter: rect.minY)
             var ids: [UUID] = []
 
             while index < orderedPageIDs.count {
@@ -5262,6 +5279,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             canvasView.backgroundColor = .clear
             canvasView.isOpaque = false
             canvasView.isScrollEnabled = false
+            canvasView.delaysContentTouches = false
             // The document scroll view is the only view that should respond to the
             // status-bar scroll-to-top gesture.
             canvasView.scrollsToTop = false
@@ -7113,6 +7131,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             cache.countLimit = 6
             return cache
         }()
+        private static let pageDocumentCache: NSCache<NSString, PDFDocument> = {
+            let cache = NSCache<NSString, PDFDocument>()
+            cache.countLimit = 24
+            return cache
+        }()
 
         private(set) var sourceIdentity: String?
         private(set) var sourceURL: URL?
@@ -7125,6 +7148,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             return documentView.convert(documentView.bounds, to: self)
         }
         private var isUpdatingFixedScale = false
+        private var requestedInteractionRasterScale: CGFloat = 1
+        private var interactionRasterBoundsSize: CGSize = .zero
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -7137,6 +7162,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         static func removeAllCachedDocuments() {
+            pageDocumentCache.removeAllObjects()
             documentCache.removeAllObjects()
         }
 
@@ -7150,13 +7176,14 @@ struct DrawingCanvasView: UIViewRepresentable {
             let identity = Self.pdfSourceIdentity(url: url)
             if sourceIdentity == identity,
                sourcePageIndex == pageIndex,
-               document?.page(at: pageIndex) != nil {
+               document?.page(at: 0) != nil {
                 updateFixedScaleIfNeeded()
                 return true
             }
 
-            guard let document = Self.cachedDocument(url: url),
-                  let page = document.page(at: pageIndex) else {
+            guard let document = Self.cachedPageDocument(
+                url: url, identity: identity, pageIndex: pageIndex
+            ), let page = document.page(at: 0) else {
                 releaseDocument()
                 return false
             }
@@ -7190,6 +7217,9 @@ struct DrawingCanvasView: UIViewRepresentable {
         override func layoutSubviews() {
             super.layoutSubviews()
             updateFixedScaleIfNeeded()
+            if isInteractionRenderingDeferred {
+                setInteractionRenderingDeferred(true, rasterScale: requestedInteractionRasterScale)
+            }
         }
 
         /// Cache the already-rendered PDF subtree only during outer navigation. The
@@ -7199,12 +7229,11 @@ struct DrawingCanvasView: UIViewRepresentable {
         /// A bounded scale keeps the transient cache from multiplying memory at deep
         /// zoom levels; PDFKit resumes its sharp vector rendering after settlement.
         func setInteractionRenderingDeferred(_ deferred: Bool, rasterScale: CGFloat) {
-            let requestedScale = rasterScale.isFinite && rasterScale > 0
-                ? rasterScale
-                : UIScreen.main.scale
-            let boundedScale = min(max(requestedScale, 1), 2)
+            requestedInteractionRasterScale = rasterScale
+            let boundedScale = Self.interactionRasterScale(for: bounds.size, requestedScale: rasterScale)
             guard isInteractionRenderingDeferred != deferred
-                    || (deferred && abs(layer.rasterizationScale - boundedScale) > 0.05) else {
+                    || (deferred && (interactionRasterBoundsSize != bounds.size
+                        || abs(layer.rasterizationScale - boundedScale) > 0.05)) else {
                 return
             }
 
@@ -7214,6 +7243,20 @@ struct DrawingCanvasView: UIViewRepresentable {
             layer.shouldRasterize = deferred
             CATransaction.commit()
             isInteractionRenderingDeferred = deferred
+            interactionRasterBoundsSize = bounds.size
+        }
+
+        /// Scale alone does not bound memory: a large map at 2× can allocate hundreds
+        /// of MB. Limit each temporary navigation surface to 4 MP (about 16 MB RGBA).
+        static func interactionRasterScale(for size: CGSize, requestedScale: CGFloat) -> CGFloat {
+            let requested = requestedScale.isFinite && requestedScale > 0
+                ? requestedScale
+                : UIScreen.main.scale
+            let scale = min(max(requested, 1), 2)
+            guard isValid(size) else { return scale }
+            let pixelBudgetScale = sqrt(4_000_000 / size.width / size.height)
+            let edgeBudgetScale = 4_096 / max(size.width, size.height)
+            return min(scale, pixelBudgetScale, edgeBudgetScale)
         }
 
         private func configureView() {
@@ -7236,7 +7279,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                   bounds.height.isFinite,
                   bounds.width > 0,
                   bounds.height > 0,
-                  let page = currentPage ?? sourcePageIndex.flatMap({ document?.page(at: $0) }) else {
+                  let page = currentPage ?? document?.page(at: 0) else {
                 return
             }
             guard force || fittedBoundsSizeForTesting != bounds.size else { return }
@@ -7301,8 +7344,29 @@ struct DrawingCanvasView: UIViewRepresentable {
                 && size.height > 0
         }
 
-        private static func cachedDocument(url: URL) -> PDFDocument? {
-            let key = pdfSourceIdentity(url: url) as NSString
+        /// A page background has no document navigation. Giving PDFView a full PDF
+        /// makes each mounted background participate in document-wide layout work.
+        /// Copy the vector page into a bounded display document without moving it out
+        /// of the source, flattening annotations, or changing CropBox/rotation metadata.
+        private static func cachedPageDocument(
+            url: URL,
+            identity: String,
+            pageIndex: Int
+        ) -> PDFDocument? {
+            let pageKey = "\(identity)|page=\(pageIndex)" as NSString
+            if let cached = pageDocumentCache.object(forKey: pageKey) {
+                return cached
+            }
+            guard let source = cachedDocument(url: url, identity: identity),
+                  let page = source.page(at: pageIndex)?.copy() as? PDFPage else { return nil }
+            let document = PDFDocument()
+            document.insert(page, at: 0)
+            pageDocumentCache.setObject(document, forKey: pageKey)
+            return document
+        }
+
+        private static func cachedDocument(url: URL, identity: String) -> PDFDocument? {
+            let key = identity as NSString
             if let cached = documentCache.object(forKey: key) {
                 return cached
             }
@@ -9466,20 +9530,19 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         private func scheduleContinuousDrawingSave(_ canvasView: PKCanvasView) {
-            guard let continuousPageIDs = containerView?.continuousPageIDs,
-                  !continuousPageIDs.isEmpty else { return }
+            guard let containerView,
+                  containerView.isContinuousCanvas(canvasView) else { return }
             // A shared canvas is only trustworthy when every page archive that
             // contributed to it loaded successfully. Keep the existing all-or-none
             // recovery guarantee even though the eventual writes are page-scoped.
-            if let error = unavailableDrawingError(for: continuousPageIDs) {
+            if !unavailableDrawingErrorsByPageID.isEmpty,
+               let error = unavailableDrawingError(for: containerView.continuousPageIDs) {
                 notifySaveFailed(error)
                 return
             }
-            let pageIDs = continuousPageIDs.filter { pageID in
-                dirtyPageIDs.contains(pageID)
-                    || pendingSaves[pageID] != nil
-                    || pendingSaveTokens[pageID] != nil
-            }
+            let pageIDs = containerView.continuousPageIDs(in: dirtyPageIDs
+                .union(pendingSaves.keys)
+                .union(pendingSaveTokens.keys))
             guard !pageIDs.isEmpty else { return }
             notifySaveStarted()
 
@@ -9925,7 +9988,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     if continuousCanvasesWithDeferredChanges.contains(id) {
                         _ = reconcileContinuousDrawingChange(canvasView)
                     }
-                    if containerView?.continuousPageIDs.contains(where: dirtyPageIDs.contains) == true {
+                    if !dirtyPageIDs.isEmpty {
                         scheduleContinuousDrawingSave(canvasView)
                         publishUndoRedoAvailability()
                     }

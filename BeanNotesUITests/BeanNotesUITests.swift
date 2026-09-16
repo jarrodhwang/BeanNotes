@@ -216,6 +216,9 @@ final class BeanNotesUITests: XCTestCase {
 
     @MainActor
     func testContinuousCanvasLongPressUsesOnlyPageActions() throws {
+        // Finger holds draw in the default Any Input mode. Page actions reserve
+        // this gesture only when Pencil Only is explicitly selected.
+        app.launchArguments += ["-drawingInputMode", "pencilOnly"]
         app.launch()
 
         let createNoteButton = app.buttons["Create note"]
@@ -233,12 +236,42 @@ final class BeanNotesUITests: XCTestCase {
         let addBelow = app.menuItems["Add Page Below"]
         XCTAssertTrue(addBelow.waitForExistence(timeout: 4))
         XCTAssertTrue(app.menuItems["Add Page Above"].exists)
-        XCTAssertTrue(app.menuItems["Remove Page"].exists)
+        // UIKit can omit disabled actions from accessibility on newer iOS versions.
+        // The sole page must remain protected whether Remove Page is hidden or disabled.
+        let removePage = app.menuItems["Remove Page"]
+        XCTAssertFalse(removePage.exists && removePage.isEnabled)
         XCTAssertFalse(app.menuItems["Select All"].exists)
         XCTAssertFalse(app.menuItems["Insert Space"].exists)
 
         addBelow.tap()
         XCTAssertTrue(app.staticTexts["Drawing space added"].waitForExistence(timeout: 4))
+    }
+
+    @MainActor
+    func testFingerDrawingProducesUndoableInk() throws {
+        app.launchArguments += ["-drawingInputMode", "anyInput"]
+        app.launch()
+        let createNoteButton = app.buttons["Create note"]
+        XCTAssertTrue(createNoteButton.waitForExistence(timeout: 8))
+        createNoteButton.tap()
+
+        let canvas = try hittablePageCanvas()
+        let undoButton = app.buttons["Undo"]
+        XCTAssertTrue(undoButton.waitForExistence(timeout: 8))
+        XCTAssertFalse(undoButton.isEnabled)
+
+        let start = visibleCenterCoordinate(on: canvas)
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 100, dy: 40)))
+        let inkIsUndoable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: undoButton
+        )
+        wait(for: [inkIsUndoable], timeout: 4)
+        XCTAssertFalse(app.menuItems["Add Page Below"].exists)
+        undoButton.tap()
+        let inkWasUndone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == false"), object: undoButton
+        )
+        wait(for: [inkWasUndone], timeout: 4)
     }
 
     @MainActor

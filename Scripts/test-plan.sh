@@ -14,6 +14,7 @@ COMMON_ARGS=(
 )
 
 SLOW_IMPORT_TESTS=(
+  "BeanNotesTests/BeanNotesTests/nativePDFBackgroundUsesOneVectorPageAndInvalidatesReplacedFiles()"
   "BeanNotesTests/BeanNotesTests/thumbnailGenerationStoresFirstPagePreview()"
   "BeanNotesTests/BeanNotesTests/pdfImportCreatesAnnotatablePages()"
   "BeanNotesTests/BeanNotesTests/stagedDocumentVersionImportPreservesPagesAndDrawingsAndCreatesLatestVersion()"
@@ -27,7 +28,7 @@ SLOW_IMPORT_TESTS=(
 )
 
 run_unit() {
-  local args=(test "${COMMON_ARGS[@]}" -only-testing:BeanNotesTests -skip-testing:BeanNotesUITests)
+  local args=(test "${COMMON_ARGS[@]}" -only-testing:BeanNotesTests -skip-testing:BeanNotesUITests -skip-testing:BeanNotesTests/DrawingPerformanceTests)
   for test_id in "${SLOW_IMPORT_TESTS[@]}"; do
     args+=("-skip-testing:$test_id")
   done
@@ -51,7 +52,7 @@ run_slow_import() {
 
 run_performance() {
   xcodebuild test "${COMMON_ARGS[@]}" \
-    -skip-testing:BeanNotesTests \
+    -only-testing:BeanNotesTests/DrawingPerformanceTests \
     -only-testing:"BeanNotesUITests/BeanNotesPerformanceTests/testLaunchPerformance()"
 }
 
