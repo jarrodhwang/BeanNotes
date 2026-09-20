@@ -234,6 +234,11 @@ private enum SharedImportMode: String, Codable {
     case newVersion
 }
 
+struct SharedInboxImportResult {
+    var notesToOpen: [NoteDocument] = []
+    var failureMessages: [String] = []
+}
+
 private struct SharedImportRequest: Codable {
     var id: UUID
     var title: String
@@ -241,6 +246,7 @@ private struct SharedImportRequest: Codable {
     var targetNoteID: UUID?
     var importMode: SharedImportMode
     var files: [String]
+    var openAfterImport: Bool?
 }
 
 private struct SharedImportFailureReport: Codable {
@@ -350,7 +356,8 @@ struct ImportExportService {
     func importsAsAnnotatableDocument(_ sourceURL: URL) -> Bool {
         let contentType = UTType(filenameExtension: sourceURL.pathExtension) ?? .data
         let kind = attachmentKind(for: contentType, fileExtension: sourceURL.pathExtension)
-        return kind == .pdf || kind == .docx || kind == .presentation
+        return kind == .pdf
+            || DocumentPageRenderer.supportedExtensions.contains(sourceURL.pathExtension.lowercased())
     }
 
     func importsAsDocumentVersion(_ sourceURL: URL) -> Bool {
@@ -519,15 +526,27 @@ struct ImportExportService {
                     commitBeforeApplying: commitOwnedStagingBeforeApplying
                 )
             case .codeSnippet, .chemicalStructure, .molecularFormula, .docx, .csv, .presentation, .other:
-                imported = try await importPreviewableDocumentPage(
-                    from: sourceURL,
-                    kind: kind,
-                    into: note,
-                    pageOrder: startOrder,
-                    staging: activeStaging,
-                    commitBeforeApplying: commitOwnedStagingBeforeApplying,
-                    progress: progress
-                )
+                if DocumentPageRenderer.supportedExtensions.contains(sourceURL.pathExtension.lowercased()) {
+                    imported = try await importPrintableDocumentPages(
+                        from: sourceURL,
+                        kind: kind,
+                        into: note,
+                        startingAt: startOrder,
+                        staging: activeStaging,
+                        commitBeforeApplying: commitOwnedStagingBeforeApplying,
+                        progress: progress
+                    )
+                } else {
+                    imported = try await importPreviewableDocumentPage(
+                        from: sourceURL,
+                        kind: kind,
+                        into: note,
+                        pageOrder: startOrder,
+                        staging: activeStaging,
+                        commitBeforeApplying: commitOwnedStagingBeforeApplying,
+                        progress: progress
+                    )
+                }
             }
 
             // A caller-owned staging transaction still has a wider model rollback
@@ -1307,16 +1326,21 @@ struct ImportExportService {
         }
     }
 
-    func absorbSharedInbox(into modelContext: ModelContext) async throws {
-        guard let inboxURL = LocalStorageService.sharedInboxURL(fileManager: storage.fileManager) else {
-            return
-        }
+    private static var isAbsorbingSharedInbox = false
 
+    func absorbSharedInbox(into modelContext: ModelContext, inboxURL: URL? = nil) async throws -> SharedInboxImportResult {
+        guard !Self.isAbsorbingSharedInbox,
+              let inboxURL = inboxURL ?? LocalStorageService.sharedInboxURL(fileManager: storage.fileManager) else {
+            return SharedInboxImportResult()
+        }
+        Self.isAbsorbingSharedInbox = true
+        defer { Self.isAbsorbingSharedInbox = false }
         try storage.fileManager.createDirectory(at: inboxURL, withIntermediateDirectories: true)
 
         try modelContext.save()
-        _ = try await absorbSharedImportRequests(from: inboxURL, into: modelContext)
+        let result = try await absorbSharedImportRequests(from: inboxURL, into: modelContext)
         _ = try await absorbLooseSharedFiles(from: inboxURL, into: modelContext)
+        return result
     }
 
     private func absorbLooseSharedFiles(
@@ -1390,35 +1414,38 @@ struct ImportExportService {
     private func absorbSharedImportRequests(
         from inboxURL: URL,
         into modelContext: ModelContext
-    ) async throws -> Bool {
+    ) async throws -> SharedInboxImportResult {
         let requestsURL = inboxURL.appendingPathComponent("Requests", isDirectory: true)
-        guard storage.fileManager.fileExists(atPath: requestsURL.path) else { return false }
-
+        guard storage.fileManager.fileExists(atPath: requestsURL.path) else { return SharedInboxImportResult() }
         let requestDirectories = try storage.fileManager.contentsOfDirectory(
-            at: requestsURL,
-            includingPropertiesForKeys: nil
-        )
-        .filter(\.hasDirectoryPath)
-
-        var didImport = false
-
+            at: requestsURL, includingPropertiesForKeys: [.creationDateKey], options: .skipsHiddenFiles
+        ).filter(\.hasDirectoryPath).sorted {
+            let first = (try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let second = (try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            return first < second
+        }
+        var result = SharedInboxImportResult()
         for requestDirectory in requestDirectories {
             do {
-                try await absorbSharedImportRequestDirectory(requestDirectory, into: modelContext)
-                didImport = true
+                if let note = try await absorbSharedImportRequestDirectory(requestDirectory, into: modelContext) {
+                    result.notesToOpen.append(note)
+                }
+            } catch is CancellationError {
+                modelContext.rollback()
+                throw CancellationError()
             } catch {
                 modelContext.rollback()
                 try? quarantineSharedImportRequest(requestDirectory, inboxURL: inboxURL, error: error)
+                result.failureMessages.append(error.localizedDescription)
             }
         }
-
-        return didImport
+        return result
     }
 
     private func absorbSharedImportRequestDirectory(
         _ requestDirectory: URL,
         into modelContext: ModelContext
-    ) async throws {
+    ) async throws -> NoteDocument? {
         let requestURL = requestDirectory.appendingPathComponent("request.json")
         guard storage.fileManager.fileExists(atPath: requestURL.path) else {
             throw SharedInboxImportError.missingRequestManifest
@@ -1428,11 +1455,12 @@ struct ImportExportService {
             SharedImportRequest.self,
             from: try Data(contentsOf: requestURL)
         )
-        let fileURLs = request.files
-            .map { requestDirectory.appendingPathComponent($0) }
-            .filter { storage.fileManager.fileExists(atPath: $0.path) }
-
-        guard !fileURLs.isEmpty else {
+        let fileURLs = request.files.map { requestDirectory.appendingPathComponent($0).standardizedFileURL }
+        let requestPath = requestDirectory.resolvingSymlinksInPath().path + "/"
+        guard !fileURLs.isEmpty, fileURLs.allSatisfy({
+            $0.resolvingSymlinksInPath().path.hasPrefix(requestPath)
+                && storage.fileManager.fileExists(atPath: $0.path)
+        }) else {
             throw SharedInboxImportError.noImportableFiles(request.files)
         }
 
@@ -1440,8 +1468,9 @@ struct ImportExportService {
         var didCommitStaging = false
 
         do {
+            let note: NoteDocument
             if request.importMode == .newVersion {
-                try await importSharedVersionRequest(
+                note = try await importSharedVersionRequest(
                     request,
                     fileURLs: fileURLs,
                     in: modelContext,
@@ -1449,7 +1478,7 @@ struct ImportExportService {
                 )
             } else {
                 let folder = try folder(for: request.folderID, in: modelContext)
-                try await importSharedRequest(
+                note = try await importSharedRequest(
                     request,
                     fileURLs: fileURLs,
                     into: folder,
@@ -1459,6 +1488,7 @@ struct ImportExportService {
             try staging.commit()
             didCommitStaging = true
             try modelContext.save()
+            DocumentImportPreferences.remember(folderID: note.folder?.id)
             do {
                 try storage.fileManager.removeItem(at: requestDirectory)
             } catch {
@@ -1470,6 +1500,7 @@ struct ImportExportService {
                     error: error
                 )
             }
+            return request.openAfterImport == true ? note : nil
         } catch {
             if didCommitStaging {
                 staging.discardCommittedFilesAfterModelFailure()
@@ -1541,7 +1572,7 @@ struct ImportExportService {
         fileURLs: [URL],
         into folder: NotebookFolder,
         staging: ImportStagingTransaction
-    ) async throws {
+    ) async throws -> NoteDocument {
         let noteTitle = request.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackTitle = fileURLs.first?.deletingPathExtension().lastPathComponent ?? "Shared Import"
         let note = NoteDocument(title: noteTitle.isEmpty ? fallbackTitle : noteTitle)
@@ -1567,6 +1598,7 @@ struct ImportExportService {
         }
 
         note.touch()
+        return note
     }
 
     private func importSharedVersionRequest(
@@ -1574,7 +1606,7 @@ struct ImportExportService {
         fileURLs: [URL],
         in modelContext: ModelContext,
         staging: ImportStagingTransaction
-    ) async throws {
+    ) async throws -> NoteDocument {
         guard fileURLs.count == 1, let sourceURL = fileURLs.first else {
             throw SharedInboxImportError.invalidVersionFileCount
         }
@@ -1598,6 +1630,7 @@ struct ImportExportService {
             staging: staging
         )
         note.touch()
+        return note
     }
 
     private func importSharedFilesAsPages(
@@ -1624,8 +1657,15 @@ struct ImportExportService {
                         in: note
                     )
                 }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 staging.removeStagedFiles(excluding: retainedStagedFiles)
+                if importsAsAnnotatableDocument(fileURL) || importsAsDocumentVersion(fileURL) {
+                    // A broken supported document must be reported as a failed
+                    // conversion, not silently presented as a successful blank note.
+                    throw error
+                }
 
                 let page = attachmentPage ?? {
                     let pageSize = PaperSize.configuredDefaultDimensions()
@@ -1782,6 +1822,53 @@ struct ImportExportService {
         progress?(1, "PDF import ready.")
 
         return ImportedDocumentPages(pages: importedPages, attachments: importedAttachments)
+    }
+
+    private func importPrintableDocumentPages(
+        from sourceURL: URL,
+        kind: AttachmentKind,
+        into note: NoteDocument,
+        startingAt startOrder: Int,
+        staging: ImportStagingTransaction?,
+        commitBeforeApplying: (() throws -> Void)?,
+        progress: ImportExportProgressHandler?
+    ) async throws -> ImportedDocumentPages {
+        progress?(0.05, "Copying original document...")
+        let rootURL = storage.rootURL
+        let original = try await StorageOperationRunner.run(
+            timeout: 60,
+            timeoutError: LocalStorageError.storageOperationTimedOut("Document copy")
+        ) {
+            try Self.copyImportFile(from: sourceURL, rootURL: rootURL, staging: staging)
+        }
+        try Task.checkCancellation()
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotes-Conversion-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+        let pdfURL = temporaryDirectory.appendingPathComponent(sourceURL.deletingPathExtension().lastPathComponent)
+            .appendingPathExtension("pdf")
+        progress?(0.15, "Converting document pages...")
+        try await DocumentPageRenderer().render(actualURL(for: original, staging: staging), to: pdfURL)
+        let imported = try await importPDFPages(
+            from: pdfURL,
+            into: note,
+            startingAt: startOrder,
+            staging: staging,
+            commitBeforeApplying: commitBeforeApplying,
+            progress: progress
+        )
+        // Backgrounds retain the converted vector PDF. The visible attachment is
+        // the untouched original, so it can still be opened or shared in its own app.
+        if let attachment = imported.attachments.first(where: { $0.kind == .pdf && !$0.isLocked }) {
+            attachment.kindRaw = kind.rawValue
+            attachment.originalFileName = sourceURL.lastPathComponent
+            attachment.storedFileName = original.relativePath
+            attachment.contentTypeIdentifier = original.contentTypeIdentifier
+            attachment.fileExtension = sourceURL.pathExtension
+        }
+        progress?(1, "Document import ready.")
+        return imported
     }
 
     private func importPreviewableDocumentPage(

@@ -195,6 +195,8 @@ struct NoteEditorView: View {
     @State private var codeSnippetEditingSession: CodeSnippetEditingSession?
     @State private var chemicalStructureEditingSession: ChemicalStructureEditingSession?
     @State private var molecularFormulaEditingSession: MolecularFormulaEditingSession?
+    @State private var paletteOccupiedFrame: CGRect = .zero
+    @State private var pinnedToolbarSize = CGSize(width: 540, height: 56)
     @State private var pagePendingDeletion: NotePage?
     @State private var pageUndoToast: PageUndoToast?
     @State private var pageUndoToastDismissTask: Task<Void, Never>?
@@ -440,7 +442,12 @@ struct NoteEditorView: View {
                     deleteAttachment: deleteAttachment(_:),
                     toggleLock: toggleAttachmentLock(_:),
                     setDrawingLayer: setAttachmentDrawingLayer(_:behindDrawing:),
-                    editSemanticStudyBlock: beginEditingSemanticAttachment(_:),
+                    saveChemicalStructure: { draft, attachment in
+                        saveChemicalStructure(draft, target: .existing(attachmentID: attachment.id))
+                    },
+                    saveMolecularFormula: { draft, attachment in
+                        saveMolecularFormula(draft, target: .existing(attachmentID: attachment.id))
+                    },
                     saveCodeSnippet: { draft, attachment in
                         saveCodeSnippet(
                             draft,
@@ -616,12 +623,19 @@ struct NoteEditorView: View {
                         .zIndex(3)
                         .transition(.opacity.combined(with: .scale(scale: 0.92)))
                 } else {
-                    editorPinnedActionToolbar(page: page)
-                        .padding(.top, 14)
-                        .padding(.trailing, 18)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .zIndex(3)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    GeometryReader { proxy in
+                        editorPinnedActionToolbar(page: page)
+                            .background {
+                                GeometryReader { toolbar in
+                                    Color.clear.preference(key: EditorToolbarSizePreferenceKey.self, value: toolbar.size)
+                                }
+                            }
+                            .padding(.top, pinnedToolbarTopInset(width: proxy.size.width))
+                            .padding(.trailing, 18)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    }
+                    .zIndex(3)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 if isShowingPageNavigator {
@@ -630,6 +644,8 @@ struct NoteEditorView: View {
                         .transition(.opacity)
                 }
             }
+            .onPreferenceChange(PenPaletteOccupiedFramePreferenceKey.self) { paletteOccupiedFrame = $0 }
+            .onPreferenceChange(EditorToolbarSizePreferenceKey.self) { if $0 != .zero { pinnedToolbarSize = $0 } }
         }
         .background {
             BeanNotesPaperBackground(
@@ -697,6 +713,14 @@ struct NoteEditorView: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private func pinnedToolbarTopInset(width: CGFloat) -> CGFloat {
+        let proposed = CGRect(x: width - 18 - pinnedToolbarSize.width, y: 14,
+                              width: pinnedToolbarSize.width, height: pinnedToolbarSize.height)
+        guard penPaletteMode == .custom, paletteOccupiedFrame != .zero,
+              proposed.intersects(paletteOccupiedFrame.insetBy(dx: -8, dy: -8)) else { return 14 }
+        return paletteOccupiedFrame.maxY + 12
     }
 
     private func editorTitleHeader(page: NotePage) -> some View {
@@ -1530,21 +1554,6 @@ struct NoteEditorView: View {
         molecularFormulaEditingSession = .init(target: .new(pageID: page.id), draft: MolecularFormulaDraft())
     }
 
-    private func beginEditingSemanticAttachment(_ attachment: Attachment) {
-        switch attachment.kind {
-        case .chemicalStructure:
-            let draft = ChemicalSemanticPayload.structure(from: attachment.semanticPayloadData)?.draft
-                ?? ChemicalStructureDraft(id: attachment.id)
-            chemicalStructureEditingSession = .init(target: .existing(attachmentID: attachment.id), draft: draft)
-        case .molecularFormula:
-            let draft = ChemicalSemanticPayload.formula(from: attachment.semanticPayloadData)?.draft
-                ?? MolecularFormulaDraft(id: attachment.id)
-            molecularFormulaEditingSession = .init(target: .existing(attachmentID: attachment.id), draft: draft)
-        default:
-            break
-        }
-    }
-
     private func beginEditingCodeSnippet(_ attachment: Attachment) {
         guard attachment.isCodeSnippet else { return }
         let defaults = CodeSnippetPreferences.defaultDraft()
@@ -1776,7 +1785,8 @@ struct NoteEditorView: View {
         }
         return saveSemanticAttachment(
             kind: .chemicalStructure,
-            displayName: draft.molecularFormula.map { "\($0) Structure" } ?? "Chemical Structure",
+            displayName: draft.matchingExample.map { "\($0.name) · \($0.formattedFormula)" }
+                ?? draft.molecularFormula.map { "\($0) Structure" } ?? "Chemical Structure",
             payload: payload,
             preview: preview,
             preferredFileName: "Chemical Structure.png",
@@ -3549,11 +3559,13 @@ private struct AttachmentManagerSheet: View {
     var deleteAttachment: (Attachment) -> Void
     var toggleLock: (Attachment) -> Void
     var setDrawingLayer: (Attachment, Bool) -> Void
-    var editSemanticStudyBlock: (Attachment) -> Void
+    var saveChemicalStructure: (ChemicalStructureDraft, Attachment) -> Bool
+    var saveMolecularFormula: (MolecularFormulaDraft, Attachment) -> Bool
     var saveCodeSnippet: (CodeSnippetDraft, Attachment) -> Bool
 
     @State private var previewAttachment: Attachment?
     @State private var editingCodeSnippet: Attachment?
+    @State private var editingChemistry: Attachment?
 
     var body: some View {
         NavigationStack {
@@ -3566,7 +3578,7 @@ private struct AttachmentManagerSheet: View {
                 toggleLock: toggleLock,
                 setDrawingLayer: setDrawingLayer,
                 editCodeSnippet: { editingCodeSnippet = $0 },
-                editSemanticStudyBlock: editSemanticStudyBlock
+                editSemanticStudyBlock: { editingChemistry = $0 }
             )
             .navigationTitle("Attachments")
             .navigationBarTitleDisplayMode(.inline)
@@ -3593,6 +3605,17 @@ private struct AttachmentManagerSheet: View {
                 )
             ) { draft in
                 saveCodeSnippet(draft, attachment)
+            }
+        }
+        .sheet(item: $editingChemistry) { attachment in
+            if attachment.kind == .chemicalStructure,
+               let draft = ChemicalSemanticPayload.structure(from: attachment.semanticPayloadData)?.draft {
+                ChemicalStructureEditorSheet(initialDraft: draft) { saveChemicalStructure($0, attachment) }
+            } else if attachment.kind == .molecularFormula,
+                      let draft = ChemicalSemanticPayload.formula(from: attachment.semanticPayloadData)?.draft {
+                MolecularFormulaEditorSheet(initialDraft: draft) { saveMolecularFormula($0, attachment) }
+            } else {
+                ContentUnavailableView("Chemistry data unavailable", systemImage: "exclamationmark.triangle", description: Text("The editable data could not be read. The saved preview is still available from the attachment list."))
             }
         }
         .presentationDetents([.medium, .large])
@@ -3656,5 +3679,13 @@ private struct PageMoveTargetSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+private struct EditorToolbarSizePreferenceKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next != .zero { value = next }
     }
 }

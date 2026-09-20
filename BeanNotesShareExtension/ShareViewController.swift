@@ -33,6 +33,7 @@ final class ShareViewController: UIViewController {
         var importMode: String
         var targetNoteID: UUID?
         var files: [String]
+        var openAfterImport: Bool
     }
 
     private enum ImportDestination: Int {
@@ -129,13 +130,18 @@ final class ShareViewController: UIViewController {
     private var sharedTheme = "default"
     private var shouldOpenAppAfterSaving = true
     private var didCompleteRequest = false
+    private var attemptedResponderOpen = false
+    private var preparedDirectory: URL?
+    private var preparedFiles: [String] = []
+    private var isPreparingFiles = true
 
     override func viewDidLoad() {
         super.viewDidLoad()
         providers = sharedItemProviders()
         let index = loadFolderIndex()
         folders = resolvedFolders(from: index)
-        selectedFolder = folders.first
+        let lastFolderID = DocumentImportPreferences.initialFolderID(available: folders.compactMap(\.id))
+        selectedFolder = folders.first { $0.id == lastFolderID } ?? folders.first
         notes = resolvedNotes(from: index)
         sharedTheme = index?.theme ?? "default"
         selectedNote = availableNotes.first
@@ -147,6 +153,7 @@ final class ShareViewController: UIViewController {
         updateNoteMenu()
         updateImportConfiguration()
         updatePreview()
+        prepareSharedItems()
     }
 
     private func configureView() {
@@ -154,8 +161,7 @@ final class ShareViewController: UIViewController {
 
         configureFormLabel(titleLabel, text: "Title")
         titleField.borderStyle = .roundedRect
-        titleField.placeholder = "Shared Import"
-        titleField.text = suggestedTitle()
+        titleField.placeholder = suggestedTitle()
         titleField.clearButtonMode = .whileEditing
         titleField.accessibilityLabel = "Note title"
 
@@ -429,14 +435,12 @@ final class ShareViewController: UIViewController {
     }
 
     private func suggestedTitle() -> String {
-        guard let provider = providers.first else { return "Shared Import" }
-        let suggestedName = provider.suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let suggestedName, !suggestedName.isEmpty {
-            return URL(fileURLWithPath: suggestedName).deletingPathExtension().lastPathComponent
+        if let title = SharedDocumentName.title(for: preparedFiles.first) { return title }
+        if let title = SharedDocumentName.title(for: providers.first?.suggestedName),
+           !["shared notes", "shared import", "shared file"].contains(title.lowercased()) {
+            return title
         }
-
-        return "Shared Import"
+        return isPreparingFiles ? "Loading filename…" : "Imported Note"
     }
 
     private func updateSharedItemSummary() {
@@ -684,7 +688,7 @@ final class ShareViewController: UIViewController {
 
         folderLabel.text = isNewVersion ? "Project Folder" : "Folder"
         titleLabel.text = isNewVersion ? "Version Name" : "Title"
-        titleField.placeholder = isNewVersion ? "Version Name" : "Shared Import"
+        titleField.placeholder = suggestedTitle()
         titleField.accessibilityLabel = isNewVersion ? "Version name" : "Note title"
         headerSubtitleLabel.text = isNewVersion
             ? "Choose a project folder, then a note to receive this version."
@@ -697,7 +701,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func updateImportButtonState() {
-        importButton.isEnabled = !providers.isEmpty
+        importButton.isEnabled = !isPreparingFiles && !preparedFiles.isEmpty
             && (!isImportingNewVersion || canCreateNewVersionRequest)
     }
 
@@ -708,11 +712,18 @@ final class ShareViewController: UIViewController {
     }
 
     private func providerCanCreateVersion(_ provider: NSItemProvider) -> Bool {
-        provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
+        if preparedFiles.count == 1,
+           let file = preparedFiles.first,
+           let type = UTType(filenameExtension: URL(fileURLWithPath: file).pathExtension),
+           type.conforms(to: .pdf) || type.conforms(to: .image) {
+            return true
+        }
+        return provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
             || provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
     }
 
     @objc private func cancelTapped() {
+        didCompleteRequest = true
         extensionContext?.cancelRequest(withError: CocoaError(.userCancelled))
     }
 
@@ -751,77 +762,102 @@ final class ShareViewController: UIViewController {
         saveSharedItems()
     }
 
-    private func saveSharedItems() {
-        guard let requestRootURL = sharedRequestsURL() else {
-            finish(message: "Open BeanNotes to finish setup.")
+    deinit {
+        if let preparedDirectory { try? FileManager.default.removeItem(at: preparedDirectory) }
+    }
+
+    private func prepareSharedItems() {
+        guard let requests = sharedRequestsURL() else {
+            isPreparingFiles = false
+            showRecoverableFailure(message: "Open BeanNotes to finish setup.")
             return
         }
-
-        let requestID = UUID()
-        let requestURL = requestRootURL.appendingPathComponent(requestID.uuidString, isDirectory: true)
-
-        do {
-            try fileManager.createDirectory(at: requestURL, withIntermediateDirectories: true)
-        } catch {
-            finish(message: "BeanNotes could not save this item.")
-            return
+        let directory = requests.deletingLastPathComponent()
+            .appendingPathComponent(".Pending", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // Extensions can be terminated without deinit. Remove only abandoned
+        // preparations; queued requests live in a different directory.
+        let abandoned = (try? fileManager.contentsOfDirectory(
+            at: directory.deletingLastPathComponent(), includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
+        for item in abandoned where item.hasDirectoryPath {
+            if let date = try? item.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+               date < Date().addingTimeInterval(-86_400) {
+                try? fileManager.removeItem(at: item)
+            }
         }
-
-        let group = DispatchGroup()
-        let lock = NSLock()
-        var savedFiles: [String] = []
-        var failures: [SharedItemSaveFailure] = []
-
-        for provider in providers {
-            group.enter()
-            save(provider, into: requestURL) { result in
-                defer { group.leave() }
-
-                lock.lock()
+        preparedDirectory = directory
+        statusLabel.text = "Preparing shared files…"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            var failures: [SharedItemSaveFailure] = []
+            // One provider at a time bounds memory for data-only photos and
+            // retains the order chosen in the source app.
+            for (index, provider) in self.providers.enumerated() {
+                guard !self.didCompleteRequest else { return }
+                self.statusLabel.text = "Preparing item \(index + 1) of \(self.providers.count)…"
+                let itemDirectory = directory.appendingPathComponent(String(index), isDirectory: true)
+                do {
+                    try self.fileManager.createDirectory(at: itemDirectory, withIntermediateDirectories: true)
+                } catch {
+                    failures.append(self.failure(for: provider, error: error))
+                    continue
+                }
+                let result: SharedItemSaveResult = await withCheckedContinuation { continuation in
+                    self.save(provider, into: itemDirectory) { continuation.resume(returning: $0) }
+                }
                 switch result {
                 case .success(let fileName):
-                    savedFiles.append(fileName)
-                case .failure(let failure):
-                    failures.append(failure)
+                    self.preparedFiles.append("\(index)/\(fileName)")
+                    self.titleField.placeholder = self.suggestedTitle()
+                    self.previewTitleLabel.text = self.suggestedTitle()
+                case .failure(let failure): failures.append(failure)
                 }
-                lock.unlock()
+            }
+            guard !self.didCompleteRequest else { return }
+            self.isPreparingFiles = false
+            self.updateImportConfiguration()
+            if failures.isEmpty {
+                self.statusLabel.text = nil
+            } else {
+                self.statusLabel.text = "Ready: \(self.preparedFiles.count) of \(self.providers.count) items.\n"
+                    + failures.map(\.summary).joined(separator: "\n")
+                self.statusLabel.textColor = .systemOrange
             }
         }
+    }
 
-        group.notify(queue: .main) { [weak self] in
-            guard let self else { return }
-
-            guard !savedFiles.isEmpty else {
-                try? self.fileManager.removeItem(at: requestURL)
-                self.showRecoverableFailure(message: self.failureSummary(
-                    savedCount: 0,
-                    totalCount: self.providers.count,
-                    failures: failures
-                ))
-                return
-            }
-
-            do {
-                let title = self.titleField.text?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let isNewVersion = self.isImportingNewVersion
-                let request = ImportRequest(
-                    id: requestID,
-                    title: title?.isEmpty == false ? title ?? "Shared Import" : "Shared Import",
-                    folderID: isNewVersion ? self.selectedNote?.folderID : self.selectedFolder?.id,
-                    importMode: isNewVersion ? "newVersion" : self.selectedImportMode().rawValueForRequest,
-                    targetNoteID: isNewVersion ? self.selectedNote?.id : nil,
-                    files: savedFiles.sorted()
-                )
-                let data = try JSONEncoder().encode(request)
-                try data.write(to: requestURL.appendingPathComponent("request.json"), options: [.atomic])
-                self.finish(message: self.failureSummary(
-                    savedCount: savedFiles.count,
-                    totalCount: self.providers.count,
-                    failures: failures
-                ), openAppAfterSaving: true)
-            } catch {
-                self.finish(message: "BeanNotes could not save this item.")
-            }
+    private func saveSharedItems() {
+        guard let preparedDirectory, !preparedFiles.isEmpty, let requests = sharedRequestsURL() else {
+            showRecoverableFailure(message: "The shared files are not ready. Try sharing them again.")
+            return
+        }
+        let requestID = UUID()
+        do {
+            let enteredTitle = titleField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let folderID = isImportingNewVersion ? selectedNote?.folderID : selectedFolder?.id
+            let request = ImportRequest(
+                id: requestID,
+                title: enteredTitle.isEmpty ? suggestedTitle() : enteredTitle,
+                folderID: folderID,
+                importMode: isImportingNewVersion ? "newVersion" : selectedImportMode().rawValueForRequest,
+                targetNoteID: isImportingNewVersion ? selectedNote?.id : nil,
+                files: preparedFiles,
+                openAfterImport: shouldOpenAppAfterSaving
+            )
+            try JSONEncoder().encode(request).write(
+                to: preparedDirectory.appendingPathComponent("request.json"), options: .atomic
+            )
+            try fileManager.createDirectory(at: requests, withIntermediateDirectories: true)
+            // Publish the manifest and all files together. The app never sees an
+            // unfinished request, even when it is already running in another window.
+            try fileManager.moveItem(at: preparedDirectory, to: requests.appendingPathComponent(requestID.uuidString))
+            self.preparedDirectory = nil
+            DocumentImportPreferences.remember(folderID: folderID)
+            finish(message: "Saved to BeanNotes.", openAppAfterSaving: true, requestID: requestID)
+        } catch {
+            showRecoverableFailure(message: "BeanNotes could not save this import. \(error.localizedDescription)")
+            updateImportButtonState()
         }
     }
 
@@ -895,47 +931,24 @@ final class ShareViewController: UIViewController {
         return description
     }
 
-    private func failureSummary(
-        savedCount: Int,
-        totalCount: Int,
-        failures: [SharedItemSaveFailure]
-    ) -> String {
-        guard !failures.isEmpty else {
-            return savedCount == 1 ? "Saved 1 item to BeanNotes." : "Saved to BeanNotes."
+    private func save(_ provider: NSItemProvider, into requestURL: URL, completion: @escaping (SharedItemSaveResult) -> Void) {
+        guard let typeIdentifier = preferredFileTypeIdentifier(for: provider) else {
+            saveAlternativeRepresentation(provider, into: requestURL, completion: completion)
+            return
         }
-
-        let failureDetails = failures
-            .prefix(3)
-            .map(\.summary)
-            .joined(separator: "\n")
-        let remainingCount = max(failures.count - 3, 0)
-        let remainingText = remainingCount > 0 ? "\n+\(remainingCount) more item(s)." : ""
-
-        if savedCount == 0 {
-            return "No items were saved. \(failures.count) of \(totalCount) item(s) failed:\n\(failureDetails)\(remainingText)"
+        SharedItemFileReader.writeRepresentation(from: provider, typeIdentifier: typeIdentifier, into: requestURL) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let name): completion(.success(name))
+            case .failure:
+                self.saveAlternativeRepresentation(provider, into: requestURL, completion: completion)
+            }
         }
-
-        return "Saved \(savedCount) of \(totalCount) item(s) to BeanNotes. \(failures.count) item(s) failed:\n\(failureDetails)\(remainingText)"
     }
 
-    private func save(_ provider: NSItemProvider, into requestURL: URL, completion: @escaping (SharedItemSaveResult) -> Void) {
-        if let typeIdentifier = preferredFileTypeIdentifier(for: provider) {
-            provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { [weak self] sourceURL, error in
-                guard let self else {
-                    completion(.failure(SharedItemSaveFailure(itemName: "Shared item", reason: "Share extension closed")))
-                    return
-                }
-
-                guard let sourceURL else {
-                    completion(.failure(self.failure(for: provider, error: error ?? SharedItemSaveError.unavailableItem)))
-                    return
-                }
-
-                completion(self.saveResult(for: provider) {
-                    try self.copySharedFile(from: sourceURL, to: requestURL, typeIdentifier: typeIdentifier)
-                })
-            }
-        } else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+    private func saveAlternativeRepresentation(_ provider: NSItemProvider, into requestURL: URL,
+                                              completion: @escaping (SharedItemSaveResult) -> Void) {
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] item, error in
                 guard let self else {
                     completion(.failure(SharedItemSaveFailure(itemName: "Shared item", reason: "Share extension closed")))
@@ -980,7 +993,7 @@ final class ShareViewController: UIViewController {
                 }
 
                 completion(self.saveResult(for: provider) {
-                    try self.saveTextItem(item, to: requestURL)
+                    try self.saveTextItem(item, to: requestURL, suggestedName: provider.suggestedName)
                 })
             }
         } else if provider.canLoadObject(ofClass: UIImage.self) {
@@ -1006,7 +1019,7 @@ final class ShareViewController: UIViewController {
                 }
 
                 completion(self.saveResult(for: provider) {
-                    try self.saveData(data, preferredName: "Shared Image.png", to: requestURL)
+                    try self.saveData(data, preferredName: "\(SharedDocumentName.title(for: provider.suggestedName) ?? "Shared Image").png", to: requestURL)
                 })
             }
         } else if provider.hasItemConformingToTypeIdentifier(UTType.data.identifier) {
@@ -1031,22 +1044,24 @@ final class ShareViewController: UIViewController {
     }
 
     private func preferredFileTypeIdentifier(for provider: NSItemProvider) -> String? {
-        let supportedIdentifiers = [
-            UTType.pdf.identifier,
-            UTType(filenameExtension: "docx")?.identifier,
-            UTType(filenameExtension: "doc")?.identifier,
-            UTType(filenameExtension: "pptx")?.identifier,
-            UTType(filenameExtension: "ppt")?.identifier,
-            UTType(filenameExtension: "csv")?.identifier,
-            UTType.png.identifier,
-            UTType.jpeg.identifier,
-            UTType.image.identifier
-        ].compactMap { $0 }
-
-        return supportedIdentifiers.first { provider.hasItemConformingToTypeIdentifier($0) }
+        // Ask for the actual registered format. Requesting public.image/data can
+        // discard the filename or pick a thumbnail/text alternative of a document.
+        let identifiers = provider.registeredTypeIdentifiers
+        let documentExtensions = ["pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "html", "htm", "rtf", "csv"]
+        if let document = identifiers.first(where: { identifier in
+            guard let ext = UTType(identifier)?.preferredFilenameExtension else { return false }
+            return documentExtensions.contains(ext)
+        }) { return document }
+        return identifiers.first { identifier in
+            guard let type = UTType(identifier) else { return false }
+            return type.conforms(to: .data) && !type.conforms(to: .url) && type != .data
+        } ?? identifiers.first { $0 == UTType.data.identifier }
     }
 
     private func saveFileURLItem(_ item: NSSecureCoding?, to requestURL: URL) throws -> String {
+        if let string = item as? String, let url = URL(string: string), url.isFileURL {
+            return try copySharedFile(from: url, to: requestURL, typeIdentifier: UTType.data.identifier)
+        }
         if let url = item as? URL {
             return try copySharedFile(from: url, to: requestURL, typeIdentifier: UTType.data.identifier)
         }
@@ -1064,45 +1079,16 @@ final class ShareViewController: UIViewController {
         throw SharedItemSaveError.invalidFileURL
     }
 
-    private func copySharedFile(from sourceURL: URL, to requestURL: URL, typeIdentifier: String) throws -> String {
-        guard sourceURL.isFileURL else {
-            throw SharedItemSaveError.invalidFileURL
-        }
-
-        let isScoped = sourceURL.startAccessingSecurityScopedResource()
-        defer {
-            if isScoped {
-                sourceURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        guard fileManager.fileExists(atPath: sourceURL.path) else {
-            throw SharedItemSaveError.fileMissing(sourceURL.lastPathComponent)
-        }
-
-        let pathExtension = sourceURL.pathExtension.isEmpty
-            ? (UTType(typeIdentifier)?.preferredFilenameExtension ?? "data")
-            : sourceURL.pathExtension
-        let baseName = sourceURL.deletingPathExtension().lastPathComponent.isEmpty
-            ? "Shared File"
-            : sourceURL.deletingPathExtension().lastPathComponent
-        let destinationName = uniqueFileName("\(baseName).\(pathExtension)")
-        let destinationURL = requestURL.appendingPathComponent(destinationName)
-
-        do {
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
-            }
-
-            try fileManager.copyItem(at: sourceURL, to: destinationURL)
-            return destinationName
-        } catch {
-            throw error
-        }
+    private func copySharedFile(from sourceURL: URL, to requestURL: URL, typeIdentifier: String, suggestedName: String? = nil) throws -> String {
+        try SharedItemFileReader.copyFile(sourceURL, suggestedName: suggestedName,
+                                         typeIdentifier: typeIdentifier, into: requestURL)
     }
 
     private func saveURLItem(_ item: NSSecureCoding?, to requestURL: URL) throws -> String {
         if let url = item as? URL {
+            if url.isFileURL {
+                return try copySharedFile(from: url, to: requestURL, typeIdentifier: UTType.data.identifier)
+            }
             return try saveText(url.absoluteString, preferredName: "Shared Link.txt", to: requestURL)
         }
 
@@ -1125,18 +1111,20 @@ final class ShareViewController: UIViewController {
         throw SharedItemSaveError.invalidText
     }
 
-    private func saveTextItem(_ item: NSSecureCoding?, to requestURL: URL) throws -> String {
+    private func saveTextItem(_ item: NSSecureCoding?, to requestURL: URL, suggestedName: String?) throws -> String {
+        let name = SharedDocumentName.fileName(sourceURL: nil, suggestedName: suggestedName ?? "Shared Text.txt",
+                                              typeIdentifier: UTType.plainText.identifier)
         if let text = item as? String {
-            return try saveText(text, preferredName: "Shared Text.txt", to: requestURL)
+            return try saveText(text, preferredName: name, to: requestURL)
         }
 
         if let attributedText = item as? NSAttributedString {
-            return try saveText(attributedText.string, preferredName: "Shared Text.txt", to: requestURL)
+            return try saveText(attributedText.string, preferredName: name, to: requestURL)
         }
 
         if let data = item as? Data,
            let text = String(data: data, encoding: .utf8) {
-            return try saveText(text, preferredName: "Shared Text.txt", to: requestURL)
+            return try saveText(text, preferredName: name, to: requestURL)
         }
 
         throw SharedItemSaveError.invalidText
@@ -1147,7 +1135,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func saveData(_ data: Data, preferredName: String, to requestURL: URL) throws -> String {
-        let fileName = uniqueFileName(preferredName)
+        let fileName = sanitizedSharedFileName(preferredName)
         let fileURL = requestURL.appendingPathComponent(fileName)
 
         do {
@@ -1172,7 +1160,7 @@ final class ShareViewController: UIViewController {
             .appendingPathComponent("folders.json")
     }
 
-    private func uniqueFileName(_ preferredName: String) -> String {
+    private func sanitizedSharedFileName(_ preferredName: String) -> String {
         let sanitized = preferredName
             .components(separatedBy: CharacterSet(charactersIn: "/\\?%*|\"<>:").union(.newlines).union(.controlCharacters))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1181,35 +1169,71 @@ final class ShareViewController: UIViewController {
         let url = URL(fileURLWithPath: sanitized.isEmpty ? "Shared File" : sanitized)
         let baseName = url.deletingPathExtension().lastPathComponent
         let ext = url.pathExtension
-        let suffix = UUID().uuidString
-
-        return ext.isEmpty ? "\(baseName)-\(suffix)" : "\(baseName)-\(suffix).\(ext)"
+        return ext.isEmpty ? baseName : "\(baseName).\(ext)"
     }
 
-    private func finish(message: String, openAppAfterSaving: Bool = false) {
+    private func finish(message: String, openAppAfterSaving: Bool = false, requestID: UUID? = nil) {
         statusLabel.text = message
-        statusLabel.textColor = message.localizedCaseInsensitiveContains("failed") ? .systemOrange : .secondaryLabel
-
-        let delay: TimeInterval = message.count > 80 ? 2.4 : 0.65
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, let extensionContext else { return }
-
-            guard openAppAfterSaving,
-                  shouldOpenAppAfterSaving,
-                  let appURL = URL(string: "beannotes://shared-import") else {
-                completeRequestIfNeeded()
-                return
-            }
-
-            extensionContext.open(appURL) { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.completeRequestIfNeeded()
+        statusLabel.textColor = .secondaryLabel
+        guard openAppAfterSaving, shouldOpenAppAfterSaving else {
+            completeRequestIfNeeded()
+            return
+        }
+        var components = URLComponents()
+        components.scheme = "beannotes"
+        components.host = "shared-import"
+        components.queryItems = requestID.map { [URLQueryItem(name: "requestID", value: $0.uuidString)] }
+        guard let appURL = components.url else { return }
+        extensionContext?.open(appURL) { [weak self] opened in
+            DispatchQueue.main.async {
+                guard let self, !self.didCompleteRequest else { return }
+                if opened {
+                    self.completeRequestIfNeeded()
+                } else {
+                    self.openThroughResponderChain(appURL)
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.completeRequestIfNeeded()
-            }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.openThroughResponderChain(appURL)
+        }
+    }
+
+    private func openThroughResponderChain(_ url: URL) {
+        guard !didCompleteRequest, !attemptedResponderOpen else { return }
+        attemptedResponderOpen = true
+        // Some action hosts reject NSExtensionContext.open but expose their
+        // application responder. Use the current asynchronous public API.
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let application = current as? UIApplication {
+                application.open(url, options: [:]) { [weak self] opened in
+                    guard let self else { return }
+                    if opened { self.completeRequestIfNeeded() }
+                    else { self.showOpenAppFailure() }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                    self?.showOpenAppFailure()
+                }
+                return
+            }
+            responder = current.next
+        }
+        showOpenAppFailure()
+    }
+
+    private func showOpenAppFailure() {
+        guard !didCompleteRequest else { return }
+        statusLabel.text = "Saved. This app could not open BeanNotes. Open BeanNotes to finish importing and view your note."
+        statusLabel.textColor = .secondaryLabel
+        cancelButton.isEnabled = true
+        cancelButton.setTitle("Done", for: .normal)
+        cancelButton.removeTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+        cancelButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+    }
+
+    @objc private func doneTapped() {
+        completeRequestIfNeeded()
     }
 
     private func completeRequestIfNeeded() {

@@ -52,6 +52,7 @@ Scripts/test-plan.sh ui
 Purpose:
 - Launch the app with onboarding skipped and storage reset.
 - Verify the main library creates a note and opens the editor.
+- Verify Open In imports a document on a cold launch and opens its editor with the original filename.
 - Verify finger drawing creates undoable ink and Pencil Only mode preserves page-action gestures.
 - Capture launch-screen smoke coverage separately from performance metrics.
 
@@ -70,7 +71,18 @@ Scripts/test-plan.sh slow-import
 
 Purpose:
 - Exercise PDF, image, CSV, thumbnail, export, and cancellation paths.
+- Exercise Word, PowerPoint, HTML, RTF, and all sheets in Excel using the self-authored
+  `BeanNotesTests/ImportFixtures/ThreePages.*` files. Each has First, Middle, and Final content markers.
+- Check that row 160 in `AllRows.xlsx` remains visible within the rendered page bounds.
+- Verify shared-import open preferences (including older manifests), data-only image providers,
+  original filename preservation, long text, and PNG/JPG/JPEG variants.
 - Catch regressions in local file storage, rendering, staging rollback, and cleanup.
+
+Office imports use iOS's local preview renderer. Modern Word explicit page breaks and
+PowerPoint slide boundaries are checked; legacy Word and spreadsheet layout can reflow,
+so those checks require complete content and preserved originals. Physical-device checks
+should also share from Files, Photos, Safari, Word, and PowerPoint, because source apps
+differ in the representations they supply and whether they permit opening BeanNotes.
 
 When to run:
 - Before merging import/export/storage changes.

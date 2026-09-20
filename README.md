@@ -18,6 +18,7 @@ BeanNotes is a free-form, local-first notes app for iPhone and iPad. It is built
 - Share extension support for creating a new note or adding one PDF/image as a new version of an existing document note.
 - Automatic local folder-welcome notifications, requested when a folder is first created.
 - Local SwiftData storage with backup/export support and recovery behavior for damaged stores.
+- Chemistry notes with guided formula entry and atom counts, editable 2D structures, and offline molecular examples in native interactive 3D. See [chemistry capabilities and validation](Tests/CHEMISTRY.md).
 
 ## Project Shape
 
@@ -58,6 +59,20 @@ Scripts/test-plan.sh all
 Use `unit` for fast model, storage, cleanup, search, theme, drawing-tool, backup, and settings checks. Use `slow-import` when changing document import, export, rendering, thumbnailing, or file cleanup paths.
 
 See [Tests/TEST_PLAN.md](Tests/TEST_PLAN.md) for the full quality and CI strategy.
+
+## Document Imports
+
+PDFs and images become annotatable pages. Word (`doc`, `docx`), PowerPoint (`ppt`, `pptx`),
+HTML, RTF, plain text, Markdown, CSV/TSV, JSON, XML, and Excel documents are rendered locally
+into note pages, with the original document retained as an attachment. Other file types
+keep their original attachment and a preview when available. Office layout follows iOS's
+document renderer; legacy Word pagination can reflow. Import a PDF when exact source
+pagination is required. HTML imports do not execute document scripts or download remote resources.
+
+The share dialog uses the original filename as the title placeholder and remembers the last
+successful destination folder. “Open BeanNotes right away” also opens the imported note.
+If the source app rejects the launch request, the dialog explains that the files are saved
+and ready for the next BeanNotes launch. Files can also be sent directly to BeanNotes using Open In.
 
 ## Quality Priorities
 

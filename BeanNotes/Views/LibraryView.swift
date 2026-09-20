@@ -51,6 +51,9 @@ struct LibraryView: View {
     @State private var isShowingFolderEditor = false
     @State private var isShowingDocumentImporter = false
     @State private var isImportingDocument = false
+    @State private var isAbsorbingSharedImports = false
+    @State private var hasPendingSharedImport = false
+    @State private var pendingOpenFileURLs: [URL] = []
     @State private var importProgress: Double?
     @State private var importProgressMessage = "Preparing import..."
     @State private var importTask: Task<Void, Never>?
@@ -306,6 +309,14 @@ struct LibraryView: View {
         .onAppear {
             bootstrapLibrary()
         }
+        .onOpenURL { url in
+            if url.scheme == "beannotes", url.host == "shared-import" {
+                absorbSharedInbox()
+            } else if url.isFileURL {
+                pendingOpenFileURLs.append(url)
+                importPendingOpenFilesIfNeeded()
+            }
+        }
         .task(id: interruptibleVisitTaskID) {
             await runInterruptibleBeanVisitIfEligible()
         }
@@ -503,7 +514,7 @@ struct LibraryView: View {
                     importTask = nil
                 }
             },
-            isImportingDocument: isImportingDocument,
+            isImportingDocument: isImportingDocument || isAbsorbingSharedImports,
             importProgress: importProgress,
             importProgressMessage: importProgressMessage,
             cancelImport: cancelImport,
@@ -529,7 +540,7 @@ struct LibraryView: View {
                 selectedFolderID = inbox.id
                 syncSharedFolderIndex(including: [inbox])
             } else if selectedFolderID == nil {
-                selectedFolderID = selectedFolder?.id
+                selectedFolderID = DocumentImportPreferences.initialFolderID(available: sortedFolders.map(\.id))
                 syncSharedFolderIndex()
             }
 
@@ -540,14 +551,48 @@ struct LibraryView: View {
     }
 
     private func absorbSharedInbox() {
-        Task { @MainActor in
+        guard !isAbsorbingSharedImports, !isImportingDocument else {
+            hasPendingSharedImport = true
+            return
+        }
+        hasPendingSharedImport = false
+        isAbsorbingSharedImports = true
+        importProgressMessage = "Importing shared files…"
+        importTask = Task { @MainActor in
+            defer {
+                isAbsorbingSharedImports = false
+                importPendingOpenFilesIfNeeded()
+            }
             do {
-                try await ImportExportService().absorbSharedInbox(into: modelContext)
+                let result = try await ImportExportService().absorbSharedInbox(into: modelContext)
                 syncSharedFolderIndex()
+                for note in result.notesToOpen {
+                    selectedFolderID = note.folder?.id
+                    openNote(note)
+                }
+                if !result.failureMessages.isEmpty {
+                    errorMessage = "Some shared files could not be imported. Their originals were kept for recovery.\n"
+                        + result.failureMessages.joined(separator: "\n")
+                }
+            } catch is CancellationError {
+                // The complete request stays in the inbox for the next attempt.
+                hasPendingSharedImport = false
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func importPendingOpenFilesIfNeeded() {
+        guard !isImportingDocument, !isAbsorbingSharedImports else { return }
+        guard !pendingOpenFileURLs.isEmpty else {
+            if hasPendingSharedImport { absorbSharedInbox() }
+            return
+        }
+        let urls = pendingOpenFileURLs
+        pendingOpenFileURLs.removeAll()
+        isImportingDocument = true
+        importTask = Task { await importDocumentsAsNotes(urls) }
     }
 
     @discardableResult
@@ -879,8 +924,7 @@ struct LibraryView: View {
     }
 
     private func importDocumentsAsNotes(_ urls: [URL]) async {
-        guard let selectedFolder else { return }
-
+        guard !urls.isEmpty else { return }
         isImportingDocument = true
         importProgress = 0
         importProgressMessage = "Preparing import..."
@@ -889,6 +933,15 @@ struct LibraryView: View {
             isImportingDocument = false
             importProgress = nil
             importProgressMessage = "Preparing import..."
+            importPendingOpenFilesIfNeeded()
+        }
+
+        let selectedFolder: NotebookFolder
+        do {
+            selectedFolder = try folderForNewContent()
+        } catch {
+            errorMessage = error.localizedDescription
+            return
         }
 
         let service = ImportExportService()
@@ -930,6 +983,7 @@ struct LibraryView: View {
             didCommitStaging = true
             try modelContext.save()
             syncSharedFolderIndex(including: [selectedFolder])
+            DocumentImportPreferences.remember(folderID: selectedFolder.id)
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
@@ -963,6 +1017,7 @@ struct LibraryView: View {
             isImportingDocument = false
             importProgress = nil
             importProgressMessage = "Preparing import..."
+            importPendingOpenFilesIfNeeded()
         }
 
         let service = ImportExportService()
@@ -1004,6 +1059,7 @@ struct LibraryView: View {
             didCommitStaging = true
             try modelContext.save()
             syncSharedFolderIndex(including: [selectedFolder])
+            DocumentImportPreferences.remember(folderID: selectedFolder.id)
 
             if let firstImportedNote {
                 openNote(firstImportedNote)

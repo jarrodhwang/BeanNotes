@@ -426,13 +426,13 @@ struct SettingsView: View {
                     } else {
                         LabeledContent("Structure Input", value: ChemicalStructureInputMode.smartEditor.label)
                     }
-                    Text("Drag with Apple Pencil to create snapped bonds, tap to place or label atoms, and use ring templates. Everything stays on this device.")
+                    Text("Start with a named molecule, draw and check bonds, or explore sourced examples in interactive 3D. Rotate, zoom, inspect atoms, and show hydrogens. Examples are bundled for offline use; notes stay on this device.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 if chemistryFeaturesEnabled && molecularFormulaFeatureEnabled {
-                    Text("Write or type a formula, review validation feedback, then save it with chemical subscripts and charge superscripts.")
+                    Text("Write or type a formula, see atom counts and net charge, then save it with chemical subscripts and charge superscripts. Includes examples and help with groups, hydrates, and charges.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

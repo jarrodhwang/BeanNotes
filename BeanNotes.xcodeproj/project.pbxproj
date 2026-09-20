@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BEE000000000000000000024 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = BEE000000000000000000025 /* PrivacyInfo.xcprivacy */; };
+		BEE000000000000000000022 /* SharedItemFileReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEE000000000000000000023 /* SharedItemFileReader.swift */; };
+		BEE000000000000000000020 /* DocumentImportPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEE000000000000000000021 /* DocumentImportPreferences.swift */; };
 		BEE000000000000000000001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEE000000000000000000004 /* ShareViewController.swift */; };
 		BEE000000000000000000002 /* BeanNotesShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = BEE000000000000000000003 /* BeanNotesShareExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -50,6 +53,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BEE000000000000000000025 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		BEE000000000000000000023 /* SharedItemFileReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeanNotes/Services/SharedItemFileReader.swift; sourceTree = SOURCE_ROOT; };
+		BEE000000000000000000021 /* DocumentImportPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeanNotes/Services/DocumentImportPreferences.swift; sourceTree = SOURCE_ROOT; };
 		2384987D2FF72F9200CB7C46 /* BeanNotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BeanNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2384988C2FF72F9300CB7C46 /* BeanNotesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BeanNotesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		238498962FF72F9300CB7C46 /* BeanNotesUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BeanNotesUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -135,8 +141,11 @@
 			isa = PBXGroup;
 			children = (
 				BEE000000000000000000004 /* ShareViewController.swift */,
+				BEE000000000000000000021 /* DocumentImportPreferences.swift */,
+				BEE000000000000000000023 /* SharedItemFileReader.swift */,
 				BEE000000000000000000005 /* Info.plist */,
 				BEE000000000000000000006 /* BeanNotesShareExtension.entitlements */,
+				BEE000000000000000000025 /* PrivacyInfo.xcprivacy */,
 			);
 			path = BeanNotesShareExtension;
 			sourceTree = "<group>";
@@ -307,6 +316,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BEE000000000000000000024 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -339,6 +349,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				BEE000000000000000000001 /* ShareViewController.swift in Sources */,
+				BEE000000000000000000020 /* DocumentImportPreferences.swift in Sources */,
+				BEE000000000000000000022 /* SharedItemFileReader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
