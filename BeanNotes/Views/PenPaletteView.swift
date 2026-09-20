@@ -103,6 +103,12 @@ struct PenPaletteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Pen palette")
             .accessibilityValue("\(displayedPaletteColorCount) colors")
+            .preference(key: PenPaletteOccupiedFramePreferenceKey.self, value: CGRect(
+                x: dockOffset.width + committedOffset.width,
+                y: dockOffset.height + committedOffset.height,
+                width: effectivePaletteSize.width + 10,
+                height: effectivePaletteSize.height
+            ))
     }
 
     @ViewBuilder
@@ -1284,6 +1290,16 @@ struct PenPaletteLayoutMetrics {
 
     static func decodedCommittedPosition(from rawValue: String) -> CGSize? {
         decodedCommittedOffset(from: rawValue)
+    }
+}
+
+/// Reports committed placement; dragging does not rebuild the whole note editor
+/// on every pointer event. The page toolbar moves out of the way after placement.
+struct PenPaletteOccupiedFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
     }
 }
 

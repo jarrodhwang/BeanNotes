@@ -10,9 +10,13 @@ import UniformTypeIdentifiers
 
 private enum ThumbnailGenerationError: LocalizedError {
     case encodingFailed
+    case contentUnavailable
 
     var errorDescription: String? {
-        "BeanNotes could not encode the note preview."
+        switch self {
+        case .encodingFailed: "BeanNotes could not encode the note preview."
+        case .contentUnavailable: "Some note content is temporarily unavailable. The preview will be retried."
+        }
     }
 }
 
@@ -184,7 +188,7 @@ struct ThumbnailService {
         }
     }
 
-    nonisolated private static let thumbnailRenderVersion = 11
+    nonisolated private static let thumbnailRenderVersion = 12
     nonisolated private static let defaultThumbnailMaxDimension: CGFloat = 360
     nonisolated private static let maximumThumbnailMaxDimension: CGFloat = 1_024
     nonisolated private static let defaultPageRenderScale: CGFloat = 1
@@ -258,7 +262,7 @@ struct ThumbnailService {
         case let .unavailable(error):
             throw error
         }
-        let thumbnail = Self.renderThumbnailImage(
+        let thumbnail = try Self.renderCompleteThumbnailImage(
             snapshot: snapshot,
             drawing: drawing,
             rootURL: storage.rootURL,
@@ -440,6 +444,35 @@ struct ThumbnailService {
         rootURL: URL,
         maxDimension: CGFloat
     ) -> UIImage {
+        renderThumbnailImageResult(
+            snapshot: snapshot, drawing: drawing, rootURL: rootURL,
+            maxDimension: maxDimension, requiresImageAttachments: false
+        ).image
+    }
+
+    nonisolated private static func renderCompleteThumbnailImage(
+        snapshot: NotePageRenderSnapshot,
+        drawing: PKDrawing,
+        rootURL: URL,
+        maxDimension: CGFloat
+    ) throws -> UIImage {
+        let result = renderThumbnailImageResult(
+            snapshot: snapshot, drawing: drawing, rootURL: rootURL,
+            maxDimension: maxDimension, requiresImageAttachments: true
+        )
+        guard result.didRenderRequiredContent else {
+            throw ThumbnailGenerationError.contentUnavailable
+        }
+        return result.image
+    }
+
+    nonisolated private static func renderThumbnailImageResult(
+        snapshot: NotePageRenderSnapshot,
+        drawing: PKDrawing,
+        rootURL: URL,
+        maxDimension: CGFloat,
+        requiresImageAttachments: Bool
+    ) -> (image: UIImage, didRenderRequiredContent: Bool) {
         let pageSize = snapshot.pageSize
         let longestSide = max(pageSize.width, pageSize.height)
         let targetMaxDimension = normalizedThumbnailMaxDimension(maxDimension)
@@ -452,21 +485,23 @@ struct ThumbnailService {
 
         let renderer = UIGraphicsImageRenderer(size: thumbnailSize, format: format)
         var image: UIImage?
+        var didRenderRequiredContent = false
         UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
             image = renderer.image { context in
                 context.cgContext.saveGState()
                 context.cgContext.scaleBy(x: scale, y: scale)
-                drawPageContent(
+                didRenderRequiredContent = drawPageContent(
                     snapshot: snapshot,
                     drawing: drawing,
                     rootURL: rootURL,
                     in: CGRect(origin: .zero, size: pageSize),
-                    renderScale: scale
+                    renderScale: scale,
+                    requiresImageAttachments: requiresImageAttachments
                 )
                 context.cgContext.restoreGState()
             }
         }
-        return image ?? UIImage()
+        return (image ?? UIImage(), didRenderRequiredContent)
     }
 
     nonisolated static func renderPageImage(
@@ -646,7 +681,7 @@ struct ThumbnailService {
                         rootURL: rootURL
                     )
                 try Task.checkCancellation()
-                let thumbnail = renderThumbnailImage(
+                let thumbnail = try renderCompleteThumbnailImage(
                     snapshot: snapshot,
                     drawing: drawing,
                     rootURL: rootURL,

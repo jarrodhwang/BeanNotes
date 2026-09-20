@@ -138,7 +138,7 @@ struct ThemeAvatarView: View {
             .clipShape(Circle())
             .overlay {
                 Circle()
-                    .stroke(.white.opacity(0.78), lineWidth: max(1, size * 0.045))
+                    .stroke(theme.artworkBorderColor.opacity(0.78), lineWidth: max(1, size * 0.045))
             }
             .shadow(color: .black.opacity(0.14), radius: size * 0.09, y: size * 0.04)
             .accessibilityHidden(true)
@@ -157,7 +157,7 @@ struct ThemeAvatarView: View {
 
                 Image(systemName: theme.symbolName)
                     .font(.system(size: size * 0.48, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.accentForegroundColor)
             }
         }
     }
@@ -173,7 +173,7 @@ struct ThemeBadgeView: View {
             .clipShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-                    .stroke(.white.opacity(0.68), lineWidth: max(1, size * 0.045))
+                    .stroke(theme.artworkBorderColor.opacity(0.68), lineWidth: max(1, size * 0.045))
             }
             .shadow(color: .black.opacity(0.12), radius: size * 0.08, y: size * 0.035)
             .accessibilityHidden(true)
@@ -192,7 +192,7 @@ struct ThemeBadgeView: View {
 
                 Image(systemName: theme.symbolName)
                     .font(.system(size: size * 0.46, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.accentForegroundColor)
             }
         }
     }

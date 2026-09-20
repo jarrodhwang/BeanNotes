@@ -18,6 +18,7 @@ BeanNotes is a free-form, local-first notes app for iPhone and iPad. It is built
 - Share extension support for creating a new note or adding one PDF/image as a new version of an existing document note.
 - Automatic local folder-welcome notifications, requested when a folder is first created.
 - Local SwiftData storage with backup/export support and recovery behavior for damaged stores.
+- Chemistry notes with guided formula entry and atom counts, editable 2D structures, and offline molecular examples in native interactive 3D. See [chemistry capabilities and validation](Tests/CHEMISTRY.md).
 
 ## Project Shape
 
@@ -58,6 +59,36 @@ Scripts/test-plan.sh all
 Use `unit` for fast model, storage, cleanup, search, theme, drawing-tool, backup, and settings checks. Use `slow-import` when changing document import, export, rendering, thumbnailing, or file cleanup paths.
 
 See [Tests/TEST_PLAN.md](Tests/TEST_PLAN.md) for the full quality and CI strategy.
+
+## Document Imports
+
+PDFs and images become annotatable pages. Word (`doc`, `docx`), PowerPoint (`ppt`, `pptx`),
+HTML, RTF, plain text, Markdown, CSV/TSV, JSON, XML, and Excel documents are rendered locally
+into note pages, with the original document retained as an attachment. Other file types
+keep their original attachment and a preview when available. PowerPoint imports capture each
+slide canvas individually into vector PDF pages, preserving the source slide proportions,
+backgrounds, text and embedded images without paper margins. PPTX imports validate slide
+count and correct explicit text-box rotations using the source geometry. Conversion waits
+for fonts and images and rejects unreadable images rather than saving incomplete pages.
+Office fonts and advanced effects still depend on iOS's document renderer; export from
+PowerPoint as PDF for exact font and effect reproduction. Legacy Word pagination can reflow.
+HTML imports do not execute document scripts or download remote resources.
+
+The share dialog uses the original filename as the title placeholder and remembers the last
+successful destination folder. It follows the app's theme and Light/Dark/System appearance,
+keeps Add and Cancel above the keyboard, and reports any items that could not be prepared.
+“Open BeanNotes right away” also opens the imported note.
+If the source app rejects the launch request, the dialog explains that the files are saved
+and ready for the next BeanNotes launch. Files can also be sent directly to BeanNotes using Open In.
+
+Drawing recovery rechecks disk after a temporarily missing file and resumes editing only
+after the saved ink has loaded. Failed image/PDF loads and visible note previews retry
+automatically with a delay between attempts, and retry when the app becomes active or
+protected files become available. Incomplete thumbnails are never stored as current previews;
+the previous preview stays visible with a retry indicator. Replacement imports wait for
+the cancelled operation's rollback before starting, so its cleanup cannot undo a newer import.
+The Files picker always includes a Cancel button, including on iPadOS 17. Document conversion
+keeps its temporary web renderer active until conversion finishes so sheet navigation can complete.
 
 ## Quality Priorities
 

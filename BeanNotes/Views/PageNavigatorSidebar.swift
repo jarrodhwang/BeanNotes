@@ -141,7 +141,8 @@ struct PageNavigatorSidebar: View {
                     page: page,
                     theme: theme,
                     showsThemeArtwork: showsThemeArtwork,
-                    previewRevision: previewRevision
+                    previewRevision: previewRevision,
+                    selectedPageID: selectedPageID
                 )
                 .frame(maxWidth: .infinity)
                 .frame(height: 164)
@@ -246,6 +247,7 @@ private struct PageNavigatorThumbnail: View {
     var theme: BeanNotesTheme
     var showsThemeArtwork: Bool
     var previewRevision: Int
+    var selectedPageID: UUID?
 
     @State private var image: UIImage?
 
@@ -280,16 +282,24 @@ private struct PageNavigatorThumbnail: View {
     private var previewRequestID: String {
         let contentRevision = NotePageRenderSnapshot.contentRevision(for: page)
         let appearance = colorScheme == .dark ? "dark" : "light"
-        return "\(page.id.uuidString)-\(contentRevision)-\(theme.rawValue)-\(showsThemeArtwork)-\(appearance)-\(previewRevision)"
+        // A drawing save only invalidates the selected page's preview. Including the
+        // global revision for every row would cancel and rerender all visible pages.
+        let pagePreviewRevision = page.id == selectedPageID ? previewRevision : 0
+        return "\(page.id.uuidString)-\(contentRevision)-\(theme.rawValue)-\(showsThemeArtwork)-\(appearance)-\(pagePreviewRevision)"
     }
 
     @MainActor
     private func loadPreview() async {
         if let storedURL = currentThumbnailURL() {
-            image = await ImageMemoryCache.shared.imageInBackground(
+            let cachedImage = await ImageMemoryCache.shared.imageInBackground(
                 at: storedURL,
                 maxPixelSize: 480
             )
+            guard !Task.isCancelled else { return }
+            if let cachedImage {
+                image = cachedImage
+                return
+            }
         }
 
         do {

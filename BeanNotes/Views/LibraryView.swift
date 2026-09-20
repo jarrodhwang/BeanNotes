@@ -51,9 +51,12 @@ struct LibraryView: View {
     @State private var isShowingFolderEditor = false
     @State private var isShowingDocumentImporter = false
     @State private var isImportingDocument = false
+    @State private var isAbsorbingSharedImports = false
+    @State private var hasPendingSharedImport = false
+    @State private var pendingOpenFileURLs: [URL] = []
     @State private var importProgress: Double?
     @State private var importProgressMessage = "Preparing import..."
-    @State private var importTask: Task<Void, Never>?
+    @State private var importTasks = ImportTaskController()
     @State private var folderBeingEdited: NotebookFolder?
     @State private var folderPendingDeletion: NotebookFolder?
     @State private var isShowingSettings = false
@@ -306,6 +309,14 @@ struct LibraryView: View {
         .onAppear {
             bootstrapLibrary()
         }
+        .onOpenURL { url in
+            if url.scheme == "beannotes", url.host == "shared-import" {
+                absorbSharedInbox()
+            } else if url.isFileURL {
+                pendingOpenFileURLs.append(url)
+                importPendingOpenFilesIfNeeded()
+            }
+        }
         .task(id: interruptibleVisitTaskID) {
             await runInterruptibleBeanVisitIfEligible()
         }
@@ -326,6 +337,9 @@ struct LibraryView: View {
             hideBeanVisit(animated: false)
             focusSessionStartedAt = Date()
             visitScheduleToken += 1
+            syncSharedFolderIndex()
+        }
+        .onChange(of: appThemeRaw) { _, _ in
             syncSharedFolderIndex()
         }
         .onChange(of: visitsEnabled) { _, isEnabled in
@@ -377,10 +391,8 @@ struct LibraryView: View {
                 allowedContentTypes: ImportExportService.supportedContentTypes,
                 allowsMultipleSelection: true,
                 onPick: { urls in
-                    importTask?.cancel()
-                    importTask = Task { @MainActor in
+                    startLibraryImport {
                         await importDocumentsAsNotes(urls)
-                        importTask = nil
                     }
                 },
                 onCancel: {}
@@ -497,13 +509,11 @@ struct LibraryView: View {
             createNoteFromClipboardImage: createNoteFromClipboardImage,
             importFiles: presentFileImporter,
             importPhotos: { photoItems in
-                importTask?.cancel()
-                importTask = Task { @MainActor in
+                startLibraryImport {
                     await importPhotosAsNotes(photoItems)
-                    importTask = nil
                 }
             },
-            isImportingDocument: isImportingDocument,
+            isImportingDocument: isImportingDocument || isAbsorbingSharedImports,
             importProgress: importProgress,
             importProgressMessage: importProgressMessage,
             cancelImport: cancelImport,
@@ -529,7 +539,7 @@ struct LibraryView: View {
                 selectedFolderID = inbox.id
                 syncSharedFolderIndex(including: [inbox])
             } else if selectedFolderID == nil {
-                selectedFolderID = selectedFolder?.id
+                selectedFolderID = DocumentImportPreferences.initialFolderID(available: sortedFolders.map(\.id))
                 syncSharedFolderIndex()
             }
 
@@ -540,14 +550,52 @@ struct LibraryView: View {
     }
 
     private func absorbSharedInbox() {
-        Task { @MainActor in
+        guard !isAbsorbingSharedImports, !isImportingDocument, !importTasks.isRunning else {
+            hasPendingSharedImport = true
+            return
+        }
+        startLibraryImport {
+            hasPendingSharedImport = false
+            isAbsorbingSharedImports = true
+            importProgressMessage = "Importing shared files…"
+            defer {
+                isAbsorbingSharedImports = false
+            }
             do {
-                try await ImportExportService().absorbSharedInbox(into: modelContext)
+                let result = try await ImportExportService().absorbSharedInbox(into: modelContext)
                 syncSharedFolderIndex()
+                for note in result.notesToOpen {
+                    selectedFolderID = note.folder?.id
+                    openNote(note)
+                }
+                if !result.failureMessages.isEmpty {
+                    errorMessage = "Some shared files could not be imported. Their originals were kept for recovery.\n"
+                        + result.failureMessages.joined(separator: "\n")
+                }
+            } catch is CancellationError {
+                // The complete request stays in the inbox for the next attempt.
+                hasPendingSharedImport = false
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func importPendingOpenFilesIfNeeded() {
+        guard !isImportingDocument, !isAbsorbingSharedImports, !importTasks.isRunning else { return }
+        guard !pendingOpenFileURLs.isEmpty else {
+            if hasPendingSharedImport { absorbSharedInbox() }
+            return
+        }
+        let urls = pendingOpenFileURLs
+        startLibraryImport {
+            pendingOpenFileURLs.removeFirst(urls.count)
+            await importDocumentsAsNotes(urls)
+        }
+    }
+
+    private func startLibraryImport(_ operation: @escaping @MainActor () async -> Void) {
+        importTasks.start(operation, onFinished: importPendingOpenFilesIfNeeded)
     }
 
     @discardableResult
@@ -875,12 +923,11 @@ struct LibraryView: View {
 
     private func cancelImport() {
         importProgressMessage = "Canceling import..."
-        importTask?.cancel()
+        importTasks.cancel()
     }
 
     private func importDocumentsAsNotes(_ urls: [URL]) async {
-        guard let selectedFolder else { return }
-
+        guard !urls.isEmpty else { return }
         isImportingDocument = true
         importProgress = 0
         importProgressMessage = "Preparing import..."
@@ -889,6 +936,14 @@ struct LibraryView: View {
             isImportingDocument = false
             importProgress = nil
             importProgressMessage = "Preparing import..."
+        }
+
+        let selectedFolder: NotebookFolder
+        do {
+            selectedFolder = try folderForNewContent()
+        } catch {
+            errorMessage = error.localizedDescription
+            return
         }
 
         let service = ImportExportService()
@@ -930,6 +985,7 @@ struct LibraryView: View {
             didCommitStaging = true
             try modelContext.save()
             syncSharedFolderIndex(including: [selectedFolder])
+            DocumentImportPreferences.remember(folderID: selectedFolder.id)
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
@@ -1004,6 +1060,7 @@ struct LibraryView: View {
             didCommitStaging = true
             try modelContext.save()
             syncSharedFolderIndex(including: [selectedFolder])
+            DocumentImportPreferences.remember(folderID: selectedFolder.id)
 
             if let firstImportedNote {
                 openNote(firstImportedNote)
@@ -1363,7 +1420,9 @@ struct LibraryView: View {
             // A concurrent theme change will let the newly visible note card
             // regenerate the appearance-specific thumbnail.
         } catch {
-            errorMessage = error.localizedDescription
+            // The visible note card owns preview recovery. Do not interrupt the
+            // library with a modal alert for replaceable, temporarily unreadable data.
+            thumbnailRefreshVersions[page.id, default: 0] &+= 1
         }
 
         guard !Task.isCancelled else { return }
@@ -2065,6 +2124,7 @@ private struct NotesCardGridView: View {
                 newNoteLabel
             }
             .buttonStyle(.borderedProminent)
+            .foregroundStyle(beanNotesTheme.accentForegroundColor)
             .controlSize(.large)
             .accessibilityLabel("Create note or paste image")
             .accessibilityHint("Choose a blank note or paste the clipboard image into a new note")
@@ -2073,6 +2133,7 @@ private struct NotesCardGridView: View {
                 newNoteLabel
             }
             .buttonStyle(.borderedProminent)
+            .foregroundStyle(beanNotesTheme.accentForegroundColor)
             .controlSize(.large)
             .keyboardShortcut("n", modifiers: [.command])
             .accessibilityLabel("Create note")
@@ -2214,6 +2275,7 @@ private struct NotesCardGridView: View {
                     Label("Create Note", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(beanNotesTheme.accentForegroundColor)
                 .controlSize(.large)
                 .padding(.top, 2)
             }
@@ -2243,6 +2305,7 @@ private struct NotesCardGridView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(beanNotesTheme.accentForegroundColor)
                 .controlSize(.large)
                 .padding(.top, 2)
             }
@@ -2413,6 +2476,10 @@ private struct NoteCardView: View {
     @State private var thumbnailImage: UIImage?
     @State private var thumbnailLoadTask: Task<Void, Never>?
     @State private var thumbnailLoadRequestID: UUID?
+    @State private var thumbnailRetryTask: Task<Void, Never>?
+    @State private var thumbnailRetryAttempt = 0
+    @State private var needsThumbnailRetry = false
+    @State private var isThumbnailVisible = false
 
     private let storage = LocalStorageService()
     private let thumbnailService = ThumbnailService()
@@ -2508,6 +2575,7 @@ private struct NoteCardView: View {
         .accessibilityLabel("\(note.title), \(note.pages.count) pages")
         .accessibilityValue(isSelecting ? (isSelected ? "Selected" : "Not selected") : "")
         .onAppear {
+            isThumbnailVisible = true
             loadThumbnail()
         }
         .onChange(of: beanNotesTheme) { _, _ in
@@ -2523,7 +2591,14 @@ private struct NoteCardView: View {
             loadThumbnail()
         }
         .onDisappear {
+            isThumbnailVisible = false
             cancelThumbnailLoad()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            retryUnavailableThumbnail()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            retryUnavailableThumbnail()
         }
     }
 
@@ -2555,6 +2630,16 @@ private struct NoteCardView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topLeading) {
+            if needsThumbnailRetry {
+                Label("Retrying preview…", systemImage: "arrow.clockwise")
+                    .font(.caption)
+                    .padding(6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(10)
+                    .accessibilityIdentifier("notePreviewRetrying")
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if note.pages.count > 1 {
                 Text("\(note.pages.count)")
@@ -2573,8 +2658,10 @@ private struct NoteCardView: View {
         page.pageSize.width / max(page.pageSize.height, 1)
     }
 
-    private func loadThumbnail(forceRefresh: Bool = false) {
+    private func loadThumbnail(forceRefresh: Bool = false, isRetry: Bool = false) {
         cancelThumbnailLoad()
+        if !isRetry { thumbnailRetryAttempt = 0 }
+        needsThumbnailRetry = false
 
         guard let page = note.sortedPages.first else {
             thumbnailImage = nil
@@ -2587,7 +2674,12 @@ private struct NoteCardView: View {
             theme: requestedTheme,
             forceRefresh: forceRefresh
         )
-        let fallbackImageURL = forceRefresh ? nil : fallbackFirstPageImageURL(for: page)
+        let previousPreviewURL = page.thumbnailFileName
+            .flatMap(LocalStorageService.normalizedThumbnailRelativePath)
+            .flatMap { try? storage.validatedURL(forRelativePath: $0) }
+        let fallbackImageURLs: [URL] = forceRefresh ? [] : [
+            previousPreviewURL, fallbackFirstPageImageURL(for: page)
+        ].compactMap { $0 }.filter { $0 != storedThumbnailURL }
 
         let requestID = UUID()
         thumbnailLoadRequestID = requestID
@@ -2614,7 +2706,7 @@ private struct NoteCardView: View {
                     }
                 }
 
-                if let fallbackImageURL {
+                for fallbackImageURL in fallbackImageURLs {
                     let image = await ImageMemoryCache.shared.imageInBackground(
                         at: fallbackImageURL,
                         maxPixelSize: 620
@@ -2623,6 +2715,7 @@ private struct NoteCardView: View {
                     guard thumbnailLoadRequestID == requestID else { return }
                     if let image {
                         thumbnailImage = image
+                        break
                     }
                 }
 
@@ -2645,9 +2738,8 @@ private struct NoteCardView: View {
                 // Keep the existing preview visible until the replacement has been
                 // decoded. A preference-only refresh must never turn a note card
                 // into an empty state while the background render is in flight.
-                if let generatedImage {
-                    thumbnailImage = generatedImage
-                }
+                guard let generatedImage else { throw CocoaError(.fileReadUnknown) }
+                thumbnailImage = generatedImage
                 try modelContext.save()
                 thumbnailService.retireThumbnailIfSuperseded(
                     previousThumbnailPath,
@@ -2657,14 +2749,37 @@ private struct NoteCardView: View {
                 return
             } catch {
                 guard thumbnailLoadRequestID == requestID else { return }
-                // A preview is derived data. Keep the prior image (or the page
-                // fallback) when a concurrent autosave temporarily prevents a render;
-                // the next refresh will retry without interrupting the note library.
+                // Keep the last usable preview and retry while this card is visible.
+                // A transient storage failure need not wait for a navigation change.
+                needsThumbnailRetry = true
+                scheduleThumbnailRetry(forceRefresh: forceRefresh)
             }
         }
     }
 
+    private func retryUnavailableThumbnail() {
+        guard isThumbnailVisible, needsThumbnailRetry else { return }
+        loadThumbnail(forceRefresh: true)
+    }
+
+    private func scheduleThumbnailRetry(forceRefresh: Bool) {
+        guard isThumbnailVisible, thumbnailRetryTask == nil else { return }
+        thumbnailRetryAttempt += 1
+        let delay = StorageRecoveryRetryPolicy.delay(forAttempt: thumbnailRetryAttempt)
+        thumbnailRetryTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+                try Task.checkCancellation()
+                thumbnailRetryTask = nil
+                guard isThumbnailVisible, needsThumbnailRetry else { return }
+                loadThumbnail(forceRefresh: forceRefresh, isRetry: true)
+            } catch { /* A newer request or an offscreen card owns further work. */ }
+        }
+    }
+
     private func cancelThumbnailLoad() {
+        thumbnailRetryTask?.cancel()
+        thumbnailRetryTask = nil
         thumbnailLoadTask?.cancel()
         thumbnailLoadTask = nil
         thumbnailLoadRequestID = nil

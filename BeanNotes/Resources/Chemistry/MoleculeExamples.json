@@ -1,0 +1,1139 @@
+[
+  {
+    "id": "water",
+    "name": "Water",
+    "cid": 962,
+    "detail": "A bent molecule. Oxygen is red; hydrogen is white.",
+    "formula": "H2O",
+    "showHydrogensInDrawing": true,
+    "conformerID": "000003C200000001",
+    "retrieved": "2026-09-20",
+    "atoms": [
+      {
+        "id": 1,
+        "element": "O",
+        "charge": 0,
+        "x2": 2.5369,
+        "y2": -0.155,
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      {
+        "id": 2,
+        "element": "H",
+        "charge": 0,
+        "x2": 3.0739,
+        "y2": 0.155,
+        "x": 0.2774,
+        "y": 0.8929,
+        "z": 0.2544
+      },
+      {
+        "id": 3,
+        "element": "H",
+        "charge": 0,
+        "x2": 2,
+        "y2": 0.155,
+        "x": 0.6068,
+        "y": -0.2383,
+        "z": -0.7169
+      }
+    ],
+    "bonds": [
+      {
+        "start": 1,
+        "end": 2,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 3,
+        "order": 1
+      }
+    ]
+  },
+  {
+    "id": "methane",
+    "name": "Methane",
+    "cid": 297,
+    "detail": "Four bonds spread around carbon in a tetrahedral arrangement.",
+    "formula": "CH4",
+    "showHydrogensInDrawing": true,
+    "conformerID": "0000012900000001",
+    "retrieved": "2026-09-20",
+    "atoms": [
+      {
+        "id": 1,
+        "element": "C",
+        "charge": 0,
+        "x2": 2.5369,
+        "y2": 0,
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      {
+        "id": 2,
+        "element": "H",
+        "charge": 0,
+        "x2": 3.0739,
+        "y2": 0.31,
+        "x": 0.5541,
+        "y": 0.7996,
+        "z": 0.4965
+      },
+      {
+        "id": 3,
+        "element": "H",
+        "charge": 0,
+        "x2": 2,
+        "y2": -0.31,
+        "x": 0.6833,
+        "y": -0.8134,
+        "z": -0.2536
+      },
+      {
+        "id": 4,
+        "element": "H",
+        "charge": 0,
+        "x2": 2.2269,
+        "y2": 0.5369,
+        "x": -0.7782,
+        "y": -0.3735,
+        "z": 0.6692
+      },
+      {
+        "id": 5,
+        "element": "H",
+        "charge": 0,
+        "x2": 2.8469,
+        "y2": -0.5369,
+        "x": -0.4593,
+        "y": 0.3874,
+        "z": -0.9121
+      }
+    ],
+    "bonds": [
+      {
+        "start": 1,
+        "end": 2,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 3,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 4,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 5,
+        "order": 1
+      }
+    ]
+  },
+  {
+    "id": "ammonia",
+    "name": "Ammonia",
+    "cid": 222,
+    "detail": "Three hydrogens form a pyramid around nitrogen.",
+    "formula": "H3N",
+    "showHydrogensInDrawing": true,
+    "conformerID": "000000DE00000001",
+    "retrieved": "2026-09-20",
+    "atoms": [
+      {
+        "id": 1,
+        "element": "N",
+        "charge": 0,
+        "x2": 2.5369,
+        "y2": 0.155,
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      {
+        "id": 2,
+        "element": "H",
+        "charge": 0,
+        "x2": 3.0739,
+        "y2": 0.465,
+        "x": -0.4417,
+        "y": 0.2906,
+        "z": 0.8711
+      },
+      {
+        "id": 3,
+        "element": "H",
+        "charge": 0,
+        "x2": 2,
+        "y2": 0.465,
+        "x": 0.7256,
+        "y": 0.6896,
+        "z": -0.1907
+      },
+      {
+        "id": 4,
+        "element": "H",
+        "charge": 0,
+        "x2": 2.5369,
+        "y2": -0.465,
+        "x": 0.4875,
+        "y": -0.8701,
+        "z": 0.2089
+      }
+    ],
+    "bonds": [
+      {
+        "start": 1,
+        "end": 2,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 3,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 4,
+        "order": 1
+      }
+    ]
+  },
+  {
+    "id": "carbon-dioxide",
+    "name": "Carbon dioxide",
+    "cid": 280,
+    "detail": "A linear molecule with two carbon\u2013oxygen double bonds.",
+    "formula": "CO2",
+    "showHydrogensInDrawing": false,
+    "conformerID": "0000011800000001",
+    "retrieved": "2026-09-20",
+    "atoms": [
+      {
+        "id": 1,
+        "element": "O",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": 0.5,
+        "x": -1.197,
+        "y": 0,
+        "z": 0
+      },
+      {
+        "id": 2,
+        "element": "O",
+        "charge": 0,
+        "x2": 2,
+        "y2": -0.5,
+        "x": 1.197,
+        "y": 0,
+        "z": 0
+      },
+      {
+        "id": 3,
+        "element": "C",
+        "charge": 0,
+        "x2": 2.866,
+        "y2": 0,
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    ],
+    "bonds": [
+      {
+        "start": 1,
+        "end": 3,
+        "order": 2
+      },
+      {
+        "start": 2,
+        "end": 3,
+        "order": 2
+      }
+    ]
+  },
+  {
+    "id": "ethanol",
+    "name": "Ethanol",
+    "cid": 702,
+    "detail": "An alcohol: the oxygen at the end carries a hydrogen.",
+    "formula": "C2H6O",
+    "showHydrogensInDrawing": false,
+    "conformerID": "000002BE00000001",
+    "retrieved": "2026-09-20",
+    "atoms": [
+      {
+        "id": 1,
+        "element": "O",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": 0.25,
+        "x": -1.1712,
+        "y": 0.2997,
+        "z": 0
+      },
+      {
+        "id": 2,
+        "element": "C",
+        "charge": 0,
+        "x2": 2.866,
+        "y2": -0.25,
+        "x": -0.0463,
+        "y": -0.5665,
+        "z": 0
+      },
+      {
+        "id": 3,
+        "element": "C",
+        "charge": 0,
+        "x2": 2,
+        "y2": 0.25,
+        "x": 1.2175,
+        "y": 0.2668,
+        "z": 0
+      },
+      {
+        "id": 4,
+        "element": "H",
+        "charge": 0,
+        "x2": 2.4675,
+        "y2": -0.7249,
+        "x": -0.0958,
+        "y": -1.212,
+        "z": 0.8819
+      },
+      {
+        "id": 5,
+        "element": "H",
+        "charge": 0,
+        "x2": 3.2646,
+        "y2": -0.7249,
+        "x": -0.0952,
+        "y": -1.1938,
+        "z": -0.8946
+      },
+      {
+        "id": 6,
+        "element": "H",
+        "charge": 0,
+        "x2": 2.31,
+        "y2": 0.7869,
+        "x": 2.105,
+        "y": -0.372,
+        "z": -0.0177
+      },
+      {
+        "id": 7,
+        "element": "H",
+        "charge": 0,
+        "x2": 1.4631,
+        "y2": 0.56,
+        "x": 1.2426,
+        "y": 0.9307,
+        "z": -0.8704
+      },
+      {
+        "id": 8,
+        "element": "H",
+        "charge": 0,
+        "x2": 1.69,
+        "y2": -0.2869,
+        "x": 1.2616,
+        "y": 0.9052,
+        "z": 0.8886
+      },
+      {
+        "id": 9,
+        "element": "H",
+        "charge": 0,
+        "x2": 4.269,
+        "y2": -0.06,
+        "x": -1.1291,
+        "y": 0.8364,
+        "z": 0.8099
+      }
+    ],
+    "bonds": [
+      {
+        "start": 1,
+        "end": 2,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 9,
+        "order": 1
+      },
+      {
+        "start": 2,
+        "end": 3,
+        "order": 1
+      },
+      {
+        "start": 2,
+        "end": 4,
+        "order": 1
+      },
+      {
+        "start": 2,
+        "end": 5,
+        "order": 1
+      },
+      {
+        "start": 3,
+        "end": 6,
+        "order": 1
+      },
+      {
+        "start": 3,
+        "end": 7,
+        "order": 1
+      },
+      {
+        "start": 3,
+        "end": 8,
+        "order": 1
+      }
+    ]
+  },
+  {
+    "id": "benzene",
+    "name": "Benzene",
+    "cid": 241,
+    "detail": "A flat, six-carbon aromatic ring. Alternating bonds are a drawing convention.",
+    "formula": "C6H6",
+    "showHydrogensInDrawing": false,
+    "conformerID": "000000F100000001",
+    "retrieved": "2026-09-20",
+    "atoms": [
+      {
+        "id": 1,
+        "element": "C",
+        "charge": 0,
+        "x2": 2.866,
+        "y2": 1,
+        "x": -1.2131,
+        "y": -0.6884,
+        "z": 0
+      },
+      {
+        "id": 2,
+        "element": "C",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": 0.5,
+        "x": -1.2028,
+        "y": 0.7064,
+        "z": 0.0001
+      },
+      {
+        "id": 3,
+        "element": "C",
+        "charge": 0,
+        "x2": 2,
+        "y2": 0.5,
+        "x": -0.0103,
+        "y": -1.3948,
+        "z": 0
+      },
+      {
+        "id": 4,
+        "element": "C",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": -0.5,
+        "x": 0.0104,
+        "y": 1.3948,
+        "z": -0.0001
+      },
+      {
+        "id": 5,
+        "element": "C",
+        "charge": 0,
+        "x2": 2,
+        "y2": -0.5,
+        "x": 1.2028,
+        "y": -0.7063,
+        "z": 0
+      },
+      {
+        "id": 6,
+        "element": "C",
+        "charge": 0,
+        "x2": 2.866,
+        "y2": -1,
+        "x": 1.2131,
+        "y": 0.6884,
+        "z": 0
+      },
+      {
+        "id": 7,
+        "element": "H",
+        "charge": 0,
+        "x2": 2.866,
+        "y2": 1.62,
+        "x": -2.1577,
+        "y": -1.2244,
+        "z": 0
+      },
+      {
+        "id": 8,
+        "element": "H",
+        "charge": 0,
+        "x2": 4.269,
+        "y2": 0.81,
+        "x": -2.1393,
+        "y": 1.2564,
+        "z": 0.0001
+      },
+      {
+        "id": 9,
+        "element": "H",
+        "charge": 0,
+        "x2": 1.4631,
+        "y2": 0.81,
+        "x": -0.0184,
+        "y": -2.4809,
+        "z": -0.0001
+      },
+      {
+        "id": 10,
+        "element": "H",
+        "charge": 0,
+        "x2": 4.269,
+        "y2": -0.81,
+        "x": 0.0184,
+        "y": 2.4808,
+        "z": 0
+      },
+      {
+        "id": 11,
+        "element": "H",
+        "charge": 0,
+        "x2": 1.4631,
+        "y2": -0.81,
+        "x": 2.1394,
+        "y": -1.2563,
+        "z": 0.0001
+      },
+      {
+        "id": 12,
+        "element": "H",
+        "charge": 0,
+        "x2": 2.866,
+        "y2": -1.62,
+        "x": 2.1577,
+        "y": 1.2245,
+        "z": 0
+      }
+    ],
+    "bonds": [
+      {
+        "start": 1,
+        "end": 2,
+        "order": 2
+      },
+      {
+        "start": 1,
+        "end": 3,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 7,
+        "order": 1
+      },
+      {
+        "start": 2,
+        "end": 4,
+        "order": 1
+      },
+      {
+        "start": 2,
+        "end": 8,
+        "order": 1
+      },
+      {
+        "start": 3,
+        "end": 5,
+        "order": 2
+      },
+      {
+        "start": 3,
+        "end": 9,
+        "order": 1
+      },
+      {
+        "start": 4,
+        "end": 6,
+        "order": 2
+      },
+      {
+        "start": 4,
+        "end": 10,
+        "order": 1
+      },
+      {
+        "start": 5,
+        "end": 6,
+        "order": 1
+      },
+      {
+        "start": 5,
+        "end": 11,
+        "order": 1
+      },
+      {
+        "start": 6,
+        "end": 12,
+        "order": 1
+      }
+    ]
+  },
+  {
+    "id": "glycine",
+    "name": "Glycine",
+    "cid": 750,
+    "detail": "The simplest amino acid. This example shows its neutral form; charge depends on conditions.",
+    "formula": "C2H5NO2",
+    "showHydrogensInDrawing": false,
+    "conformerID": "000002EE00000001",
+    "retrieved": "2026-09-20",
+    "atoms": [
+      {
+        "id": 1,
+        "element": "O",
+        "charge": 0,
+        "x2": 2.5369,
+        "y2": 0.75,
+        "x": -1.6487,
+        "y": 0.6571,
+        "z": -0.0104
+      },
+      {
+        "id": 2,
+        "element": "O",
+        "charge": 0,
+        "x2": 3.403,
+        "y2": -0.75,
+        "x": -0.4837,
+        "y": -1.2934,
+        "z": -0.0005
+      },
+      {
+        "id": 3,
+        "element": "N",
+        "charge": 0,
+        "x2": 5.135,
+        "y2": 0.25,
+        "x": 1.9006,
+        "y": -0.0812,
+        "z": -0.009
+      },
+      {
+        "id": 4,
+        "element": "C",
+        "charge": 0,
+        "x2": 4.269,
+        "y2": 0.75,
+        "x": 0.7341,
+        "y": 0.7867,
+        "z": 0.0079
+      },
+      {
+        "id": 5,
+        "element": "C",
+        "charge": 0,
+        "x2": 3.403,
+        "y2": 0.25,
+        "x": -0.5023,
+        "y": -0.0691,
+        "z": 0.012
+      },
+      {
+        "id": 6,
+        "element": "H",
+        "charge": 0,
+        "x2": 4.6675,
+        "y2": 1.225,
+        "x": 0.7326,
+        "y": 1.4215,
+        "z": -0.8824
+      },
+      {
+        "id": 7,
+        "element": "H",
+        "charge": 0,
+        "x2": 3.8705,
+        "y2": 1.225,
+        "x": 0.7464,
+        "y": 1.4088,
+        "z": 0.9069
+      },
+      {
+        "id": 8,
+        "element": "H",
+        "charge": 0,
+        "x2": 5.672,
+        "y2": 0.56,
+        "x": 1.8743,
+        "y": -0.6844,
+        "z": -0.8301
+      },
+      {
+        "id": 9,
+        "element": "H",
+        "charge": 0,
+        "x2": 5.135,
+        "y2": -0.37,
+        "x": 1.8887,
+        "y": -0.6969,
+        "z": 0.8031
+      },
+      {
+        "id": 10,
+        "element": "H",
+        "charge": 0,
+        "x2": 2,
+        "y2": 0.44,
+        "x": -2.4447,
+        "y": 0.0839,
+        "z": -0.026
+      }
+    ],
+    "bonds": [
+      {
+        "start": 1,
+        "end": 5,
+        "order": 1
+      },
+      {
+        "start": 1,
+        "end": 10,
+        "order": 1
+      },
+      {
+        "start": 2,
+        "end": 5,
+        "order": 2
+      },
+      {
+        "start": 3,
+        "end": 4,
+        "order": 1
+      },
+      {
+        "start": 3,
+        "end": 8,
+        "order": 1
+      },
+      {
+        "start": 3,
+        "end": 9,
+        "order": 1
+      },
+      {
+        "start": 4,
+        "end": 5,
+        "order": 1
+      },
+      {
+        "start": 4,
+        "end": 6,
+        "order": 1
+      },
+      {
+        "start": 4,
+        "end": 7,
+        "order": 1
+      }
+    ]
+  },
+  {
+    "id": "caffeine",
+    "name": "Caffeine",
+    "cid": 2519,
+    "detail": "Explore two connected rings and the nitrogen and oxygen atoms.",
+    "formula": "C8H10N4O2",
+    "showHydrogensInDrawing": false,
+    "conformerID": "000009D700000001",
+    "retrieved": "2026-09-20",
+    "atoms": [
+      {
+        "id": 1,
+        "element": "O",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": 2,
+        "x": 0.47,
+        "y": 2.5688,
+        "z": 0.0006
+      },
+      {
+        "id": 2,
+        "element": "O",
+        "charge": 0,
+        "x2": 2,
+        "y2": -1,
+        "x": -3.1271,
+        "y": -0.4436,
+        "z": -0.0003
+      },
+      {
+        "id": 3,
+        "element": "N",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": -1,
+        "x": -0.9686,
+        "y": -1.3125,
+        "z": 0
+      },
+      {
+        "id": 4,
+        "element": "N",
+        "charge": 0,
+        "x2": 5.5443,
+        "y2": 0.8047,
+        "x": 2.2182,
+        "y": 0.1412,
+        "z": -0.0003
+      },
+      {
+        "id": 5,
+        "element": "N",
+        "charge": 0,
+        "x2": 2.866,
+        "y2": 0.5,
+        "x": -1.3477,
+        "y": 1.0797,
+        "z": -0.0001
+      },
+      {
+        "id": 6,
+        "element": "N",
+        "charge": 0,
+        "x2": 5.5443,
+        "y2": -0.8047,
+        "x": 1.4119,
+        "y": -1.9372,
+        "z": 0.0002
+      },
+      {
+        "id": 7,
+        "element": "C",
+        "charge": 0,
+        "x2": 4.5981,
+        "y2": 0.5,
+        "x": 0.8579,
+        "y": 0.2592,
+        "z": -0.0008
+      },
+      {
+        "id": 8,
+        "element": "C",
+        "charge": 0,
+        "x2": 4.5981,
+        "y2": -0.5,
+        "x": 0.3897,
+        "y": -1.0264,
+        "z": -0.0004
+      },
+      {
+        "id": 9,
+        "element": "C",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": 1,
+        "x": 0.0307,
+        "y": 1.422,
+        "z": -0.0006
+      },
+      {
+        "id": 10,
+        "element": "C",
+        "charge": 0,
+        "x2": 2.866,
+        "y2": -0.5,
+        "x": -1.9061,
+        "y": -0.2495,
+        "z": -0.0004
+      },
+      {
+        "id": 11,
+        "element": "C",
+        "charge": 0,
+        "x2": 6.1279,
+        "y2": 0,
+        "x": 2.5032,
+        "y": -1.1998,
+        "z": 0.0003
+      },
+      {
+        "id": 12,
+        "element": "C",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": -2,
+        "x": -1.4276,
+        "y": -2.696,
+        "z": 0.0008
+      },
+      {
+        "id": 13,
+        "element": "C",
+        "charge": 0,
+        "x2": 5.855,
+        "y2": 1.7553,
+        "x": 3.1926,
+        "y": 1.2061,
+        "z": 0.0003
+      },
+      {
+        "id": 14,
+        "element": "C",
+        "charge": 0,
+        "x2": 2,
+        "y2": 1,
+        "x": -2.2969,
+        "y": 2.1881,
+        "z": 0.0007
+      },
+      {
+        "id": 15,
+        "element": "H",
+        "charge": 0,
+        "x2": 6.7479,
+        "y2": 0,
+        "x": 3.5163,
+        "y": -1.5787,
+        "z": 0.0008
+      },
+      {
+        "id": 16,
+        "element": "H",
+        "charge": 0,
+        "x2": 3.1121,
+        "y2": -2,
+        "x": -1.0451,
+        "y": -3.1973,
+        "z": -0.8937
+      },
+      {
+        "id": 17,
+        "element": "H",
+        "charge": 0,
+        "x2": 3.7321,
+        "y2": -2.62,
+        "x": -2.5186,
+        "y": -2.7596,
+        "z": 0.0011
+      },
+      {
+        "id": 18,
+        "element": "H",
+        "charge": 0,
+        "x2": 4.3521,
+        "y2": -2,
+        "x": -1.0447,
+        "y": -3.1963,
+        "z": 0.8957
+      },
+      {
+        "id": 19,
+        "element": "H",
+        "charge": 0,
+        "x2": 6.4443,
+        "y2": 1.5626,
+        "x": 4.1992,
+        "y": 0.7801,
+        "z": 0.0002
+      },
+      {
+        "id": 20,
+        "element": "H",
+        "charge": 0,
+        "x2": 6.0476,
+        "y2": 2.3446,
+        "x": 3.0468,
+        "y": 1.8092,
+        "z": -0.8992
+      },
+      {
+        "id": 21,
+        "element": "H",
+        "charge": 0,
+        "x2": 5.2656,
+        "y2": 1.9479,
+        "x": 3.0466,
+        "y": 1.8083,
+        "z": 0.9004
+      },
+      {
+        "id": 22,
+        "element": "H",
+        "charge": 0,
+        "x2": 2.31,
+        "y2": 1.5369,
+        "x": -1.8087,
+        "y": 3.1651,
+        "z": -0.0003
+      },
+      {
+        "id": 23,
+        "element": "H",
+        "charge": 0,
+        "x2": 1.4631,
+        "y2": 1.31,
+        "x": -2.9322,
+        "y": 2.1027,
+        "z": 0.8881
+      },
+      {
+        "id": 24,
+        "element": "H",
+        "charge": 0,
+        "x2": 1.69,
+        "y2": 0.4631,
+        "x": -2.9346,
+        "y": 2.1021,
+        "z": -0.8849
+      }
+    ],
+    "bonds": [
+      {
+        "start": 1,
+        "end": 9,
+        "order": 2
+      },
+      {
+        "start": 2,
+        "end": 10,
+        "order": 2
+      },
+      {
+        "start": 3,
+        "end": 8,
+        "order": 1
+      },
+      {
+        "start": 3,
+        "end": 10,
+        "order": 1
+      },
+      {
+        "start": 3,
+        "end": 12,
+        "order": 1
+      },
+      {
+        "start": 4,
+        "end": 7,
+        "order": 1
+      },
+      {
+        "start": 4,
+        "end": 11,
+        "order": 1
+      },
+      {
+        "start": 4,
+        "end": 13,
+        "order": 1
+      },
+      {
+        "start": 5,
+        "end": 9,
+        "order": 1
+      },
+      {
+        "start": 5,
+        "end": 10,
+        "order": 1
+      },
+      {
+        "start": 5,
+        "end": 14,
+        "order": 1
+      },
+      {
+        "start": 6,
+        "end": 8,
+        "order": 1
+      },
+      {
+        "start": 6,
+        "end": 11,
+        "order": 2
+      },
+      {
+        "start": 7,
+        "end": 8,
+        "order": 2
+      },
+      {
+        "start": 7,
+        "end": 9,
+        "order": 1
+      },
+      {
+        "start": 11,
+        "end": 15,
+        "order": 1
+      },
+      {
+        "start": 12,
+        "end": 16,
+        "order": 1
+      },
+      {
+        "start": 12,
+        "end": 17,
+        "order": 1
+      },
+      {
+        "start": 12,
+        "end": 18,
+        "order": 1
+      },
+      {
+        "start": 13,
+        "end": 19,
+        "order": 1
+      },
+      {
+        "start": 13,
+        "end": 20,
+        "order": 1
+      },
+      {
+        "start": 13,
+        "end": 21,
+        "order": 1
+      },
+      {
+        "start": 14,
+        "end": 22,
+        "order": 1
+      },
+      {
+        "start": 14,
+        "end": 23,
+        "order": 1
+      },
+      {
+        "start": 14,
+        "end": 24,
+        "order": 1
+      }
+    ]
+  }
+]

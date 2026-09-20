@@ -75,6 +75,16 @@ nonisolated private final class StorageOperationResultGate<Value: Sendable>: @un
     }
 }
 
+/// Retry only failed content, with bounded frequency after the initial recovery window.
+enum StorageRecoveryRetryPolicy {
+    nonisolated static func delay(forAttempt attempt: Int) -> TimeInterval {
+        let initialDelays: [TimeInterval] = [0.25, 0.75, 1.5, 3]
+        guard attempt > 0 else { return initialDelays[0] }
+        guard attempt <= initialDelays.count else { return 10 }
+        return initialDelays[attempt - 1]
+    }
+}
+
 enum StorageOperationRunner {
     nonisolated static func run<Value: Sendable>(
         priority: TaskPriority = .utility,
@@ -1272,14 +1282,19 @@ extension String {
             sanitized = "BeanNotes-File"
         }
 
-        let fileURL = URL(fileURLWithPath: sanitized)
-        let pathExtension = fileURL.pathExtension
-        let baseName = fileURL.deletingPathExtension().lastPathComponent
+        // Parse the name before constructing a file URL. Older Foundation versions
+        // lose the extension when the original component exceeds filesystem limits.
+        let fileName = sanitized as NSString
+        let pathExtension = fileName.pathExtension
+        let baseName = fileName.deletingPathExtension
         guard !pathExtension.isEmpty else {
             return baseName.utf8Prefix(maxByteCount: maximumUTF8ByteCount)
         }
 
         let extensionSuffix = ".\(pathExtension)"
+        guard extensionSuffix.utf8.count <= maximumUTF8ByteCount - "BeanNotes-File".utf8.count else {
+            return sanitized.utf8Prefix(maxByteCount: maximumUTF8ByteCount)
+        }
         let baseBudget = max(1, maximumUTF8ByteCount - extensionSuffix.utf8.count)
         return "\(baseName.utf8Prefix(maxByteCount: baseBudget))\(extensionSuffix)"
     }

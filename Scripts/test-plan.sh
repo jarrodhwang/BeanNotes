@@ -14,6 +14,13 @@ COMMON_ARGS=(
 )
 
 SLOW_IMPORT_TESTS=(
+  "BeanNotesTests/PowerPointImportTests"
+  "BeanNotesTests/DocumentImportTests/spreadsheetsIncludeRowsBeyondTheFirstScreen()"
+  "BeanNotesTests/DocumentImportTests/commonImageExtensionsCreateFullImagePages(fileExtension:)"
+  "BeanNotesTests/DocumentImportTests/dataOnlyImageProvidersKeepFileNamesAndImageBytes(typeIdentifier:)"
+  "BeanNotesTests/DocumentImportTests/printableDocumentsPreserveEveryPageAndOriginal(fileExtension:)"
+  "BeanNotesTests/DocumentImportTests/sharedImportOpensOnlyWhenRequested(openAfterImport:)"
+  "BeanNotesTests/DocumentImportTests/longTextImportDoesNotTruncateAfterPreviewLines()"
   "BeanNotesTests/BeanNotesTests/nativePDFBackgroundUsesOneVectorPageAndInvalidatesReplacedFiles()"
   "BeanNotesTests/BeanNotesTests/thumbnailGenerationStoresFirstPagePreview()"
   "BeanNotesTests/BeanNotesTests/pdfImportCreatesAnnotatablePages()"
@@ -39,6 +46,9 @@ run_ui() {
   xcodebuild test "${COMMON_ARGS[@]}" \
     -skip-testing:BeanNotesTests \
     -only-testing:BeanNotesUITests/BeanNotesUITests \
+    -only-testing:BeanNotesUITests/AppearanceUITests \
+    -only-testing:BeanNotesUITests/ChemistryUITests \
+    -only-testing:BeanNotesUITests/DocumentImportUITests \
     -only-testing:BeanNotesUITests/BeanNotesUITestsLaunchTests
 }
 

@@ -111,6 +111,7 @@ private struct WelcomeToBeanNotesView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(theme.accentColor)
+                    .foregroundStyle(theme.accentForegroundColor)
                     .padding(.top, 2)
                 }
                 .padding(.horizontal, horizontalPadding(for: proxy.size.width))
@@ -145,7 +146,7 @@ private struct WelcomeToBeanNotesView: View {
             .clipShape(RoundedRectangle(cornerRadius: min(size * 0.24, 36), style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: min(size * 0.24, 36), style: .continuous)
-                    .stroke(.white.opacity(0.72), lineWidth: 2)
+                    .stroke(theme.artworkBorderColor.opacity(0.72), lineWidth: 2)
             }
             .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
             .accessibilityLabel(accessibilityLabel)

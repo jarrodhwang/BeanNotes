@@ -35,6 +35,14 @@ enum AppTheme: String, CaseIterable, Identifiable {
             .dark
         }
     }
+
+    var interfaceStyle: UIUserInterfaceStyle {
+        switch self {
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
+        }
+    }
 }
 
 enum BeanNotesTheme: String, CaseIterable, Identifiable {
@@ -382,7 +390,23 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
     }
 
     var accentColor: Color {
-        adaptiveColor(light: accentHex, dark: accentDarkHex)
+        Color(uiColor: accentUIColor)
+    }
+
+    var accentUIColor: UIColor {
+        adaptiveUIColor(light: accentHex, dark: accentDarkHex)
+    }
+
+    /// Bright dark-mode accents need dark text, including in the share extension.
+    var accentForegroundUIColor: UIColor {
+        let accent = accentUIColor
+        return UIColor { traits in
+            accent.resolvedColor(with: traits).contrastingForeground
+        }
+    }
+
+    var accentForegroundColor: Color {
+        Color(uiColor: accentForegroundUIColor)
     }
 
     var secondaryAccentColor: Color {
@@ -390,7 +414,11 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
     }
 
     var appBackground: Color {
-        adaptiveColor(light: appBackgroundHex, dark: appBackgroundDarkHex)
+        Color(uiColor: appBackgroundUIColor)
+    }
+
+    var appBackgroundUIColor: UIColor {
+        adaptiveUIColor(light: appBackgroundHex, dark: appBackgroundDarkHex)
     }
 
     var sidebarBackground: Color {
@@ -398,11 +426,23 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
     }
 
     var cardBackground: Color {
-        adaptiveColor(light: cardBackgroundHex, dark: cardBackgroundDarkHex)
+        Color(uiColor: cardBackgroundUIColor)
+    }
+
+    var cardBackgroundUIColor: UIColor {
+        adaptiveUIColor(light: cardBackgroundHex, dark: cardBackgroundDarkHex)
     }
 
     var previewBackground: Color {
-        adaptiveColor(light: previewBackgroundHex, dark: previewBackgroundDarkHex)
+        Color(uiColor: previewBackgroundUIColor)
+    }
+
+    var previewBackgroundUIColor: UIColor {
+        adaptiveUIColor(light: previewBackgroundHex, dark: previewBackgroundDarkHex)
+    }
+
+    var artworkBorderColor: Color {
+        adaptiveColor(light: "#FFFFFF", dark: previewBackgroundDarkHex)
     }
 
     static func currentFromDefaults(_ defaults: UserDefaults = .standard) -> BeanNotesTheme {
@@ -477,11 +517,15 @@ enum BeanNotesTheme: String, CaseIterable, Identifiable {
     }
 
     private func adaptiveColor(light: String, dark: String) -> Color {
-        Color(
-            UIColor { traits in
-                traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
-            }
-        )
+        Color(uiColor: adaptiveUIColor(light: light, dark: dark))
+    }
+
+    private func adaptiveUIColor(light: String, dark: String) -> UIColor {
+        let lightColor = UIColor(hex: light)
+        let darkColor = UIColor(hex: dark)
+        return UIColor { traits in
+            traits.userInterfaceStyle == .dark ? darkColor : lightColor
+        }
     }
 }
 

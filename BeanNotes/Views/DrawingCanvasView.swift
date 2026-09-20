@@ -2913,6 +2913,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             updateRasterScale(force: true)
         }
 
+        func retryUnavailableImages() {
+            for pageView in pageViews.values { pageView.retryUnavailableImages() }
+            continuousPageView?.retryUnavailableImages()
+        }
+
         func cancelPendingRenderingWork() {
             DrawingStorageService.cancelPrefetches(scopeID: drawingPrefetchScopeID)
             lastDrawingPrefetchSignature = nil
@@ -5117,6 +5122,10 @@ struct DrawingCanvasView: UIViewRepresentable {
             pageActionLongPressGesture?.isEnabled = !enabled
             eraserScopeGesture.isEnabled = !enabled
             canvasView.drawingGestureRecognizer.isEnabled = !enabled && !usesCustomEraserInput
+        }
+
+        func retryUnavailableImages() {
+            for view in imageViews.values { view.retryUnavailableContent() }
         }
 
         func setImageLoadingEnabled(_ enabled: Bool) {
@@ -8010,6 +8019,8 @@ struct DrawingCanvasView: UIViewRepresentable {
         private var desiredRasterSourceKey: RasterSourceKey?
         private var imageLoadRequestID: UUID?
         private var imageLoadToken: ImageLoadToken?
+        private var contentRetryWorkItem: DispatchWorkItem?
+        private var contentRetryAttempt = 0
         private var currentRenderScale: CGFloat = 0
         private var isImageLoadingEnabled = true
         private var isDocumentTraversalActive = false
@@ -8018,6 +8029,10 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         var isRasterImageLoaded: Bool {
             imageView.image != nil
+        }
+
+        var hasPendingContentRetryForTesting: Bool {
+            contentRetryWorkItem != nil
         }
 
         var isRasterBackingPresentedForTesting: Bool {
@@ -8083,6 +8098,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         deinit {
+            cancelContentRetry()
             cancelPendingImageLoad()
         }
 
@@ -8211,6 +8227,8 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard isImageLoadingEnabled != enabled else { return }
 
             isImageLoadingEnabled = enabled
+
+            if !enabled { cancelContentRetry() }
 
             if vectorPDFURL != nil, vectorPDFPageIndex != nil {
                 if enabled {
@@ -8341,7 +8359,9 @@ struct DrawingCanvasView: UIViewRepresentable {
                         self.loadedFileIdentity = nil
                         self.loadedRasterBudget = nil
                         self.loadedRasterSourceKey = nil
+                        self.scheduleContentRetry()
                     } else {
+                        self.cancelContentRetry()
                         self.loadedStoredFileName = storedFileName
                         self.loadedFileIdentity = fileIdentity
                         self.loadedRasterBudget = budget
@@ -8353,6 +8373,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         func releaseImage(evictCachedVariants: Bool = false) {
+            cancelContentRetry()
             releaseRasterImage(
                 evictCachedVariants: evictCachedVariants,
                 updatesVectorVisibility: false
@@ -8422,9 +8443,46 @@ struct DrawingCanvasView: UIViewRepresentable {
         private func configureNativePDFViewIfNeeded() {
             guard let vectorPDFURL, let vectorPDFPageIndex else { return }
             let view = ensureNativePDFView()
-            _ = view.configure(url: vectorPDFURL, pageIndex: vectorPDFPageIndex)
+            if view.configure(url: vectorPDFURL, pageIndex: vectorPDFPageIndex) {
+                cancelContentRetry()
+            } else {
+                scheduleContentRetry()
+            }
             updateVectorPDFInteractionRendering()
             updatePDFSurfaceVisibility()
+        }
+
+        func retryUnavailableContent() {
+            guard isImageLoadingEnabled else { return }
+            if vectorPDFURL != nil {
+                guard nativePDFPageView?.document == nil else { return }
+                configureNativePDFViewIfNeeded()
+            } else if imageView.image == nil, imageLoadToken == nil,
+                      let imageURL, let attachment {
+                // A failed read may have captured a missing-file identity. Refresh it
+                // before decoding the restored file, without disturbing loaded images.
+                imageFileIdentity = ImageMemoryCache.shared.fileIdentity(for: imageURL)
+                loadImageIfNeeded(from: imageURL, attachment: attachment)
+            }
+        }
+
+        private func scheduleContentRetry() {
+            guard isImageLoadingEnabled, contentRetryWorkItem == nil else { return }
+            contentRetryAttempt += 1
+            let delay = StorageRecoveryRetryPolicy.delay(forAttempt: contentRetryAttempt)
+            let retry = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.contentRetryWorkItem = nil
+                self.retryUnavailableContent()
+            }
+            contentRetryWorkItem = retry
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: retry)
+        }
+
+        private func cancelContentRetry() {
+            contentRetryWorkItem?.cancel()
+            contentRetryWorkItem = nil
+            contentRetryAttempt = 0
         }
 
         private func updateVectorPDFInteractionRendering() {
@@ -9079,10 +9137,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         }
 
         static func drawingLoadRetryDelay(forAttempt attempt: Int) -> TimeInterval {
-            let initialDelays: [TimeInterval] = [0.25, 0.75, 1.5, 3]
-            guard attempt > 0 else { return initialDelays[0] }
-            guard attempt <= initialDelays.count else { return 10 }
-            return initialDelays[attempt - 1]
+            StorageRecoveryRetryPolicy.delay(forAttempt: attempt)
         }
 
         private func retryUnavailableDrawingLoad(
@@ -9127,6 +9182,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     canvasView.drawing = drawing
                     canvasView.delegate = delegate
                     unavailableDrawingErrorsByPageID[pageID] = nil
+                    recordLoadedDrawingBaselineIfClean(page: page, result: loadResult)
                     resolved = true
                 case .missing:
                     // A file that was previously present but unreadable disappearing
@@ -10067,7 +10123,14 @@ struct DrawingCanvasView: UIViewRepresentable {
                     object: nil,
                     queue: .main
                 ) { [weak self] _ in
-                    self?.restartUnavailableDrawingLoadRetries()
+                    self?.resumeStorageRecovery()
+                },
+                center.addObserver(
+                    forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.resumeStorageRecovery()
                 }
             ]
         }
@@ -10076,7 +10139,11 @@ struct DrawingCanvasView: UIViewRepresentable {
             containerView?.reduceMemoryFootprint()
         }
 
-        private func restartUnavailableDrawingLoadRetries() {
+        private func resumeStorageRecovery() {
+            containerView?.retryUnavailableImages()
+            if !dirtyPageIDs.isEmpty {
+                saveAllCanvases(synchronously: false, force: false)
+            }
             for (canvasID, pageIDs) in registeredPageIDsByCanvasID
             where pageIDs.contains(where: { unavailableDrawingErrorsByPageID[$0] != nil }) {
                 guard let canvasView = canvasView(for: canvasID) else { continue }

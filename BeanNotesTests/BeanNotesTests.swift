@@ -2190,6 +2190,32 @@ struct BeanNotesTests {
         #expect(loadedDrawing.dataRepresentation() == expectedDrawing.dataRepresentation())
     }
 
+    @Test func restoredDrawingSupersedesAnEarlierMissingRead() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesRestoredDrawing-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let service = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0)
+        guard case .missing = service.loadDrawingResult(for: page) else {
+            Issue.record("The initial file should be absent.")
+            return
+        }
+        // File restoration does not go through the app's drawing write cache.
+        let data = makeTestDrawing(color: .systemBlue, xOffset: 40).dataRepresentation()
+        try data.write(to: service.drawingURL(for: page), options: .atomic)
+        guard case let .loaded(drawing, archive) = service.loadDrawingResult(for: page) else {
+            Issue.record("An explicit load must recheck disk after an earlier missing result.")
+            return
+        }
+        #expect(archive == data)
+        #expect(drawing.strokes.count == 1)
+    }
+
     @Test func missingDrawingOpensAnEditableEmptyCanvas() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesMissingDrawingCanvas-\(UUID().uuidString)", isDirectory: true)
@@ -8353,6 +8379,66 @@ struct BeanNotesTests {
         DrawingCanvasView.dismantleUIView(container, coordinator: coordinator)
     }
 
+    @Test(arguments: [NoteEditorPageFlowMode.singlePage, .continuous, .seamless])
+    func drawingRetryRecoversAfterFileDisappearsAndReturns(mode: NoteEditorPageFlowMode) async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesTransientDrawing-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let service = DrawingStorageService(storage: storage)
+        let page = NotePage(pageOrder: 0)
+        let url = try service.drawingURL(for: page)
+        try Data("preserve this unreadable drawing".utf8).write(to: url)
+        #expect(service.loadDrawingResult(for: page).error != nil)
+        let parent = makeDrawingCanvasView(page: page, drawingStorage: service)
+        let coordinator = DrawingCanvasView.Coordinator(parent: parent)
+        let container = DrawingCanvasView.CanvasContainerView(
+            frame: CGRect(x: 0, y: 0, width: 700, height: 900)
+        )
+        coordinator.containerView = container
+        container.configure(
+            pages: [page], selectedPageID: page.id, pageFlowMode: mode,
+            inputMode: .pencilOnly, renderQuality: .balanced,
+            drawingStorage: service, coordinator: coordinator
+        )
+        defer { DrawingCanvasView.dismantleUIView(container, coordinator: coordinator) }
+        let canvas = try #require(container.activeCanvasView)
+        #expect(!canvas.isUserInteractionEnabled)
+        try FileManager.default.removeItem(at: url)
+        let missingDeadline = ContinuousClock.now + .seconds(2)
+        while !DrawingStorageService.isKnownMissingForTesting(fileName: page.drawingFileName, rootURL: rootURL),
+              ContinuousClock.now < missingDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(DrawingStorageService.isKnownMissingForTesting(fileName: page.drawingFileName, rootURL: rootURL))
+        #expect(!canvas.isUserInteractionEnabled)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+
+        let restored = makeTestDrawing(color: .systemGreen, xOffset: 70)
+        let archive = restored.dataRepresentation()
+        try archive.write(to: url, options: .atomic)
+        let recoveryDeadline = ContinuousClock.now + .seconds(4)
+        while !canvas.isUserInteractionEnabled, ContinuousClock.now < recoveryDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(canvas.isUserInteractionEnabled)
+        #expect(canvas.drawing.strokes.count == restored.strokes.count)
+        #expect(coordinator.drawingLoadFailure(for: [page.id]) == nil)
+        #expect(try Data(contentsOf: url) == archive)
+
+        // Recovery must also restore the save baseline and accept the next edit.
+        let edited = makeTestDrawing(color: .systemPurple, xOffset: 150)
+        canvas.drawing = edited
+        coordinator.canvasViewDrawingDidChange(canvas)
+        coordinator.saveAllCanvases(synchronously: true, force: true)
+        let saved = try PKDrawing(data: Data(contentsOf: url))
+        #expect(abs(saved.bounds.midX - edited.bounds.midX) < 0.5)
+    }
+
     @Test func unreadableDrawingStateSurvivesMissingFileCanvasRebuild() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("BeanNotesDrawingLoadRebuild-\(UUID().uuidString)", isDirectory: true)
@@ -8627,6 +8713,22 @@ struct BeanNotesTests {
         #expect(cachedDrawing.strokes.count == storedDrawing.strokes.count)
         #expect(abs(cachedDrawing.bounds.midX - storedDrawing.bounds.midX) < 0.5)
         #expect(abs(cachedDrawing.bounds.midX - unsavedDrawing.bounds.midX) > 20)
+
+        // Exhaust the pending save while storage is still unavailable, then verify
+        // an unlock retries the retained ink without another stroke or navigation.
+        coordinator.saveAllCanvases(synchronously: true, force: true)
+        #expect(coordinator.pendingSaves[page.id] == nil)
+        try FileManager.default.removeItem(at: drawingsURL)
+        try FileManager.default.createDirectory(at: drawingsURL, withIntermediateDirectories: true)
+        NotificationCenter.default.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
+        let drawingURL = try drawingStorage.drawingURL(for: page)
+        let recoveryDeadline = ContinuousClock.now + .seconds(2)
+        while coordinator.hasPendingDrawingWork(for: page.id), ContinuousClock.now < recoveryDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let recovered = try PKDrawing(data: Data(contentsOf: drawingURL))
+        #expect(abs(recovered.bounds.midX - canvasView.drawing.bounds.midX) < 0.5)
+        #expect(!coordinator.hasPendingDrawingWork(for: page.id))
         coordinator.unregister(
             canvasView: canvasView,
             page: page,
@@ -11697,6 +11799,59 @@ struct BeanNotesTests {
         #expect(restoredPalette[duplicatedIndex] == originalPalette[0])
     }
 
+    @Test(arguments: [false, true])
+    func thumbnailFailurePreservesPreviousPreviewAndRecovers(background: Bool) async throws {
+        let context = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesPreviewRecovery-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            DrawingStorageService.clearCache()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let service = ThumbnailService(storage: storage, drawingStorage: DrawingStorageService(storage: storage))
+        let page = NotePage(pageOrder: 0, width: 120, height: 160)
+        context.insert(page)
+        try context.save()
+        let previousURL = try service.generateThumbnail(for: page)
+        let previousPath = page.thumbnailFileName
+        let previousBytes = try Data(contentsOf: previousURL)
+        let attachment = Attachment(
+            kind: .image, displayName: "Restored image", originalFileName: "restored.png",
+            storedFileName: "Imports/restored.png", contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png", x: 0, y: 0, width: 120, height: 160
+        )
+        page.attachments.append(attachment)
+        page.touch()
+        try context.save()
+        var failed = false
+        do {
+            if background {
+                _ = try await service.generateThumbnailInBackground(for: page)
+            } else {
+                _ = try service.generateThumbnail(for: page)
+            }
+        } catch { failed = true }
+        #expect(failed)
+        #expect(page.thumbnailFileName == previousPath)
+        #expect(try Data(contentsOf: previousURL) == previousBytes)
+
+        let image = UIGraphicsImageRenderer(size: page.pageSize).image { renderer in
+            UIColor.systemBlue.setFill()
+            renderer.fill(CGRect(origin: .zero, size: page.pageSize))
+        }
+        try #require(image.pngData()).write(to: storage.url(forRelativePath: attachment.storedFileName))
+        let restoredURL: URL
+        if background {
+            restoredURL = try await service.generateThumbnailInBackground(for: page)
+        } else {
+            restoredURL = try service.generateThumbnail(for: page)
+        }
+        #expect(try Data(contentsOf: restoredURL) != previousBytes)
+        #expect(page.thumbnailFileName != previousPath)
+    }
+
     @Test @MainActor func thumbnailGenerationStoresFirstPagePreview() throws {
         let context = try makeInMemoryModelContext()
         let rootURL = FileManager.default.temporaryDirectory
@@ -12174,11 +12329,15 @@ struct BeanNotesTests {
         #expect(beanFileName != blueberryFileName)
         #expect(beanFileName != changedRevisionFileName)
         #expect(beanFileName != darkBeanFileName)
-        #expect(beanFileName.hasSuffix("-bean-off-light-v11.jpg"))
-        #expect(darkBeanFileName.hasSuffix("-bean-off-dark-v11.jpg"))
-        #expect(beanArtworkFileName.hasSuffix("-bean-on-light-v11.jpg"))
-        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-light-v11.jpg"))
-        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-light-v11.jpg"))
+        #expect(beanFileName.hasSuffix("-bean-off-light-v12.jpg"))
+        #expect(darkBeanFileName.hasSuffix("-bean-off-dark-v12.jpg"))
+        #expect(beanArtworkFileName.hasSuffix("-bean-on-light-v12.jpg"))
+        #expect(blueberryFileName.hasSuffix("-blueberry-bean-off-light-v12.jpg"))
+        #expect(blueberryArtworkFileName.hasSuffix("-blueberry-bean-on-light-v12.jpg"))
+        #expect(!ThumbnailService.isCurrentThumbnailPath(
+            "Thumbnails/\(pageID.uuidString)-\(contentRevision)-bean-bean-off-light-v11.jpg",
+            pageID: pageID, theme: .bean, contentRevision: contentRevision
+        ))
         #expect(ThumbnailService.isCurrentThumbnailPath(
             "Thumbnails/\(beanFileName)",
             pageID: pageID,
@@ -12687,6 +12846,60 @@ struct BeanNotesTests {
         resizingView.layoutIfNeeded()
         let resizedScale = resizingView.layer.rasterizationScale
         #expect(2_040 * 2_040 * resizedScale * resizedScale <= 4_000_001)
+    }
+
+    @Test(arguments: [false, true])
+    func attachmentContentAutomaticallyRecoversWhenFileReturns(isPDF: Bool) async throws {
+        let context = try makeInMemoryModelContext()
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BeanNotesAttachmentRecovery-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ImageMemoryCache.shared.removeAllImages()
+            DrawingCanvasView.NativePDFPageView.removeAllCachedDocuments()
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let storage = LocalStorageService(rootURL: rootURL)
+        try storage.prepareDirectories()
+        let attachment = Attachment(
+            kind: .image, displayName: "Delayed attachment", originalFileName: "restored.png",
+            storedFileName: "Imports/restored.png", contentTypeIdentifier: UTType.png.identifier,
+            fileExtension: "png", width: 120, height: 160
+        )
+        context.insert(attachment)
+        let url = storage.url(forRelativePath: isPDF ? "Imports/restored.pdf" : attachment.storedFileName)
+        let view = DrawingCanvasView.AttachmentImageContainerView()
+        view.configure(
+            attachment: attachment, storage: storage, pageSize: CGSize(width: 120, height: 160),
+            vectorSourceURL: isPDF ? url : nil, vectorPageIndex: isPDF ? 0 : nil, changed: {}
+        )
+        let failureDeadline = ContinuousClock.now + .seconds(2)
+        while !view.hasPendingContentRetryForTesting, ContinuousClock.now < failureDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(view.hasPendingContentRetryForTesting)
+        view.setImageLoadingEnabled(false)
+        #expect(!view.hasPendingContentRetryForTesting)
+        if isPDF {
+            try writeMinimalPDF(to: url, mediaBox: CGRect(x: 0, y: 0, width: 120, height: 160), rotationAngle: 0)
+        } else {
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 120, height: 160)).image { renderer in
+                UIColor.systemBlue.setFill()
+                renderer.fill(CGRect(x: 0, y: 0, width: 120, height: 160))
+            }
+            try #require(image.pngData()).write(to: url)
+        }
+        // Re-enable before restoration below to exercise the timer, not reconfiguration.
+        let data = try Data(contentsOf: url)
+        try FileManager.default.removeItem(at: url)
+        view.setImageLoadingEnabled(true)
+        try data.write(to: url)
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !(isPDF ? view.isVectorPDFVisible : view.isRasterImageLoaded), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(isPDF ? view.isVectorPDFVisible : view.isRasterImageLoaded)
+        #expect(!view.hasPendingContentRetryForTesting)
+        view.releaseImage()
     }
 
     @Test @MainActor func nativePDFBackgroundUsesOneVectorPageAndInvalidatesReplacedFiles() throws {

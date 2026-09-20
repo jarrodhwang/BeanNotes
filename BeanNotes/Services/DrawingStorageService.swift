@@ -105,7 +105,8 @@ struct DrawingStorageService {
     nonisolated private static let maximumMissingDrawingCount = 512
     /// Imported and newly-created pages usually have no drawing file yet. Remembering
     /// that absence prevents viewport prefetching from repeatedly issuing the same
-    /// failed disk read until a drawing is written or the cache state is invalidated.
+    /// failed speculative disk read. Explicit loads always recheck a cached absence:
+    /// a restored file or a transient replacement gap must not become a permanent miss.
     /// Access is serialized with `prefetchStates` so a concurrent successful cache
     /// write always supersedes a previously observed missing file.
     nonisolated(unsafe) private static var missingDrawingKeys: Set<String> = []
@@ -144,15 +145,11 @@ struct DrawingStorageService {
         for _ in 0...maximumSupersessionRetries {
             prefetchLock.lock()
             let cached = drawingCache.object(forKey: cacheKey)
-            let isKnownMissing = missingDrawingKeys.contains(stringKey)
             let cacheVersionSnapshot = currentCacheVersionLocked(for: stringKey)
             prefetchLock.unlock()
 
             if let cached {
                 return .loaded(cached.drawing, archiveData: cached.archiveData)
-            }
-            if isKnownMissing {
-                return .missing
             }
 
             switch Self.loadDrawingFromDisk(
@@ -170,7 +167,6 @@ struct DrawingStorageService {
 
         prefetchLock.lock()
         let finalCachedDrawing = drawingCache.object(forKey: cacheKey)
-        let isFinallyKnownMissing = missingDrawingKeys.contains(stringKey)
         let fallbackVersion = currentCacheVersionLocked(for: stringKey)
         prefetchLock.unlock()
         if let finalCachedDrawing {
@@ -178,9 +174,6 @@ struct DrawingStorageService {
                 finalCachedDrawing.drawing,
                 archiveData: finalCachedDrawing.archiveData
             )
-        }
-        if isFinallyKnownMissing {
-            return .missing
         }
 
         // Sustained invalidation should not grow the stack or repeatedly decode
@@ -751,15 +744,11 @@ struct DrawingStorageService {
         let stringKey = cacheKey as String
         prefetchLock.lock()
         let cachedDrawing = drawingCache.object(forKey: cacheKey)
-        let isKnownMissing = missingDrawingKeys.contains(stringKey)
         let currentVersion = currentCacheVersionLocked(for: stringKey)
         prefetchLock.unlock()
 
         if let cachedDrawing {
             return .loaded(cachedDrawing.drawing, archiveData: cachedDrawing.archiveData)
-        }
-        if isKnownMissing {
-            return .missing
         }
         guard currentVersion.epoch != expectedCacheVersion.epoch
             || currentVersion.keyVersion != expectedCacheVersion.keyVersion else {
@@ -772,7 +761,6 @@ struct DrawingStorageService {
         )
         prefetchLock.lock()
         let refreshedCachedDrawing = drawingCache.object(forKey: cacheKey)
-        let isFinallyKnownMissing = missingDrawingKeys.contains(stringKey)
         prefetchLock.unlock()
 
         if let refreshedCachedDrawing {
@@ -781,7 +769,7 @@ struct DrawingStorageService {
                 archiveData: refreshedCachedDrawing.archiveData
             )
         }
-        return isFinallyKnownMissing ? .missing : refreshedResult
+        return refreshedResult
     }
 
     nonisolated private static func invokeDiskLoadPublicationHookForTesting(fileName: String) {
