@@ -1,1 +1,0 @@
-@rpath/BeanNotes.debug.dylib
