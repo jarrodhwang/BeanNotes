@@ -45,7 +45,7 @@ struct ChemicalStructureEditorSheet: View {
                     } else if let example = draft.matchingExample {
                         Molecule3DView(example: example).id(example.id)
                     } else {
-                        ContentUnavailableView("Choose an example for 3D", systemImage: "cube.transparent", description: Text("3D previews are available for the example molecules."))
+                        ContentUnavailableView("Choose an example for 3D", systemImage: "cube.transparent", description: Text("Examples include computed 3D coordinates. A drawing alone does not determine molecular shape."))
                             .accessibilityIdentifier("chemistry.no3D")
                     }
                     historyControls
@@ -76,6 +76,8 @@ struct ChemicalStructureEditorSheet: View {
 
     private var exampleChooser: some View {
         VStack(alignment: .leading, spacing: 5) {
+            Text("Explore a sourced example in 2D and 3D, or draw your own structure.")
+                .font(.subheadline).foregroundStyle(.secondary)
             ScrollView(.horizontal) {
                 HStack(spacing: 6) {
                     ForEach(ChemicalExampleLibrary.examples) { example in
@@ -135,9 +137,9 @@ struct ChemicalStructureEditorSheet: View {
 
     private var instructions: String {
         switch tool {
-        case .draw: "Tap to add or select an atom; drag between atoms to bond. Tap a bond to change its order."
-        case .move: "Drag an atom to reposition it."
-        case .erase: "Tap an atom or bond to delete it. Undo restores edits."
+        case .draw: "Tap to add or select an atom; drag between atoms to bond. Tap a bond to change its order. Common valences add implied hydrogens."
+        case .move: "Drag an atom to reposition it without changing its bonds."
+        case .erase: "Tap an atom to remove it and its bonds, or tap a bond to remove only that bond. Undo restores edits."
         }
     }
 
@@ -220,8 +222,8 @@ struct ChemicalStructureEditorSheet: View {
             ForEach(Array(draft.validationWarnings.enumerated()), id: \.offset) { _, warning in
                 Label(warning, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
             }
-            Text("Hydrogens use common valences; checks do not determine stability.")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text("Formulas use common valences and implied hydrogens. These checks do not establish stability, aromaticity, or stereochemistry; a formula can describe multiple structures.")
+                .font(.caption).foregroundStyle(.secondary)
         }.font(.subheadline)
     }
 

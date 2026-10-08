@@ -72,6 +72,8 @@ count and correct explicit text-box rotations using the source geometry. Convers
 for fonts and images and rejects unreadable images rather than saving incomplete pages.
 Office fonts and advanced effects still depend on iOS's document renderer; export from
 PowerPoint as PDF for exact font and effect reproduction. Legacy Word pagination can reflow.
+Office imports use iOS's local preview renderer; legacy Word and spreadsheet layout can
+reflow, so use a PDF when exact source pagination is required.
 HTML imports do not execute document scripts or download remote resources.
 
 The share dialog uses the original filename as the title placeholder and remembers the last

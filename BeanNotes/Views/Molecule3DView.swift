@@ -64,6 +64,8 @@ struct Molecule3DView: View {
                 HStack { inspectionControls }
                 VStack(alignment: .leading) { inspectionControls }
             }
+            Text("Drag to rotate · Pinch to zoom · Tap an atom to inspect")
+                .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 14) {
                 ForEach(Set(visibleAtoms.map(\.element)).sorted(), id: \.self) { element in
                     Label {
@@ -74,11 +76,10 @@ struct Molecule3DView: View {
                     }.font(.caption)
                 }
             }
-            HStack(spacing: 8) {
-                Text("Example coordinates · approximate radii").font(.caption).foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                Link("PubChem source", destination: example.sourceURL).font(.caption)
-            }
+            Text(example.detail).font(.subheadline)
+            Text("Computed example geometry, not a measurement or simulation. Molecules can adopt other shapes; atom sizes are approximate.")
+                .font(.caption).foregroundStyle(.secondary)
+            Link("Source: PubChem · CID \(example.cid)", destination: example.sourceURL).font(.caption)
         }
         .onChange(of: showsHydrogens) { _, _ in selectedAtom = nil }
     }

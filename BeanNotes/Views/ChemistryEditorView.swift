@@ -48,7 +48,7 @@ struct MolecularFormulaEditorSheet: View {
                         .font(.subheadline).foregroundStyle(.orange)
                 }
                 formulaPreview
-                Text("Formula parsing does not identify a substance or test stability.")
+                Text("Capitalize element symbols carefully, put counts after atoms or groups, use · for hydrates, and ^ for charges. Atom counts do not identify a substance or prove stability.")
                     .font(.caption).foregroundStyle(.secondary)
               }.padding(18)
             }
